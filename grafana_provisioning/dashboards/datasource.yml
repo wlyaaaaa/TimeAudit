@@ -1,0 +1,10 @@
+apiVersion: 1
+providers:
+  - name: 'TimeAudit Automated Dashboards'
+    orgId: 1
+    folder: ''
+    type: file
+    disableDeletion: false
+    editable: true             # 允许你在新电脑上继续任意增删、修改卡片
+    options:
+      path: /etc/grafana/provisioning/dashboards

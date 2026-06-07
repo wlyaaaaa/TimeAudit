@@ -17,7 +17,7 @@ services:
 
   # 🚀 异步数据管道：负责无感将 AHK 写入的 CSV 批量拍进数据库
   audit-ingest:
-    build: .                           # ⚡ 核心修改：让 Docker 读刚才写的 Dockerfile
+    build: .                           # ⚡ 核心修改：让 Docker 读刚才写的 Dockerfile [cite: 94]
     container_name: audit-ingester
     restart: always
     depends_on:
@@ -25,7 +25,6 @@ services:
     volumes:
       - ./log:/log                     
       - ./ingest.py:/app/ingest.py     
-    # ❌ 删除了以前那串长长的 command 网络下载命令
 
   # 📊 天花板级前端：Grafana 仪表盘
   audit-dashboard:
@@ -39,3 +38,5 @@ services:
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
     volumes:
       - E:/TimeAudit/grafana_data:/var/lib/grafana
+      # 🟢 【新增核心挂载】：将本地脱水的纯文本卡片配置无感注入容器内部
+      - ./grafana_provisioning:/etc/grafana/provisioning:ro

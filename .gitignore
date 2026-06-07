@@ -1,14 +1,9 @@
-# 过滤本地数据库物理文件和缓存
+cd /d E:\TimeAudit
+Set-Content .gitignore @"
 postgres_data/
 grafana_data/
-
-# 过滤流式日志文件
 *.log
 telemetry.log
-
-# 过滤微软任务管理器 Word 文档（如果你不想开源它）
-任务管理器.docx
-
-# 过滤 Python 编译缓存
 __pycache__/
 *.pyc
+"@
