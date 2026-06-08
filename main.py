@@ -10,14 +10,66 @@ import time
 import asyncpg
 import psutil
 import ctypes  
+import threading
 
+# ==========================================
+# 【保留】：全局日志路径定义
+# ==========================================
 LOG_FILE = r"E:\TimeAudit\telemetry.log"
-try:
-    os.makedirs(os.path.dirname(LOG_FILE), exist_ok=True)
-    sys.stdout = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-    sys.stderr = sys.stdout
-except Exception:
-    pass
+
+# ==========================================
+# 线程安全日志代理（支持盘符自愈与屏幕+文件双工同步输出）
+# ==========================================
+class SafeStdoutWrapper:
+    def __init__(self, filepath):
+        self.filepath = filepath
+        self.lock = threading.Lock()
+        self.terminal = sys.__stdout__  # 备份原始标准控制台输出句柄
+        
+        # 盘符自愈回退逻辑。若 E:\ 盘由于物理硬件原因不存在，自动回退到当前代码运行目录下创建 telemetry.log
+        try:
+            os.makedirs(os.path.dirname(filepath), exist_ok=True)
+            self.file = open(filepath, "a", encoding="utf-8", buffering=1)
+        except Exception:
+            fallback_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telemetry.log")
+            self.filepath = fallback_path
+            self.file = open(fallback_path, "a", encoding="utf-8", buffering=1)
+    
+    def write(self, data):
+        with self.lock:
+            try:
+                self.file.write(data)
+            except Exception:
+                pass
+            try:
+                self.terminal.write(data)  # 同步双写输出到物理终端屏幕
+            except Exception:
+                pass
+    
+    def flush(self):
+        with self.lock:
+            try:
+                self.file.flush()
+            except Exception:
+                pass
+            try:
+                self.terminal.flush()
+            except Exception:
+                pass
+                
+    def truncate_log(self, max_size_mb):
+        with self.lock:
+            try:
+                if os.path.exists(self.filepath) and os.path.getsize(self.filepath) > max_size_mb * 1024 * 1024:
+                    self.file.close()
+                    with open(self.filepath, "w", encoding="utf-8") as f:
+                        f.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %X')}] ✨ 日志超过 {max_size_mb}MB，已自动安全清空截断。\n")
+                    self.file = open(self.filepath, "a", encoding="utf-8", buffering=1)
+            except Exception:
+                pass
+
+# 启动安全双工流代理，仅全局实例化
+safe_logger = SafeStdoutWrapper(LOG_FILE)
 
 from hardware_worker import HardwareTelemetryWorker
 from context_worker import WindowStateTracker
@@ -38,11 +90,22 @@ def enforce_singleton():
         print(f"[{datetime.datetime.now().strftime('%X')} 🔄 强制重启] 检测到互斥体占用，启动覆盖抢占机制...")
         
         current_pid = os.getpid()
+        current_exe = os.path.basename(sys.executable).lower()
+        
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
-                if proc.info['pid'] != current_pid and proc.info['name'] and 'python' in proc.info['name'].lower():
-                    cmdline = proc.info['cmdline']
-                    if cmdline and any('main.py' in arg for arg in cmdline):
+                p_pid = proc.info['pid']
+                p_name = proc.info['name']
+                p_cmdline = proc.info['cmdline']
+                
+                if p_pid == current_pid or not p_name:
+                    continue
+                
+                if current_exe != "python.exe" and current_exe != "pythonw.exe":
+                    if p_name.lower() == current_exe:
+                        proc.kill()
+                elif 'python' in p_name.lower():
+                    if p_cmdline and any('main.py' in arg for arg in p_cmdline):
                         proc.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -63,7 +126,6 @@ def enforce_singleton():
     return mutex
 
 def get_week_bounds(delta_weeks=0):
-    # 【修复】：将系统时区对齐由本地时区偏移彻底移至 UTC(+00) 时间轴，对齐 fact 时序写入，消灭分交界处的溢出崩溃
     today = datetime.datetime.now(datetime.timezone.utc).date() + datetime.timedelta(weeks=delta_weeks)
     monday = today - datetime.timedelta(days=today.weekday())
     next_monday = monday + datetime.timedelta(days=7)
@@ -71,7 +133,6 @@ def get_week_bounds(delta_weeks=0):
     return iso_year, iso_week, f"{monday} 00:00:00+00", f"{next_monday} 00:00:00+00"
 
 def get_month_bounds(delta_months=0):
-    # 【修复】：同样对齐至标准 UTC(+00) 进行时序物理分区边界构建
     today = datetime.datetime.now(datetime.timezone.utc).date()
     year = today.year
     month = today.month + delta_months
@@ -115,6 +176,13 @@ async def main():
     print(f"🚀 Windows 11 Native Telemetry Engine 正在拉起... [PID: {os.getpid()}]")
     print("====================================================")
     
+    try:
+        is_admin = ctypes.windll.shell32.IsUserAnAdmin()
+        if not is_admin:
+            print("[⚠️ 主控警告] 当前程序未以管理员权限（Elevation）拉起，开机自启任务可能无法成功启用 PresentMon 探测！")
+    except Exception:
+        pass
+
     pool = None
     while pool is None:
         try:
@@ -153,7 +221,6 @@ async def main():
         while True:
             t0 = asyncio.get_event_loop().time()
             
-            # 【优化】：虽然底层硬件检测与性能轮询保持在 1Hz，但主进程由于需要默认 3 秒收集一次，休眠发生跨度判定调整为 10.0 秒
             if t0 - last_tick_time > 10.0:
                 print(f"[{datetime.datetime.now().strftime('%X')} 🔄 休眠监测] 时钟发生大跨度跳变({t0 - last_tick_time:.1f}秒)，判定系统已恢复唤醒...")
             
@@ -165,26 +232,9 @@ async def main():
                     print(f"❌ 警告: 自动分区预热失败, 详情: {e}")
 
                 try:
-                    MAX_LOG_SIZE_MB = 50
-                    if os.path.exists(LOG_FILE) and os.path.getsize(LOG_FILE) > MAX_LOG_SIZE_MB * 1024 * 1024:
-                        current_out = sys.stdout
-                        sys.stdout = sys.__stdout__
-                        sys.stderr = sys.__stderr__
-                        if current_out and not current_out.closed:
-                            current_out.close()
-                        
-                        with open(LOG_FILE, "w", encoding="utf-8") as f:
-                            f.write(f"[{datetime.datetime.now().strftime('%Y-%m-%d %X')}] ✨ 日志超过 {MAX_LOG_SIZE_MB}MB，已清空截断。\n")
-                        
-                        sys.stdout = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-                        sys.stderr = sys.stdout
-                        print(f"[{datetime.datetime.now().strftime('%X')} 🔄 日志管理] 空间安全释放。")
+                    safe_logger.truncate_log(50)
                 except Exception:
-                    try:
-                        sys.stdout = open(LOG_FILE, "a", encoding="utf-8", buffering=1)
-                        sys.stderr = sys.stdout
-                    except Exception:
-                        pass
+                    pass
 
             if pool is None:
                 try:
@@ -240,8 +290,6 @@ async def main():
                 print(f"⚠️ 并发遥测落库异动: {loop_err}")
                 
             elapsed = asyncio.get_event_loop().time() - t0
-            
-            # 【修复】：将主线程采集控制周期改为 3.0 秒
             await asyncio.sleep(max(0.01, 3.0 - elapsed))
             
             last_tick_time = asyncio.get_event_loop().time()
@@ -256,6 +304,11 @@ async def main():
         print("[主控] 遥测管线释放，闭舱。")
 
 if __name__ == "__main__":
+    # 【修复】：只有当作为主程序直接运行时，才安全接管控制台标准流。
+    # 这样可以防止单元测试导入 main 时，控制台输出流被强行劫持导致屏幕没有日志
+    sys.stdout = safe_logger
+    sys.stderr = safe_logger
+    
     if sys.platform == 'win32':
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
     

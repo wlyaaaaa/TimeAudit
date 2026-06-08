@@ -1,6 +1,5 @@
 # -*- coding: utf-8 -*-
 import warnings
-# 过滤 pynvml 废弃警告
 warnings.filterwarnings("ignore", category=FutureWarning, module="pynvml")
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -15,12 +14,8 @@ import re
 import threading
 import time
 
-# 导入生命周期舱的高精指纹识别器
 from lifecycle_worker import check_process_elevation, check_file_signature
 
-# ==========================================
-# Windows Native API (NtQuerySystemInformation) 声明
-# ==========================================
 class UNICODE_STRING(ctypes.Structure):
     _fields_ = [
         ("Length", ctypes.c_ushort),
@@ -148,10 +143,6 @@ def fetch_system_processes():
         
     return processes
 
-
-# ==========================================
-# Windows PDH 性能计数器 Ctypes 声明
-# ==========================================
 class PDH_FMT_COUNTERVALUE_DOUBLE(ctypes.Structure):
     _fields_ = [
         ("CStatus", ctypes.c_ulong),
@@ -228,7 +219,6 @@ class ProcessActivityWorker:
         self.vram_map_cache = {}
         self.gpu_util_map_cache = {}
         
-        # 系统真实网络 IO 影子缓存
         self.last_net_bytes_sent = 0
         self.last_net_bytes_recv = 0
         self.last_net_time = time.time()
@@ -279,7 +269,6 @@ class ProcessActivityWorker:
         except Exception:
             pdh_initialized = False
 
-        # 初始化网络速率基准
         try:
             net_io = psutil.net_io_counters()
             self.last_net_bytes_sent = net_io.bytes_sent
@@ -288,7 +277,6 @@ class ProcessActivityWorker:
             pass
 
         while True:
-            # 采集网络连接
             temp_net_conn = {}
             try:
                 from collections import defaultdict
@@ -305,13 +293,11 @@ class ProcessActivityWorker:
             except Exception:
                 pass
 
-            # 采集系统真实物理网卡流量
             try:
                 now_net_time = time.time()
                 net_io = psutil.net_io_counters()
                 dt_net = max(0.001, now_net_time - self.last_net_time)
                 
-                # 计算系统整体网络速率 (KB/s)
                 self.system_net_send_rate = max(0.0, (net_io.bytes_sent - self.last_net_bytes_sent) / 1024.0 / dt_net)
                 self.system_net_recv_rate = max(0.0, (net_io.bytes_recv - self.last_net_bytes_recv) / 1024.0 / dt_net)
                 
@@ -362,14 +348,12 @@ class ProcessActivityWorker:
                     for sample in util_samples:
                         temp_gpu_util_map[sample.pid] = float(sample.gpuUtil)
                 except Exception:
-                    # 遭遇瞬时总线异常，尝试优雅释放并重新初始化
                     try:
                         pynvml.nvmlShutdown()
                     except:
                         pass
                     self.nvml_initialized = False
             else:
-                # 尝试重新拉起 NVML 内核
                 self._init_nvml()
 
             with self.cache_lock:
@@ -505,7 +489,6 @@ class ProcessActivityWorker:
             
             r_rate_mb = w_rate_mb = iops_rate = other_rate_kb = 0.0
             
-            # 【修复】：如果 dt < 100ms 则不覆盖缓存基准，避免抛弃数据增量
             if cache_key in self.io_delta_cache:
                 last_r, last_w, last_ro, last_wo, last_other, last_t = self.io_delta_cache[cache_key]
                 dt = max(0.001, now_ts - last_t)
@@ -603,7 +586,6 @@ class ProcessActivityWorker:
                 is_dead = True if proc.status() == psutil.STATUS_STOPPED else False
             except: pass
 
-            # 【修复】：彻底剔除 OtherTransfer 冒充网卡流量的逻辑，使用系统总出口流量按连接比例分发
             net_conn_count, net_remote = local_net_cache.get(pid, (0, None))
             if net_conn_count > 0 and total_active_connections > 0:
                 conn_ratio = float(net_conn_count) / float(total_active_connections)
@@ -670,12 +652,13 @@ class ProcessActivityWorker:
                     if not p_key: 
                         continue
                     
-                    # 【修复】：将布尔型 is_not_responding 正确投递为 bool 值，防止 asyncpg 数据类型硬崩溃
+                    # 【修复】：将 boolean 类型写回兼容性最强的物理 smallint 整型 1 或 0
                     batch_args.append((
                         now, p_key, proc["os_pid"], proc["cpu"], proc["gpu"], proc["ram_mb"],
                         proc["vram_gb"], proc["vram_shared_mb"], proc["r_rate"], proc["w_rate"], proc["iops"],
                         proc["net_send_kb"], proc["net_recv_kb"],
-                        proc["net_conn_count"], proc["net_remote"], proc["affinity"], proc["threads"], bool(proc["is_not_responding"])
+                        proc["net_conn_count"], proc["net_remote"], proc["affinity"], proc["threads"], 
+                        1 if proc["is_not_responding"] else 0
                     ))
                 if batch_args: 
                     await conn.executemany(query, batch_args)

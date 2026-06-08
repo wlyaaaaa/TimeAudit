@@ -213,7 +213,6 @@ class WindowStateTracker:
                 
                 async with pool.acquire() as conn:
                     async with conn.transaction():
-                        # 第一步：安全对齐注册信息
                         for item in self.pending_inserts + self.pending_updates:
                             if item.get("process_key") is None and item.get("metadata"):
                                 p_key = await self.get_or_register_metadata_slow(conn, item["metadata"])
@@ -225,23 +224,20 @@ class WindowStateTracker:
                                         self.active_slice["os_pid"] == item.get("os_pid")):
                                         self.active_slice["process_key"] = p_key
 
-                        # 第二步：安全写入新前台事件
                         for item in self.pending_inserts:
                             if item.get("process_key"):
-                                # 【修复】：将 is_foreground 常数 1 改为显式 bool 类型的 True，适配 asyncpg
+                                # 【修复】：将 True 改回物理整型 1，解决 Smallint 字段类型不兼容引发的事务静默回滚
                                 query = """
                                     INSERT INTO public.fact_process_context 
                                     ("timestamp", process_key, os_pid, is_foreground, window_title, window_mode)
-                                    VALUES ($1, $2, $3, True, $4, $5)
+                                    VALUES ($1, $2, $3, 1, $4, $5)
                                     ON CONFLICT DO NOTHING;
                                 """
                                 await conn.execute(query, item["timestamp"], item["process_key"], item["os_pid"], item["window_title"], item["window_mode"])
                                 successful_inserts.append(item)
 
-                        # 第三步：安全关闭旧聚焦区间
                         for item in self.pending_updates:
                             if item.get("process_key"):
-                                # 【修复】：弃用不精确的浮点时间戳等值查询，改用状态未关闭字段定位，保证行数据完全更新
                                 query = """
                                     UPDATE public.fact_process_context 
                                     SET end_timestamp = $1, duration_ms = $2 
@@ -250,7 +246,6 @@ class WindowStateTracker:
                                 await conn.execute(query, item["end_timestamp"], item["duration_ms"], item["process_key"], item["os_pid"])
                                 successful_updates.append(item)
                 
-                # 【修复】：只有在整个数据库事务成功并安全 Commit 后，才能移除 Python 集合元素，避免永久断流丢数
                 for item in successful_inserts:
                     if item in self.pending_inserts:
                         self.pending_inserts.remove(item)
