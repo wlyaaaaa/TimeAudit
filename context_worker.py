@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import ctypes
 from ctypes import wintypes
 import datetime
@@ -6,7 +7,6 @@ import psutil
 import os
 import re
 
-# 🟢 导入生命周期舱的高精指纹识别器
 from lifecycle_worker import check_process_elevation, check_file_signature
 
 user32 = ctypes.windll.user32
@@ -80,7 +80,6 @@ class WindowStateTracker:
         return {"hwnd": hwnd, "os_pid": os_pid, "window_title": window_title, "window_mode": window_mode}
 
     def harvest_process_metadata(self, os_pid):
-        """元数据打捞器：包含特权及安全签名状态动态识别，与全局维度防冲突对齐"""
         try:
             proc = psutil.Process(os_pid)
             process_name = proc.name()
@@ -105,7 +104,6 @@ class WindowStateTracker:
                         idx = cmd_parts.index("-k")
                         if idx + 1 < len(cmd_parts): service_name = f"Group:{cmd_parts[idx+1]}"[:100]
             
-            # 动态核对特征，对齐 dim_process_registry
             is_elevated = check_process_elevation(os_pid)
             signature_status = check_file_signature(executable_path)
 
@@ -143,7 +141,6 @@ class WindowStateTracker:
         }
 
     async def get_or_register_metadata_slow(self, conn, metadata):
-        """向维度表安全登记进程指纹 (完美对应 DDL 索引)"""
         if not metadata:
             return None
         
@@ -170,7 +167,7 @@ class WindowStateTracker:
             metadata.get("signature_status", 0)
         )
 
-    async def poll_heartbeat(self, pool):
+    async def poll_heartbeat(self, pool, timestamp=None):
         fast_info = self.check_foreground_window_fast()
         if not fast_info: return
 
@@ -181,7 +178,7 @@ class WindowStateTracker:
             return
 
         if fast_info["os_pid"] != self.last_pid or fast_info["window_title"] != self.last_title:
-            now = datetime.datetime.now(datetime.timezone.utc)
+            now = timestamp if timestamp is not None else datetime.datetime.now(datetime.timezone.utc)
             
             if self.active_slice:
                 prev = self.active_slice
@@ -194,7 +191,8 @@ class WindowStateTracker:
                 })
                 self.active_slice = None
 
-            metadata = self.harvest_process_metadata(fast_info["os_pid"])
+            metadata = await asyncio.to_thread(self.harvest_process_metadata, fast_info["os_pid"])
+            
             self.active_slice = {
                 "timestamp": now, "os_pid": fast_info["os_pid"],
                 "window_title": fast_info["window_title"], "window_mode": fast_info["window_mode"],
@@ -210,8 +208,12 @@ class WindowStateTracker:
 
         if self.pending_inserts or self.pending_updates:
             try:
+                successful_inserts = []
+                successful_updates = []
+                
                 async with pool.acquire() as conn:
                     async with conn.transaction():
+                        # 第一步：安全对齐注册信息
                         for item in self.pending_inserts + self.pending_updates:
                             if item.get("process_key") is None and item.get("metadata"):
                                 p_key = await self.get_or_register_metadata_slow(conn, item["metadata"])
@@ -223,29 +225,38 @@ class WindowStateTracker:
                                         self.active_slice["os_pid"] == item.get("os_pid")):
                                         self.active_slice["process_key"] = p_key
 
-                        successful_inserts = []
+                        # 第二步：安全写入新前台事件
                         for item in self.pending_inserts:
                             if item.get("process_key"):
+                                # 【修复】：将 is_foreground 常数 1 改为显式 bool 类型的 True，适配 asyncpg
                                 query = """
                                     INSERT INTO public.fact_process_context 
                                     ("timestamp", process_key, os_pid, is_foreground, window_title, window_mode)
-                                    VALUES ($1, $2, $3, 1, $4, $5)
+                                    VALUES ($1, $2, $3, True, $4, $5)
                                     ON CONFLICT DO NOTHING;
                                 """
                                 await conn.execute(query, item["timestamp"], item["process_key"], item["os_pid"], item["window_title"], item["window_mode"])
                                 successful_inserts.append(item)
-                        for item in successful_inserts: self.pending_inserts.remove(item)
 
-                        successful_updates = []
+                        # 第三步：安全关闭旧聚焦区间
                         for item in self.pending_updates:
                             if item.get("process_key"):
+                                # 【修复】：弃用不精确的浮点时间戳等值查询，改用状态未关闭字段定位，保证行数据完全更新
                                 query = """
                                     UPDATE public.fact_process_context 
                                     SET end_timestamp = $1, duration_ms = $2 
-                                    WHERE "timestamp" = $3 AND process_key = $4 AND os_pid = $5;
+                                    WHERE process_key = $3 AND os_pid = $4 AND end_timestamp IS NULL;
                                 """
-                                await conn.execute(query, item["end_timestamp"], item["duration_ms"], item["timestamp"], item["process_key"], item["os_pid"])
+                                await conn.execute(query, item["end_timestamp"], item["duration_ms"], item["process_key"], item["os_pid"])
                                 successful_updates.append(item)
-                        for item in successful_updates: self.pending_updates.remove(item)
+                
+                # 【修复】：只有在整个数据库事务成功并安全 Commit 后，才能移除 Python 集合元素，避免永久断流丢数
+                for item in successful_inserts:
+                    if item in self.pending_inserts:
+                        self.pending_inserts.remove(item)
+                for item in successful_updates:
+                    if item in self.pending_updates:
+                        self.pending_updates.remove(item)
+                        
             except Exception as e:
-                print(f"⚠️ [🖥️ 状态机] 数仓写入挂起 (断连期间工时在本地对齐，连接恢复后将自动追溯): {e}")
+                print(f"⚠️ [🖥️ 状态机] 数仓写入挂起: {e}")

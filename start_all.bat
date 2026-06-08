@@ -21,10 +21,9 @@ if %errorlevel% neq 0 (
 )
 echo [+] 数据库物理端口已就位。
 
-echo [*] 正在以【完全隐形守护模式】拉起 Python 遥测核心...
-:: 🟢 配合新 main.py：使用 PowerShell 启动完全没有黑窗口的后台 Python 实例
-:: 因为 main.py 内部已经做了全套自愈重试和日志记录，这里直接无窗拉起即可
-powershell -WindowStyle Hidden -Command "Start-Process python -ArgumentList '%PROJECT_DIR%\main.py' -WindowStyle Hidden"
+echo [*] 正在以【完全隐形守护模式 + 管理员特权】拉起 Python 遥测核心...
+:: 🟢 修复：将 -Verb RunAs 正确收入双引号内，确保无窗拉起的同时触发 Windows 管理员权限
+powershell -WindowStyle Hidden -Command "Start-Process python -ArgumentList '%PROJECT_DIR%\main.py' -WindowStyle Hidden -Verb RunAs"
 
 echo [+] 开机自启守护管线引导完毕。
 exit

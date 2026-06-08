@@ -1,14 +1,168 @@
 # -*- coding: utf-8 -*-
+import warnings
+# 过滤 pynvml 废弃警告
+warnings.filterwarnings("ignore", category=FutureWarning, module="pynvml")
+warnings.filterwarnings("ignore", category=FutureWarning)
+
 import datetime
 import asyncio
 import sys
 import ctypes
+from ctypes import wintypes
 import psutil
 import pynvml
 import re
+import threading
+import time
 
-# 🟢 导入生命周期舱的高精指纹识别器
+# 导入生命周期舱的高精指纹识别器
 from lifecycle_worker import check_process_elevation, check_file_signature
+
+# ==========================================
+# Windows Native API (NtQuerySystemInformation) 声明
+# ==========================================
+class UNICODE_STRING(ctypes.Structure):
+    _fields_ = [
+        ("Length", ctypes.c_ushort),
+        ("MaximumLength", ctypes.c_ushort),
+        ("Buffer", ctypes.c_void_p), 
+    ]
+
+class SYSTEM_PROCESS_INFORMATION(ctypes.Structure):
+    _fields_ = [
+        ("NextEntryOffset", ctypes.c_ulong),
+        ("NumberOfThreads", ctypes.c_ulong),
+        ("WorkingSetPrivateSize", ctypes.c_longlong),
+        ("HardFaultCount", ctypes.c_ulong),
+        ("NumberOfThreadsHighWatermark", ctypes.c_ulong),
+        ("CycleTime", ctypes.c_ulonglong),
+        ("CreateTime", ctypes.c_longlong),
+        ("UserTime", ctypes.c_longlong),
+        ("KernelTime", ctypes.c_longlong),
+        ("ImageName", UNICODE_STRING),
+        ("BasePriority", ctypes.c_long),
+        ("UniqueProcessId", ctypes.c_void_p),
+        ("InheritedFromUniqueProcessId", ctypes.c_void_p),
+        ("HandleCount", ctypes.c_ulong),
+        ("SessionId", ctypes.c_ulong),
+        ("UniqueProcessKey", ctypes.c_void_p),
+        ("PeakVirtualSize", ctypes.c_size_t),
+        ("VirtualSize", ctypes.c_size_t),
+        ("PageFaultCount", ctypes.c_ulong),
+        ("PeakWorkingSetSize", ctypes.c_size_t),
+        ("WorkingSetSize", ctypes.c_size_t),
+        ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+        ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+        ("PagefileUsage", ctypes.c_size_t),
+        ("PeakPagefileUsage", ctypes.c_size_t),
+        ("PrivatePageCount", ctypes.c_size_t),
+        ("ReadOperationCount", ctypes.c_longlong),
+        ("WriteOperationCount", ctypes.c_longlong),
+        ("OtherOperationCount", ctypes.c_longlong),
+        ("ReadTransferCount", ctypes.c_longlong),
+        ("WriteTransferCount", ctypes.c_longlong),
+        ("OtherTransferCount", ctypes.c_longlong),
+    ]
+
+try:
+    ntdll = ctypes.WinDLL('ntdll')
+    ntdll.NtQuerySystemInformation.argtypes = [
+        ctypes.c_ulong, ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong)
+    ]
+    ntdll.NtQuerySystemInformation.restype = ctypes.c_long
+    HAS_NTDLL = True
+except Exception:
+    HAS_NTDLL = False
+
+def fetch_system_processes():
+    if not HAS_NTDLL or ctypes.sizeof(ctypes.c_void_p) != 8:
+        return None
+        
+    SystemProcessInformation = 5
+    buffer_size = 512 * 1024
+    
+    while True:
+        buffer = ctypes.create_string_buffer(buffer_size)
+        return_len = ctypes.c_ulong(0)
+        status = ntdll.NtQuerySystemInformation(
+            SystemProcessInformation, buffer, buffer_size, ctypes.byref(return_len)
+        )
+        if status == 0:
+            break
+        elif status == -1073741820 or status == 0xC0000004 or (return_len.value > buffer_size):
+            buffer_size = max(return_len.value + 65536, buffer_size * 2)
+            if buffer_size > 16 * 1024 * 1024: 
+                return None
+            continue
+        else:
+            return None
+        
+    processes = []
+    offset = 0
+    try:
+        while True:
+            spi_ptr = ctypes.cast(ctypes.addressof(buffer) + offset, ctypes.POINTER(SYSTEM_PROCESS_INFORMATION))
+            spi = spi_ptr.contents
+            
+            name = "Idle"
+            if spi.ImageName.Length > 0 and spi.ImageName.Buffer:
+                try:
+                    name = ctypes.string_at(spi.ImageName.Buffer, spi.ImageName.Length).decode('utf-16le', errors='ignore')
+                except Exception:
+                    pass
+                    
+            pid = int(spi.UniqueProcessId) if spi.UniqueProcessId else 0
+            ppid = int(spi.InheritedFromUniqueProcessId) if spi.InheritedFromUniqueProcessId else 0
+            
+            user_sec = spi.UserTime / 10000000.0
+            kernel_sec = spi.KernelTime / 10000000.0
+            cpu_time = user_sec + kernel_sec
+            
+            create_time = 0.0
+            if spi.CreateTime > 0:
+                create_time = (spi.CreateTime - 116444736000000000) / 10000000.0
+                
+            processes.append({
+                "pid": pid,
+                "ppid": ppid,
+                "name": name,
+                "cpu_time": cpu_time,
+                "r_bytes": spi.ReadTransferCount,
+                "w_bytes": spi.WriteTransferCount,
+                "other_bytes": spi.OtherTransferCount,
+                "r_ops": spi.ReadOperationCount,
+                "w_ops": spi.WriteOperationCount,
+                "ram_mb": int(spi.WorkingSetSize / (1024 * 1024)),
+                "threads": spi.NumberOfThreads,
+                "create_time": create_time,
+                "is_fallback": False
+            })
+            
+            if spi.NextEntryOffset == 0:
+                break
+            offset += spi.NextEntryOffset
+    except Exception:
+        return None
+        
+    return processes
+
+
+# ==========================================
+# Windows PDH 性能计数器 Ctypes 声明
+# ==========================================
+class PDH_FMT_COUNTERVALUE_DOUBLE(ctypes.Structure):
+    _fields_ = [
+        ("CStatus", ctypes.c_ulong),
+        ("doubleValue", ctypes.c_double)
+    ]
+    
+class PDH_FMT_COUNTERVALUE_ITEM_DOUBLE(ctypes.Structure):
+    _fields_ = [
+        ("szName", wintypes.LPCWSTR),
+        ("FmtValue", PDH_FMT_COUNTERVALUE_DOUBLE)
+    ]
 
 def try_enable_debug_privilege():
     try:
@@ -34,7 +188,8 @@ def try_enable_debug_privilege():
                 tp.Privileges[0].Attributes = SE_PRIVILEGE_ENABLED
                 advapi32.AdjustTokenPrivileges(hToken, False, ctypes.byref(tp), 0, None, None)
             kernel32.CloseHandle(hToken)
-    except: pass
+    except: 
+        pass
 
 def sanitize_command_line(process_name, cmdline):
     if not cmdline: return ""
@@ -58,12 +213,33 @@ class ProcessActivityWorker:
     def __init__(self):
         self.key_cache = {}      
         self.io_delta_cache = {} 
-        self.path_elevation_cache = {} # 🟢 新增：路径-提权本地高速缓存 (针对单人单机环境优化)
+        self.path_elevation_cache = {} 
         self.nvml_initialized = False
         self.gpu_handle = None
         
+        self.cpu_time_cache = {}
+        self.affinity_cache = {}
+        self.pid_key_cache = {}
+        
+        self.cache_lock = threading.Lock()
+        self.net_conn_cache = {}      
+        self.shared_vram_cache = {}    
+        
+        self.vram_map_cache = {}
+        self.gpu_util_map_cache = {}
+        
+        # 系统真实网络 IO 影子缓存
+        self.last_net_bytes_sent = 0
+        self.last_net_bytes_recv = 0
+        self.last_net_time = time.time()
+        self.system_net_send_rate = 0.0
+        self.system_net_recv_rate = 0.0
+        
         self._init_nvml()
         try_enable_debug_privilege()
+        
+        self.bg_thread = threading.Thread(target=self._background_telemetry_loop, daemon=True)
+        self.bg_thread.start()
 
     def _init_nvml(self):
         try:
@@ -73,35 +249,159 @@ class ProcessActivityWorker:
         except:
             self.nvml_initialized = False
 
-    async def get_or_register_cached(self, conn, proc_info):
-        """向维度表安全登记进程指纹，动态识别特权与签名特征以消除重复"""
-        is_elevated = proc_info.get("is_elevated")
-        if is_elevated is None or is_elevated < 0:
-            is_elevated = check_process_elevation(proc_info["os_pid"])
-            if is_elevated < 0:
-                # 🟢 [自愈级降级 1]：若进程已死，首选从本地内存路径缓存中打捞历史提权状态
-                is_elevated = self.path_elevation_cache.get(proc_info["exe"])
-                if is_elevated is None:
-                    # 🟢 [自愈级降级 2]：若内存无记录，穿透至 dim_process_registry 历史归档中提取最近一次的特权状态
-                    is_elevated = await conn.fetchval(
-                        "SELECT is_elevated FROM public.dim_process_registry WHERE executable_path = $1 ORDER BY created_at DESC LIMIT 1",
-                        proc_info["exe"]
-                    )
-                    if is_elevated is None:
-                        # 🟢 [自愈级降级 3]：终极降级安全兜底，单人工作站默认为 0 (普通权限)
-                        is_elevated = 0
-
-        signature_status = proc_info.get("signature_status")
-        if signature_status is None:
-            signature_status = check_file_signature(proc_info["exe"])
+    def _background_telemetry_loop(self):
+        pdh_query = wintypes.HANDLE()
+        h_counter = wintypes.HANDLE()
+        pdh_initialized = False
         
-        # 🟢 固化特权级缓存
-        if is_elevated >= 0:
-            self.path_elevation_cache[proc_info["exe"]] = is_elevated
+        try:
+            pdh = ctypes.windll.pdh
+            pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+            pdh.PdhOpenQueryW.restype = wintypes.DWORD
+            
+            pdh.PdhAddCounterW.argtypes = [wintypes.HANDLE, wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+            pdh.PdhAddCounterW.restype = wintypes.DWORD
+            
+            pdh.PdhCollectQueryData.argtypes = [wintypes.HANDLE]
+            pdh.PdhCollectQueryData.restype = wintypes.DWORD
+            
+            pdh.PdhGetFormattedCounterArrayW.argtypes = [
+                wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), 
+                ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p
+            ]
+            pdh.PdhGetFormattedCounterArrayW.restype = wintypes.DWORD
+            
+            res = pdh.PdhOpenQueryW(None, 0, ctypes.byref(pdh_query))
+            if res == 0:
+                res = pdh.PdhAddCounterW(pdh_query, "\\GPU Process Memory(*)\\Shared Usage", None, ctypes.byref(h_counter))
+                if res == 0:
+                    pdh_initialized = True
+        except Exception:
+            pdh_initialized = False
+
+        # 初始化网络速率基准
+        try:
+            net_io = psutil.net_io_counters()
+            self.last_net_bytes_sent = net_io.bytes_sent
+            self.last_net_bytes_recv = net_io.bytes_recv
+        except:
+            pass
+
+        while True:
+            # 采集网络连接
+            temp_net_conn = {}
+            try:
+                from collections import defaultdict
+                grouped = defaultdict(list)
+                for conn in psutil.net_connections(kind='inet'):
+                    if conn.pid: 
+                        grouped[conn.pid].append(conn)
+                
+                for pid, conns in grouped.items():
+                    net_conn_count = len(conns)
+                    remote_targets = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
+                    net_remote = ",".join(remote_targets) if remote_targets else None
+                    temp_net_conn[pid] = (net_conn_count, net_remote)
+            except Exception:
+                pass
+
+            # 采集系统真实物理网卡流量
+            try:
+                now_net_time = time.time()
+                net_io = psutil.net_io_counters()
+                dt_net = max(0.001, now_net_time - self.last_net_time)
+                
+                # 计算系统整体网络速率 (KB/s)
+                self.system_net_send_rate = max(0.0, (net_io.bytes_sent - self.last_net_bytes_sent) / 1024.0 / dt_net)
+                self.system_net_recv_rate = max(0.0, (net_io.bytes_recv - self.last_net_bytes_recv) / 1024.0 / dt_net)
+                
+                self.last_net_bytes_sent = net_io.bytes_sent
+                self.last_net_bytes_recv = net_io.bytes_recv
+                self.last_net_time = now_net_time
+            except Exception:
+                pass
+
+            temp_shared_vram = {}
+            if pdh_initialized:
+                try:
+                    res = pdh.PdhCollectQueryData(pdh_query)
+                    if res == 0:
+                        buffer_size = wintypes.DWORD(0)
+                        item_count = wintypes.DWORD(0)
+                        PDH_FMT_DOUBLE = 0x00000200
+                        
+                        res = pdh.PdhGetFormattedCounterArrayW(
+                            h_counter, PDH_FMT_DOUBLE, ctypes.byref(buffer_size), ctypes.byref(item_count), None
+                        )
+                        if (res == 0x800007D2 or res == 0) and buffer_size.value > 0:
+                            buffer = ctypes.create_string_buffer(buffer_size.value)
+                            res = pdh.PdhGetFormattedCounterArrayW(
+                                h_counter, PDH_FMT_DOUBLE, ctypes.byref(buffer_size), ctypes.byref(item_count), buffer
+                            )
+                            if res == 0 and item_count.value > 0:
+                                array_type = PDH_FMT_COUNTERVALUE_ITEM_DOUBLE * item_count.value
+                                items = array_type.from_buffer(buffer)
+                                for i in range(item_count.value):
+                                    name = items[i].szName
+                                    val = items[i].FmtValue.doubleValue
+                                    if name and val > 0:
+                                        match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
+                                        if match:
+                                            pid = int(match.group(1))
+                                            temp_shared_vram[pid] = int(val / (1024 * 1024))
+                except Exception:
+                    pass
+
+            temp_vram_map = {}
+            temp_gpu_util_map = {}
+            if self.nvml_initialized:
+                try:
+                    for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
+                        temp_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                    util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
+                    for sample in util_samples:
+                        temp_gpu_util_map[sample.pid] = float(sample.gpuUtil)
+                except Exception:
+                    # 遭遇瞬时总线异常，尝试优雅释放并重新初始化
+                    try:
+                        pynvml.nvmlShutdown()
+                    except:
+                        pass
+                    self.nvml_initialized = False
+            else:
+                # 尝试重新拉起 NVML 内核
+                self._init_nvml()
+
+            with self.cache_lock:
+                self.net_conn_cache = temp_net_conn
+                self.shared_vram_cache = temp_shared_vram
+                self.vram_map_cache = temp_vram_map
+                self.gpu_util_map_cache = temp_gpu_util_map
+
+            time.sleep(1.0)
+
+    async def get_or_register_cached(self, conn, proc_info):
+        exe_path = proc_info["exe"]
+        is_elevated = self.path_elevation_cache.get(exe_path)
+        if is_elevated is None:
+            is_elevated = await asyncio.to_thread(check_process_elevation, proc_info["os_pid"])
+            if is_elevated < 0:
+                is_elevated = await conn.fetchval(
+                    "SELECT is_elevated FROM public.dim_process_registry WHERE executable_path = $1 ORDER BY created_at DESC LIMIT 1",
+                    exe_path
+                )
+                if is_elevated is None:
+                    is_elevated = 0
+            self.path_elevation_cache[exe_path] = is_elevated
+
+        from lifecycle_worker import SIGNATURE_CACHE, check_file_signature
+        signature_status = SIGNATURE_CACHE.get(exe_path)
+        if signature_status is None:
+            signature_status = await asyncio.to_thread(check_file_signature, exe_path)
         
         cache_tuple = (
             proc_info["name"], 
-            proc_info["exe"], 
+            exe_path, 
             proc_info["parent_name"], 
             proc_info["cmdline"], 
             proc_info["service_name"],
@@ -126,7 +426,7 @@ class ProcessActivityWorker:
         p_key = await conn.fetchval(
             query, 
             proc_info["name"], 
-            proc_info["exe"], 
+            exe_path, 
             proc_info["parent_name"], 
             proc_info["cmdline"], 
             proc_info["service_name"],
@@ -142,228 +442,240 @@ class ProcessActivityWorker:
         next_io_cache = {}
         now_ts = asyncio.get_event_loop().time()
 
-        vram_map = {}
-        gpu_util_map = {}
-        if self.nvml_initialized:
+        with self.cache_lock:
+            local_net_cache = dict(self.net_conn_cache)
+            local_vram_cache = dict(self.shared_vram_cache)
+            local_vram_map = dict(self.vram_map_cache)
+            local_gpu_util_map = dict(self.gpu_util_map_cache)
+            system_send_rate = self.system_net_send_rate
+            system_recv_rate = self.system_net_recv_rate
+
+        if not local_vram_map and self.nvml_initialized:
             try:
                 for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
-                    vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                    local_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
                 util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
                 for sample in util_samples:
-                    gpu_util_map[sample.pid] = float(sample.gpuUtil)
-            except: pass
+                    local_gpu_util_map[sample.pid] = float(sample.gpuUtil)
+            except Exception:
+                pass
 
-        global_conns = {}
-        try:
-            from collections import defaultdict
-            grouped = defaultdict(list)
-            for conn in psutil.net_connections(kind='inet'):
-                if conn.pid: grouped[conn.pid].append(conn)
-            global_conns = grouped
-        except Exception: pass
+        proc_list = fetch_system_processes()
+        
+        if proc_list is None:
+            proc_list = []
+            for proc in psutil.process_iter(['pid', 'name', 'cpu_times', 'io_counters', 'create_time']):
+                try:
+                    info = proc.info
+                    c_time = info['create_time']
+                    if c_time is None: continue
+                    cpu_times = info.get('cpu_times')
+                    cpu_time = (cpu_times.user + cpu_times.system) if cpu_times else 0.0
+                    io = info['io_counters']
+                    proc_list.append({
+                        "pid": info['pid'],
+                        "name": info['name'],
+                        "cpu_time": cpu_time,
+                        "r_bytes": io.read_bytes if io else 0,
+                        "w_bytes": io.write_bytes if io else 0,
+                        "other_bytes": io.other_bytes if io else 0,
+                        "r_ops": io.read_count if io else 0,
+                        "w_ops": io.write_count if io else 0,
+                        "ram_mb": 0,
+                        "threads": 1,
+                        "create_time": c_time,
+                        "is_fallback": True
+                    })
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    continue
 
-        for proc in psutil.process_iter(['pid', 'name', 'cpu_percent', 'io_counters', 'create_time']):
-            try:
-                info = proc.info
-                create_time = info['create_time']
-                if create_time is None: continue
+        total_active_connections = sum([val[0] for val in local_net_cache.values() if val[0] > 0])
+
+        for p_info in proc_list:
+            pid = p_info["pid"]
+            name = p_info["name"]
+            create_time = p_info["create_time"]
+            cache_key = (pid, create_time)
+            
+            r_bytes = p_info["r_bytes"]
+            w_bytes = p_info["w_bytes"]
+            other_bytes = p_info["other_bytes"]
+            r_ops = p_info["r_ops"]
+            w_ops = p_info["w_ops"]
+            
+            r_rate_mb = w_rate_mb = iops_rate = other_rate_kb = 0.0
+            
+            # 【修复】：如果 dt < 100ms 则不覆盖缓存基准，避免抛弃数据增量
+            if cache_key in self.io_delta_cache:
+                last_r, last_w, last_ro, last_wo, last_other, last_t = self.io_delta_cache[cache_key]
+                dt = max(0.001, now_ts - last_t)
                 
-                cache_key = (info['pid'], create_time)
-                io = info['io_counters']
-                
-                r_bytes = io.read_bytes if io else 0
-                w_bytes = io.write_bytes if io else 0
-                r_ops = io.read_count if io else 0
-                w_ops = io.write_count if io else 0
-                other_bytes = io.other_bytes if io else 0
-                
-                r_rate_mb = w_rate_mb = iops_rate = other_rate_kb = 0.0
-                if cache_key in self.io_delta_cache:
-                    last_r, last_w, last_ro, last_wo, last_other, last_t = self.io_delta_cache[cache_key]
-                    dt = max(0.001, now_ts - last_t)
+                if dt >= 0.1:
                     r_rate_mb = max(0.0, (r_bytes - last_r) / (1024 * 1024) / dt)
                     w_rate_mb = max(0.0, (w_bytes - last_w) / (1024 * 1024) / dt)
                     iops_rate = max(0.0, ((r_ops + w_ops) - (last_ro + last_wo)) / dt)
                     other_rate_kb = max(0.0, (other_bytes - last_other) / 1024.0 / dt)
-                
+                    next_io_cache[cache_key] = (r_bytes, w_bytes, r_ops, w_ops, other_bytes, now_ts)
+                else:
+                    next_io_cache[cache_key] = (last_r, last_w, last_ro, last_wo, last_other, last_t)
+            else:
                 next_io_cache[cache_key] = (r_bytes, w_bytes, r_ops, w_ops, other_bytes, now_ts)
-                cpu = info['cpu_percent'] or 0.0
+            
+            cpu_time = p_info["cpu_time"]
+            cpu = 0.0
+            if cache_key in self.cpu_time_cache:
+                last_cpu_time, last_t = self.cpu_time_cache[cache_key]
+                dt = max(0.001, now_ts - last_t)
+                if dt >= 0.1:
+                    cpu = max(0.0, ((cpu_time - last_cpu_time) / dt) * 100.0)
+                    self.cpu_time_cache[cache_key] = (cpu_time, now_ts)
+                else:
+                    self.cpu_time_cache[cache_key] = (last_cpu_time, last_t)
+            else:
+                self.cpu_time_cache[cache_key] = (cpu_time, now_ts)
 
-                if cpu <= 0.1 and r_rate_mb <= 0.01 and w_rate_mb <= 0.01 and other_rate_kb <= 0.5: 
-                    continue
+            if cpu <= 0.1 and r_rate_mb <= 0.01 and w_rate_mb <= 0.01 and other_rate_kb <= 0.5: 
+                continue
 
+            p_key = self.pid_key_cache.get(cache_key)
+            
+            exe_path = None
+            cmdline_str = ""
+            parent_name = None
+            service_name = None
+            
+            if p_key is None:
                 try:
+                    proc = psutil.Process(pid)
                     exe_path = proc.exe()
                     if not exe_path: continue
                     cmdline_str = " ".join(proc.cmdline()) if proc.cmdline() else ""
-                    cmdline_str = sanitize_command_line(info['name'], cmdline_str)
+                    cmdline_str = sanitize_command_line(name, cmdline_str)
                     
-                    p_mem = proc.memory_info()
-                    ram_mb = int(p_mem.rss / (1024 * 1024)) if p_mem else 0
-                    p_threads = proc.num_threads()
-                    threads = int(p_threads) if p_threads is not None else 1
-                    
-                    net_conn_count = 0
-                    net_remote = None
-                    cmdline_lower = cmdline_str.lower()
-                    is_sandbox = any(x in cmdline_lower for x in ["--type=renderer", "--type=utility", "--type=gpu-process"])
-                    
-                    if not is_sandbox:
-                        try:
-                            conns = global_conns.get(info['pid'], [])
-                            net_conn_count = len(conns)
-                            remote_targets = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
-                            if remote_targets: net_remote = ",".join(remote_targets)
-                        except: pass
-                    
-                    parent_name = None
                     try:
                         parent_proc = proc.parent()
                         if parent_proc: parent_name = parent_proc.name()
                     except: pass
                     
-                except (psutil.AccessDenied, psutil.NoSuchProcess): continue 
+                    if name.lower() == 'svchost.exe':
+                        try:
+                            services = proc.services()
+                            if services: service_name = ",".join([s.name for s in services])[:100]
+                        except:
+                            cmd_parts = proc.cmdline()
+                            if "-k" in cmd_parts:
+                                idx = cmd_parts.index("-k")
+                                if idx + 1 < len(cmd_parts): service_name = f"Group:{cmd_parts[idx+1]}"[:100]
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    continue
 
-                service_name = ""
-                if info['name'].lower() == 'svchost.exe':
-                    try:
-                        services = proc.services()
-                        if services: service_name = ",".join([s.name for s in services])[:100]
-                    except:
-                        cmd_parts = proc.cmdline()
-                        if "-k" in cmd_parts:
-                            idx = cmd_parts.index("-k")
-                            if idx + 1 < len(cmd_parts): service_name = f"Group:{cmd_parts[idx+1]}"[:100]
+            if not p_info.get("is_fallback"):
+                ram_mb = p_info["ram_mb"]
+                threads = p_info["threads"]
+            else:
+                try:
+                    proc = psutil.Process(pid)
+                    p_mem = proc.memory_info()
+                    ram_mb = int(p_mem.rss / (1024 * 1024)) if p_mem else 0
+                    threads = int(proc.num_threads())
+                except (psutil.AccessDenied, psutil.NoSuchProcess):
+                    continue
 
+            affinity_mask = self.affinity_cache.get(cache_key)
+            if affinity_mask is None:
                 affinity_mask = 0
                 try:
+                    proc = psutil.Process(pid)
                     for cpu_id in proc.cpu_affinity():
                         if cpu_id < 32: affinity_mask |= (1 << cpu_id)
                     if affinity_mask & 0x80000000: affinity_mask -= 0x100000000
                 except: 
                     affinity_mask = -2 
+                self.affinity_cache[cache_key] = affinity_mask
 
-                p_vram = float(vram_map.get(info['pid'], 0.0))
-                p_gpu_util = float(gpu_util_map.get(info['pid'], 0.0))
-                shared_vram_mb = int(ram_mb * 0.12) if p_vram > 0 else 0
+            p_vram = float(local_vram_map.get(pid, 0.0))
+            p_gpu_util = float(local_gpu_util_map.get(pid, 0.0))
+            shared_vram_mb = int(local_vram_cache.get(pid, 0))
 
-                is_dead = 0
-                try: is_dead = 1 if proc.status() == psutil.STATUS_STOPPED else 0
-                except: pass
+            is_dead = False
+            try:
+                proc = psutil.Process(pid)
+                is_dead = True if proc.status() == psutil.STATUS_STOPPED else False
+            except: pass
 
-                proc_net_send_kb = float(other_rate_kb * 0.4)
-                proc_net_recv_kb = float(other_rate_kb * 0.6)
+            # 【修复】：彻底剔除 OtherTransfer 冒充网卡流量的逻辑，使用系统总出口流量按连接比例分发
+            net_conn_count, net_remote = local_net_cache.get(pid, (0, None))
+            if net_conn_count > 0 and total_active_connections > 0:
+                conn_ratio = float(net_conn_count) / float(total_active_connections)
+                proc_net_send_kb = float(system_send_rate * conn_ratio)
+                proc_net_recv_kb = float(system_recv_rate * conn_ratio)
+            else:
+                proc_net_send_kb = 0.0
+                proc_net_recv_kb = 0.0
 
-                # 🟢 【核心修复】：在进程存活的瞬间直接解析特权与签名状态
-                is_elevated = check_process_elevation(info['pid'])
-                signature_status = check_file_signature(exe_path)
-
-                # 🟢 固化特权级缓存
-                if is_elevated >= 0:
-                    self.path_elevation_cache[exe_path] = is_elevated
-
-                active_list.append({
-                    "os_pid": info['pid'], "name": info['name'], "exe": exe_path, "cmdline": cmdline_str,
-                    "parent_name": parent_name, "service_name": service_name if service_name else None, 
-                    "cpu": float(cpu), "gpu": p_gpu_util,
-                    "ram_mb": ram_mb, "vram_gb": p_vram, "vram_shared_mb": shared_vram_mb,
-                    "r_rate": r_rate_mb, "w_rate": w_rate_mb, "iops": int(iops_rate), 
-                    "net_send_kb": proc_net_send_kb, "net_recv_kb": proc_net_recv_kb,
-                    "affinity": affinity_mask, "threads": threads, "is_not_responding": is_dead,
-                    "net_conn_count": int(net_conn_count), "net_remote": net_remote,
-                    "is_elevated": is_elevated,          
-                    "signature_status": signature_status  
-                })
-            except (psutil.NoSuchProcess, psutil.AccessDenied): continue
+            active_list.append({
+                "os_pid": pid, "create_time": create_time, "name": name,
+                "exe": exe_path, "cmdline": cmdline_str, "parent_name": parent_name, "service_name": service_name, 
+                "cpu": float(cpu), "gpu": p_gpu_util,
+                "ram_mb": ram_mb, "vram_gb": p_vram, "vram_shared_mb": shared_vram_mb,
+                "r_rate": r_rate_mb, "w_rate": w_rate_mb, "iops": int(iops_rate), 
+                "net_send_kb": proc_net_send_kb, "net_recv_kb": proc_net_recv_kb,
+                "affinity": affinity_mask, "threads": threads, "is_not_responding": is_dead,
+                "net_conn_count": int(net_conn_count), "net_remote": net_remote,
+                "process_key": p_key 
+            })
                 
-        self.io_delta_cache = next_io_cache 
+        self.io_delta_cache = next_io_cache
+        
+        active_keys = set(next_io_cache.keys())
+        self.pid_key_cache = {k: v for k, v in self.pid_key_cache.items() if k in active_keys}
+        self.cpu_time_cache = {k: v for k, v in self.cpu_time_cache.items() if k in active_keys}
+        self.affinity_cache = {k: v for k, v in self.affinity_cache.items() if k in active_keys}
+        
         return active_list
 
-    async def write_to_db_by_worker(self, pool, active_processes):
-        await self.write_batch_to_db(pool, active_processes)
+    async def write_to_db_by_worker(self, pool, active_processes, timestamp=None):
+        await self.write_batch_to_db(pool, active_processes, timestamp)
 
-    async def write_batch_to_db(self, pool, active_processes):
+    async def write_batch_to_db(self, pool, active_processes, timestamp=None):
         if not active_processes: return
-        now = datetime.datetime.now(datetime.timezone.utc)
+        now = timestamp if timestamp is not None else datetime.datetime.now(datetime.timezone.utc)
         
         uncached_procs = []
         for proc in active_processes:
-            is_elevated = proc.get("is_elevated")
-            if is_elevated is None or is_elevated < 0:
-                is_elevated = check_process_elevation(proc["os_pid"])
-                if is_elevated < 0:
-                    is_elevated = self.path_elevation_cache.get(proc["exe"], 0)
-
-            signature_status = proc.get("signature_status")
-            if signature_status is None:
-                signature_status = check_file_signature(proc["exe"])
-
-            # 🟢 固化缓存
-            if is_elevated >= 0:
-                self.path_elevation_cache[proc["exe"]] = is_elevated
-
-            cache_tuple = (
-                proc["name"], 
-                proc["exe"], 
-                proc["parent_name"], 
-                proc["cmdline"], 
-                proc["service_name"],
-                is_elevated,
-                signature_status
-            )
-            if cache_tuple not in self.key_cache:
-                proc["is_elevated"] = is_elevated
-                proc["signature_status"] = signature_status
+            if proc.get("process_key") is None:
                 uncached_procs.append(proc)
         
-        if uncached_procs:
-            async def resolve_one_process(proc_info):
-                async with pool.acquire() as conn:
-                    await self.get_or_register_cached(conn, proc_info)
-            await asyncio.gather(*(resolve_one_process(p) for p in uncached_procs), return_exceptions=True)
-
-        query = """
-            INSERT INTO public.fact_process_activity 
-            ("timestamp", process_key, os_pid, proc_cpu_usage, proc_gpu_usage, proc_ram_mb, 
-             proc_vram_used_gb, proc_vram_shared_mb, proc_disk_read_rate_mb, proc_disk_write_rate_mb, proc_disk_iops, 
-             proc_network_send_kb, proc_network_recv_kb, proc_active_connections, proc_remote_ip_port, 
-             proc_cpu_affinity, proc_thread_count, is_not_responding)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
-        """
         async with pool.acquire() as conn:
+            if uncached_procs:
+                for p in uncached_procs:
+                    p_key = await self.get_or_register_cached(conn, p)
+                    if p_key:
+                        p["process_key"] = p_key
+                        self.pid_key_cache[(p["os_pid"], p["create_time"])] = p_key
+
+            query = """
+                INSERT INTO public.fact_process_activity 
+                ("timestamp", process_key, os_pid, proc_cpu_usage, proc_gpu_usage, proc_ram_mb, 
+                 proc_vram_used_gb, proc_vram_shared_mb, proc_disk_read_rate_mb, proc_disk_write_rate_mb, proc_disk_iops, 
+                 proc_network_send_kb, proc_network_recv_kb, proc_active_connections, proc_remote_ip_port, 
+                 proc_cpu_affinity, proc_thread_count, is_not_responding)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
+            """
+
             async with conn.transaction():
                 batch_args = []
                 for proc in active_processes:
-                    is_elevated = proc.get("is_elevated")
-                    if is_elevated is None or is_elevated < 0:
-                        is_elevated = check_process_elevation(proc["os_pid"])
-                        if is_elevated < 0:
-                            is_elevated = self.path_elevation_cache.get(proc["exe"], 0)
-                        
-                    signature_status = proc.get("signature_status")
-                    if signature_status is None:
-                        signature_status = check_file_signature(proc["exe"])
-                        
-                    cache_tuple = (
-                        proc["name"], 
-                        proc["exe"], 
-                        proc["parent_name"], 
-                        proc["cmdline"], 
-                        proc["service_name"],
-                        is_elevated,
-                        signature_status
-                    )
-                    p_key = self.key_cache.get(cache_tuple)
-                    if not p_key: 
-                        p_key = await self.get_or_register_cached(conn, proc)
+                    p_key = proc.get("process_key")
                     if not p_key: 
                         continue
                     
+                    # 【修复】：将布尔型 is_not_responding 正确投递为 bool 值，防止 asyncpg 数据类型硬崩溃
                     batch_args.append((
                         now, p_key, proc["os_pid"], proc["cpu"], proc["gpu"], proc["ram_mb"],
                         proc["vram_gb"], proc["vram_shared_mb"], proc["r_rate"], proc["w_rate"], proc["iops"],
                         proc["net_send_kb"], proc["net_recv_kb"],
-                        proc["net_conn_count"], proc["net_remote"], proc["affinity"], proc["threads"], proc["is_not_responding"]
+                        proc["net_conn_count"], proc["net_remote"], proc["affinity"], proc["threads"], bool(proc["is_not_responding"])
                     ))
                 if batch_args: 
                     await conn.executemany(query, batch_args)
