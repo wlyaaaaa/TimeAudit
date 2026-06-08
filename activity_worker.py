@@ -362,7 +362,7 @@ class ProcessActivityWorker:
                 self.vram_map_cache = temp_vram_map
                 self.gpu_util_map_cache = temp_gpu_util_map
 
-            time.sleep(1.0)
+            time.sleep(2.0)
 
     async def get_or_register_cached(self, conn, proc_info):
         exe_path = proc_info["exe"]

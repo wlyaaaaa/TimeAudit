@@ -302,8 +302,14 @@ class HardwareTelemetryWorker:
 
                 cmd = [pm_path, "--output_stdout", "--stop_existing_session", "--no_console_stats"]
                 try:
+                    # 🟢 核心修复：强行注入隐藏窗体配置，彻底切断 PresentMon 与 DWM 缓冲区的视口纠缠
+                    startupinfo = subprocess.STARTUPINFO()
+                    startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                    startupinfo.wShowWindow = 0  # SW_HIDE
+                    
                     process = subprocess.Popen(
-                        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
+                        cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
+                        startupinfo=startupinfo # 注入底层配置
                     )
                     self.presentmon_process = process
                 except FileNotFoundError:
@@ -316,7 +322,7 @@ class HardwareTelemetryWorker:
                     try:
                         for line in iter(process.stdout.readline, ''):
                             q.put(line)
-                    except Exception as e:
+                    except Exception:
                         pass
                 
                 t_reader = threading.Thread(target=reader_thread, daemon=True)
@@ -377,6 +383,8 @@ class HardwareTelemetryWorker:
 
                     except queue.Empty:
                         if process.poll() is not None:
+                            # 🟢 核心修复：一旦 PresentMon 意外崩塌，强制冷冻 3 秒再重启，拒绝高频连击显卡驱动
+                            time.sleep(3.0)
                             break  
                         continue  
                     except Exception:
@@ -648,6 +656,9 @@ class HardwareTelemetryWorker:
                         gpu_hotspot_temp = max(gpu_hotspot_temp, gpu_mem_temp)
 
                     gpu_board_power = float(pynvml.nvmlDeviceGetPowerUsage(self.gpu_handle)) / 1000.0
+
+# 🟢 必须补上下面这行调用，否则下一行的变量会触发 NameError 导致驱动陷入生死循环重载！
+                    gpu_throttle_raw = pynvml.nvmlDeviceGetCurrentClocksThrottleReasons(self.gpu_handle)
                     gpu_throttling_reasons = int(gpu_throttle_raw) & 0x7FFF
                     
                     gpu_core_clock = pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS)
