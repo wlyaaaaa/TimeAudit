@@ -218,7 +218,9 @@ class ProcessActivityWorker:
         
         self.vram_map_cache = {}
         self.gpu_util_map_cache = {}
-        
+        # 双 GPU 环境下动态锁定的独显(RTX5080)适配器键，LUID 每次开机会变，故运行时识别
+        self.target_gpu_adapter = None
+
         self.last_net_bytes_sent = 0
         self.last_net_bytes_recv = 0
         self.last_net_time = time.time()
@@ -286,12 +288,20 @@ class ProcessActivityWorker:
             pass
         return results
 
+    @staticmethod
+    def _extract_adapter_key(name):
+        # 从 PDH 实例名提取物理适配器段，如 luid_0x00000000_0x0001D7B8_phys_0
+        # 三类实例名均含此段：GPU Adapter Memory / GPU Process Memory / GPU Engine
+        m = re.search(r'luid_0x[0-9A-Fa-f]+_0x[0-9A-Fa-f]+_phys_\d+', name)
+        return m.group(0) if m else None
+
     def _background_telemetry_loop(self):
         pdh = None
         pdh_query = wintypes.HANDLE()
         h_shared_mem = None
         h_dedicated_mem = None
         h_gpu_engine = None
+        h_adapter_mem = None
         pdh_initialized = False
 
         try:
@@ -325,8 +335,10 @@ class ProcessActivityWorker:
                 h_shared_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Shared Usage")
                 h_dedicated_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Dedicated Usage")
                 h_gpu_engine = self._pdh_add_counter(pdh, pdh_query, "\\GPU Engine(*)\\Utilization Percentage")
+                # 每适配器专用显存总量，用于在双 GPU(独显+核显+虚拟显示器)中识别独显 RTX5080
+                h_adapter_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Adapter Memory(*)\\Dedicated Usage")
                 pdh_initialized = any([h_shared_mem, h_dedicated_mem, h_gpu_engine])
-                print(f"[🎮 GPU 进程遥测] PDH 计数器并网: 共享显存={'✅' if h_shared_mem else '❌'} | 专用显存={'✅' if h_dedicated_mem else '❌'} | GPU引擎利用率={'✅' if h_gpu_engine else '❌'}")
+                print(f"[🎮 GPU 进程遥测] PDH 计数器并网: 共享显存={'✅' if h_shared_mem else '❌'} | 专用显存={'✅' if h_dedicated_mem else '❌'} | GPU引擎利用率={'✅' if h_gpu_engine else '❌'} | 适配器甄别={'✅' if h_adapter_mem else '❌'}")
         except Exception:
             pdh_initialized = False
 
@@ -375,23 +387,44 @@ class ProcessActivityWorker:
                 try:
                     res = pdh.PdhCollectQueryData(pdh_query)
                     if res == 0:
+                        # 【双 GPU 甄别】：动态锁定独立显卡(RTX5080)适配器。
+                        # 本机含 AMD 核显(9950X3D) + 向日葵虚拟显示器(OrayIddDriver)，共 3 个 GPU
+                        # 适配器；独显专用显存占用远高于核显(≈0)与虚拟显示器，据此识别。
+                        # LUID 每次开机重分配，故每轮动态识别，绝不硬编码。
+                        target_key = None
+                        best_ded = 0.0
+                        for name, val in self._read_pdh_pid_array(pdh, h_adapter_mem):
+                            key = self._extract_adapter_key(name)
+                            if key and val > best_ded:
+                                best_ded = val
+                                target_key = key
+                        if target_key and target_key != self.target_gpu_adapter:
+                            print(f"[🎮 GPU 进程遥测] 已锁定独显适配器 {target_key} (专用显存 {best_ded / (1024 ** 3):.2f}GB)，仅统计该卡进程，隔离核显/虚拟显示器。")
+                        self.target_gpu_adapter = target_key
+
                         for name, val in self._read_pdh_pid_array(pdh, h_shared_mem):
+                            if target_key and self._extract_adapter_key(name) != target_key:
+                                continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
                                 pid = int(match.group(1))
                                 temp_shared_vram[pid] = temp_shared_vram.get(pid, 0) + int(val / (1024 * 1024))
 
                         for name, val in self._read_pdh_pid_array(pdh, h_dedicated_mem):
+                            if target_key and self._extract_adapter_key(name) != target_key:
+                                continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
                                 pid = int(match.group(1))
                                 temp_pdh_dedicated_gb[pid] = temp_pdh_dedicated_gb.get(pid, 0.0) + val / (1024 ** 3)
 
                         for name, val in self._read_pdh_pid_array(pdh, h_gpu_engine):
+                            if target_key and self._extract_adapter_key(name) != target_key:
+                                continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
                                 pid = int(match.group(1))
-                                # 任务管理器同口径：取该进程所有 GPU 引擎中最繁忙引擎的利用率
+                                # 任务管理器同口径：取该进程在独显上所有引擎中最繁忙引擎的利用率
                                 util = min(float(val), 100.0)
                                 if util > temp_pdh_gpu_util.get(pid, 0.0):
                                     temp_pdh_gpu_util[pid] = util
