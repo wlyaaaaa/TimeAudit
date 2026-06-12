@@ -239,33 +239,94 @@ class ProcessActivityWorker:
         except:
             self.nvml_initialized = False
 
+    @staticmethod
+    def _pdh_add_counter(pdh, query, path):
+        # 优先使用英文计数器接口，免疫系统显示语言本地化导致的路径失配
+        try:
+            h = wintypes.HANDLE()
+            if pdh.PdhAddEnglishCounterW(query, path, None, ctypes.byref(h)) == 0:
+                return h
+        except Exception:
+            pass
+        try:
+            h = wintypes.HANDLE()
+            if pdh.PdhAddCounterW(query, path, None, ctypes.byref(h)) == 0:
+                return h
+        except Exception:
+            pass
+        return None
+
+    @staticmethod
+    def _read_pdh_pid_array(pdh, h_counter):
+        results = []
+        if not h_counter:
+            return results
+        try:
+            buffer_size = wintypes.DWORD(0)
+            item_count = wintypes.DWORD(0)
+            PDH_FMT_DOUBLE = 0x00000200
+            res = pdh.PdhGetFormattedCounterArrayW(
+                h_counter, PDH_FMT_DOUBLE, ctypes.byref(buffer_size), ctypes.byref(item_count), None
+            )
+            if (res == 0x800007D2 or res == 0) and buffer_size.value > 0:
+                buffer = ctypes.create_string_buffer(buffer_size.value)
+                res = pdh.PdhGetFormattedCounterArrayW(
+                    h_counter, PDH_FMT_DOUBLE, ctypes.byref(buffer_size), ctypes.byref(item_count), buffer
+                )
+                if res == 0 and item_count.value > 0:
+                    array_type = PDH_FMT_COUNTERVALUE_ITEM_DOUBLE * item_count.value
+                    items = array_type.from_buffer(buffer)
+                    for i in range(item_count.value):
+                        name = items[i].szName
+                        status = items[i].FmtValue.CStatus
+                        val = items[i].FmtValue.doubleValue
+                        if name and status in (0, 1) and val > 0:
+                            results.append((name, val))
+        except Exception:
+            pass
+        return results
+
     def _background_telemetry_loop(self):
+        pdh = None
         pdh_query = wintypes.HANDLE()
-        h_counter = wintypes.HANDLE()
+        h_shared_mem = None
+        h_dedicated_mem = None
+        h_gpu_engine = None
         pdh_initialized = False
-        
+
         try:
             pdh = ctypes.windll.pdh
             pdh.PdhOpenQueryW.argtypes = [wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
             pdh.PdhOpenQueryW.restype = wintypes.DWORD
-            
+
             pdh.PdhAddCounterW.argtypes = [wintypes.HANDLE, wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
             pdh.PdhAddCounterW.restype = wintypes.DWORD
-            
+
+            try:
+                pdh.PdhAddEnglishCounterW.argtypes = [wintypes.HANDLE, wintypes.LPCWSTR, ctypes.c_void_p, ctypes.POINTER(wintypes.HANDLE)]
+                pdh.PdhAddEnglishCounterW.restype = wintypes.DWORD
+            except Exception:
+                pass
+
             pdh.PdhCollectQueryData.argtypes = [wintypes.HANDLE]
             pdh.PdhCollectQueryData.restype = wintypes.DWORD
-            
+
             pdh.PdhGetFormattedCounterArrayW.argtypes = [
-                wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD), 
+                wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
                 ctypes.POINTER(wintypes.DWORD), ctypes.c_void_p
             ]
             pdh.PdhGetFormattedCounterArrayW.restype = wintypes.DWORD
-            
+
             res = pdh.PdhOpenQueryW(None, 0, ctypes.byref(pdh_query))
             if res == 0:
-                res = pdh.PdhAddCounterW(pdh_query, "\\GPU Process Memory(*)\\Shared Usage", None, ctypes.byref(h_counter))
-                if res == 0:
-                    pdh_initialized = True
+                # 【核心修复】：GeForce 在 WDDM 驱动模式下，NVML 既拿不到每进程显存
+                # (usedGpuMemory 恒为 None)，也拿不到每进程利用率 (接口不支持)。
+                # 必须改用 Windows 图形内核 (dxgkrnl) 的 PDH 性能计数器 —— 即任务管理器同源数据。
+                h_shared_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Shared Usage")
+                h_dedicated_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Dedicated Usage")
+                h_gpu_engine = self._pdh_add_counter(pdh, pdh_query, "\\GPU Engine(*)\\Utilization Percentage")
+                pdh_initialized = any([h_shared_mem, h_dedicated_mem, h_gpu_engine])
+                print(f"[🎮 GPU 进程遥测] PDH 计数器并网: 共享显存={'✅' if h_shared_mem else '❌'} | 专用显存={'✅' if h_dedicated_mem else '❌'} | GPU引擎利用率={'✅' if h_gpu_engine else '❌'}")
         except Exception:
             pdh_initialized = False
 
@@ -308,53 +369,61 @@ class ProcessActivityWorker:
                 pass
 
             temp_shared_vram = {}
+            temp_pdh_dedicated_gb = {}
+            temp_pdh_gpu_util = {}
             if pdh_initialized:
                 try:
                     res = pdh.PdhCollectQueryData(pdh_query)
                     if res == 0:
-                        buffer_size = wintypes.DWORD(0)
-                        item_count = wintypes.DWORD(0)
-                        PDH_FMT_DOUBLE = 0x00000200
-                        
-                        res = pdh.PdhGetFormattedCounterArrayW(
-                            h_counter, PDH_FMT_DOUBLE, ctypes.byref(buffer_size), ctypes.byref(item_count), None
-                        )
-                        if (res == 0x800007D2 or res == 0) and buffer_size.value > 0:
-                            buffer = ctypes.create_string_buffer(buffer_size.value)
-                            res = pdh.PdhGetFormattedCounterArrayW(
-                                h_counter, PDH_FMT_DOUBLE, ctypes.byref(buffer_size), ctypes.byref(item_count), buffer
-                            )
-                            if res == 0 and item_count.value > 0:
-                                array_type = PDH_FMT_COUNTERVALUE_ITEM_DOUBLE * item_count.value
-                                items = array_type.from_buffer(buffer)
-                                for i in range(item_count.value):
-                                    name = items[i].szName
-                                    val = items[i].FmtValue.doubleValue
-                                    if name and val > 0:
-                                        match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
-                                        if match:
-                                            pid = int(match.group(1))
-                                            temp_shared_vram[pid] = int(val / (1024 * 1024))
+                        for name, val in self._read_pdh_pid_array(pdh, h_shared_mem):
+                            match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
+                            if match:
+                                pid = int(match.group(1))
+                                temp_shared_vram[pid] = temp_shared_vram.get(pid, 0) + int(val / (1024 * 1024))
+
+                        for name, val in self._read_pdh_pid_array(pdh, h_dedicated_mem):
+                            match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
+                            if match:
+                                pid = int(match.group(1))
+                                temp_pdh_dedicated_gb[pid] = temp_pdh_dedicated_gb.get(pid, 0.0) + val / (1024 ** 3)
+
+                        for name, val in self._read_pdh_pid_array(pdh, h_gpu_engine):
+                            match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
+                            if match:
+                                pid = int(match.group(1))
+                                # 任务管理器同口径：取该进程所有 GPU 引擎中最繁忙引擎的利用率
+                                util = min(float(val), 100.0)
+                                if util > temp_pdh_gpu_util.get(pid, 0.0):
+                                    temp_pdh_gpu_util[pid] = util
                 except Exception:
                     pass
 
             temp_vram_map = {}
             temp_gpu_util_map = {}
             if self.nvml_initialized:
+                # 【核心修复】：WDDM 模式下 usedGpuMemory 恒为 None，原代码对 None 做除法
+                # 抛出 TypeError 后整轮采集被吞掉，导致显存/GPU 利用率永远为 0。
+                # 此处 NVML 仅作为兜底数据源（TCC/MIG 模式下才有值），并对两个接口分别做异常隔离。
                 try:
                     for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
-                        temp_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                        if nv_proc.usedGpuMemory:
+                            temp_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                except Exception:
+                    pass
+                try:
                     util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
                     for sample in util_samples:
-                        temp_gpu_util_map[sample.pid] = float(sample.gpuUtil)
+                        util = getattr(sample, 'gpuUtil', None)
+                        if util is not None:
+                            temp_gpu_util_map[sample.pid] = float(util)
                 except Exception:
-                    try:
-                        pynvml.nvmlShutdown()
-                    except:
-                        pass
-                    self.nvml_initialized = False
+                    pass
             else:
                 self._init_nvml()
+
+            # PDH (任务管理器同源) 数据优先覆盖 NVML —— GeForce WDDM 下唯一可靠的每进程 GPU 数据源
+            temp_vram_map.update(temp_pdh_dedicated_gb)
+            temp_gpu_util_map.update(temp_pdh_gpu_util)
 
             with self.cache_lock:
                 self.net_conn_cache = temp_net_conn
@@ -437,10 +506,16 @@ class ProcessActivityWorker:
         if not local_vram_map and self.nvml_initialized:
             try:
                 for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
-                    local_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                    if nv_proc.usedGpuMemory:
+                        local_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+            except Exception:
+                pass
+            try:
                 util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
                 for sample in util_samples:
-                    local_gpu_util_map[sample.pid] = float(sample.gpuUtil)
+                    util = getattr(sample, 'gpuUtil', None)
+                    if util is not None:
+                        local_gpu_util_map[sample.pid] = float(util)
             except Exception:
                 pass
 
