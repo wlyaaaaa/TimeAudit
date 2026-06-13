@@ -205,8 +205,11 @@ class WindowStateTracker:
             
             if self.active_slice:
                 prev = self.active_slice
-                prev["end_timestamp"] = now
-                prev["duration_ms"] = int((now - prev["timestamp"]).total_seconds() * 1000)
+                end_ts = now
+                if end_ts < prev["timestamp"]:
+                    end_ts = prev["timestamp"]
+                prev["end_timestamp"] = end_ts
+                prev["duration_ms"] = int((end_ts - prev["timestamp"]).total_seconds() * 1000)
                 self.pending_updates.append({
                     "timestamp": prev["timestamp"], "os_pid": prev["os_pid"],
                     "end_timestamp": prev["end_timestamp"], "duration_ms": prev["duration_ms"],

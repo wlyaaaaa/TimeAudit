@@ -235,7 +235,7 @@ class ProcessActivityWorker:
 
         self.last_net_bytes_sent = 0
         self.last_net_bytes_recv = 0
-        self.last_net_time = time.time()
+        self.last_net_time = time.monotonic()
         self.system_net_send_rate = 0.0
         self.system_net_recv_rate = 0.0
         
@@ -256,7 +256,7 @@ class ProcessActivityWorker:
             net_io = psutil.net_io_counters()
             self.last_net_bytes_sent = net_io.bytes_sent
             self.last_net_bytes_recv = net_io.bytes_recv
-            self.last_net_time = time.time()
+            self.last_net_time = time.monotonic()
         except Exception:
             pass
 
@@ -450,7 +450,7 @@ class ProcessActivityWorker:
                 pass
 
             try:
-                now_net_time = time.time()
+                now_net_time = time.monotonic()
                 net_io = psutil.net_io_counters()
                 dt_net = max(0.001, now_net_time - self.last_net_time)
                 
