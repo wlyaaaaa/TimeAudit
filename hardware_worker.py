@@ -88,9 +88,11 @@ class HardwareTelemetryWorker:
         self.lock = threading.Lock()
         
         self.wmi_lock = threading.Lock()
-        self.cached_wmi_temp = None
-        self.cached_wmi_power = None
-        self.cached_cpu_vcore = 1.25
+        self.cached_wmi_temp = None        # CPU 封装温度 (LHM: Core (Tctl/Tdie))
+        self.cached_wmi_power = None        # CPU 封装功率 (LHM: Powers/Package)
+        self.cached_cpu_vcore = None        # CPU Vcore (LHM: 主板 Super I/O 真实读数)
+        self.cached_gpu_voltage = None      # RTX5080 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
+        self.cached_gpu_hotspot = None      # RTX5080 显存结点/热点温度 (LHM)
         self.stop_event = threading.Event()
         
         self.pdh_lock = threading.Lock()
@@ -127,7 +129,7 @@ class HardwareTelemetryWorker:
         self.lhm_download_thread = threading.Thread(target=self._auto_prepare_lhm_async, daemon=True)
         self.lhm_download_thread.start()
 
-        self.wmi_thread = threading.Thread(target=self._background_wmi_loop, daemon=True)
+        self.wmi_thread = threading.Thread(target=self._background_lhm_loop, daemon=True)
         self.wmi_thread.start()
 
         self.pdh_thread = threading.Thread(target=self._background_pdh_loop, daemon=True)
@@ -309,7 +311,8 @@ class HardwareTelemetryWorker:
                     
                     process = subprocess.Popen(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
-                        startupinfo=startupinfo # 注入底层配置
+                        startupinfo=startupinfo,            # 注入底层配置(SW_HIDE)
+                        creationflags=subprocess.CREATE_NO_WINDOW  # 彻底杜绝控制台窗体一闪而过抢焦点
                     )
                     self.presentmon_process = process
                 except FileNotFoundError:
@@ -446,33 +449,56 @@ class HardwareTelemetryWorker:
         except Exception as e:
             print(f"[⚠️ 硬件探针] 动态拉取 LibreHardwareMonitor 异常 (可能遭遇脱机或网络抖动): {e}")
 
-    def _background_wmi_loop(self):
+    def _read_lhm_port(self):
+        # 从 LibreHardwareMonitor.config 读取 Web 服务端口(listenerPort)，缺省 8085。
         try:
-            import pythoncom
-            import win32com.client
-            pythoncom.CoInitialize()
-        except ImportError:
-            with self.wmi_lock:
-                self.cached_wmi_temp = None
-                self.cached_wmi_power = None
-                self.cached_cpu_vcore = 1.25
-            return
+            cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitor.config")
+            if os.path.exists(cfg):
+                with open(cfg, "r", encoding="utf-8", errors="ignore") as f:
+                    m = re.search(r'key="listenerPort"\s+value="(\d+)"', f.read())
+                    if m:
+                        return int(m.group(1))
+        except Exception:
+            pass
+        return 8085
 
+    @staticmethod
+    def _lhm_num(s):
+        # 解析 LHM 值串(如 "0.965 V" / "56.0 °C" / "100.5 W")的前导数值，兼容逗号小数。
+        try:
+            return float(str(s).strip().split(" ")[0].replace(",", "."))
+        except Exception:
+            return None
+
+    def _background_lhm_loop(self):
+        """通过 LibreHardwareMonitor 内置 Web 服务(/data.json)采集 NVML/PDH 无法可靠提供的真实硬件量：
+        CPU Vcore、CPU 封装温度(Tctl/Tdie)与功率、RTX5080 核心电压与显存结点(热点)温度。
+        相比旧的 WMI(root\\LibreHardwareMonitor) 通道：该命名空间在本机并未发布、旧通道长期失败并退化到
+        伪造/静态值；HTTP JSON 通道无需 WMI 注册、稳定且为 LHM 官方推荐。同时内置看门狗保活 LHM 进程。"""
+        import urllib.request
+        import json as _json
+
+        url = "http://127.0.0.1:%d/data.json" % self._read_lhm_port()
         lhm_process = None
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        lhm_path = os.path.join(script_dir, "LibreHardwareMonitor.exe")
+        lhm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitor.exe")
+
+        def flatten(node, path, out):
+            text = node.get("Text", "")
+            cur = (path + "/" + text) if text else path
+            val = node.get("Value", "")
+            children = node.get("Children", [])
+            if val and not children:
+                out[cur.lower()] = val
+            for c in children:
+                flatten(c, cur, out)
 
         try:
             while not self.stop_event.is_set():
-                # 【看门狗】：实时监测伴随程序，一旦物理文件存在但进程崩溃，在 3s 内重新拉起
+                # 【看门狗】物理文件存在但进程缺失时，3s 内静默(隐藏窗口)重新拉起。
                 if os.path.exists(lhm_path):
-                    is_alive = False
-                    if lhm_process and lhm_process.poll() is None:
-                        is_alive = True
-                    
+                    is_alive = bool(lhm_process and lhm_process.poll() is None)
                     if not is_alive:
                         lhm_running = False
-                        # 广域遍历防止端口或实例多开冲突
                         for proc in psutil.process_iter(['name']):
                             try:
                                 if proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe":
@@ -480,75 +506,50 @@ class HardwareTelemetryWorker:
                                     break
                             except Exception:
                                 pass
-                        
                         if not lhm_running:
                             try:
                                 startupinfo = subprocess.STARTUPINFO()
                                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                                startupinfo.wShowWindow = 0  # 隐藏 GUI 窗口在后台运行
-                                lhm_process = subprocess.Popen([lhm_path], startupinfo=startupinfo)
-                                print("[🛸 硬件探针] 伴随驱动进程缺失，自动看门狗已成功将其复活。")
+                                startupinfo.wShowWindow = 0
+                                lhm_process = subprocess.Popen(
+                                    [lhm_path], startupinfo=startupinfo,
+                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                )
+                                print("[🛸 硬件探针] 伴随驱动进程缺失，自动看门狗已隐藏复活 LibreHardwareMonitor。")
                             except Exception as e:
                                 print(f"[⚠️ 硬件探针] 自动看门狗拉起 LibreHardwareMonitor 失败: {e}")
 
-                temp_celsius = None
-                temp_power = None
-                temp_vcore = 1.25
-
+                cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
                 try:
-                    wmi_obj = win32com.client.GetObject("winmgmts:\\\\.\\root\\LibreHardwareMonitor")
-                    for sensor in wmi_obj.InstancesOf("Sensor"):
-                        name_lower = sensor.Name.lower()
-                        if sensor.SensorType == "Temperature" and ("cpu package" in name_lower or "cpu core" in name_lower):
-                            temp_celsius = float(sensor.Value)
-                        elif sensor.SensorType == "Power" and ("cpu package" in name_lower or "cpu total" in name_lower):
-                            temp_power = float(sensor.Value)
-                        if temp_celsius and temp_power:
-                            break
+                    with urllib.request.urlopen(url, timeout=1.5) as resp:
+                        flat = {}
+                        flatten(_json.loads(resp.read().decode("utf-8", "ignore")), "", flat)
+
+                    for key, raw in flat.items():
+                        if key.endswith("/voltages/vcore"):
+                            cpu_vcore = self._lhm_num(raw)
+                        elif key.endswith("/powers/package") and "gpu" not in key:
+                            cpu_power = self._lhm_num(raw)
+                        elif "/temperatures/" in key and "core (tctl/tdie)" in key:
+                            cpu_temp = self._lhm_num(raw)
+                        elif "nvidia" in key and key.endswith("gpu core voltage"):
+                            gpu_voltage = self._lhm_num(raw)
+                        elif "nvidia" in key and "/temperatures/" in key and ("hot spot" in key or "junction" in key):
+                            v = self._lhm_num(raw)
+                            # 优先真正的核心热点(Hot Spot)，否则采用显存结点(Memory Junction)。
+                            if v is not None and (gpu_hotspot is None or "hot spot" in key):
+                                gpu_hotspot = v
                 except Exception:
                     pass
 
-                if temp_celsius is None or temp_power is None:
-                    try:
-                        wmi_obj = win32com.client.GetObject("winmgmts:\\\\.\\root\\OpenHardwareMonitor")
-                        for sensor in wmi_obj.InstancesOf("Sensor"):
-                            name_lower = sensor.Name.lower()
-                            if sensor.SensorType == "Temperature" and "cpu" in name_lower:
-                                temp_celsius = float(sensor.Value)
-                            elif sensor.SensorType == "Power" and "cpu" in name_lower:
-                                temp_power = float(sensor.Value)
-                            if temp_celsius and temp_power:
-                                break
-                    except Exception:
-                        pass
-
-                if temp_celsius is None:
-                    try:
-                        wmi_obj = win32com.client.GetObject("winmgmts:\\\\.\\root\\wmi")
-                        for tz in wmi_obj.InstancesOf("MSAcpi_ThermalZoneTemperature"):
-                            t = tz.CurrentTemperature
-                            if t > 0:
-                                temp_celsius = (t / 10.0) - 273.15
-                                break
-                    except Exception:
-                        pass
-
-                try:
-                    wmi_obj = win32com.client.GetObject("winmgmts:\\\\.\\root\\cimv2")
-                    for p in wmi_obj.InstancesOf("Win32_Processor"):
-                        v = p.CurrentVoltage
-                        if v:
-                            temp_vcore = v / 10.0 if v > 5 else v
-                        break
-                except Exception:
-                    temp_vcore = 1.25
-
                 with self.wmi_lock:
-                    self.cached_wmi_temp = temp_celsius
-                    self.cached_wmi_power = temp_power
-                    self.cached_cpu_vcore = temp_vcore
+                    self.cached_wmi_temp = cpu_temp
+                    self.cached_wmi_power = cpu_power
+                    self.cached_cpu_vcore = cpu_vcore
+                    self.cached_gpu_voltage = gpu_voltage
+                    self.cached_gpu_hotspot = gpu_hotspot
 
-                for _ in range(50):
+                for _ in range(10):
                     if self.stop_event.is_set():
                         break
                     time.sleep(0.1)
@@ -559,10 +560,6 @@ class HardwareTelemetryWorker:
                     lhm_process.wait(timeout=1.0)
                 except Exception:
                     pass
-            try:
-                pythoncom.CoUninitialize()
-            except Exception:
-                pass
 
     def _background_pdh_loop(self):
         pdh_fail_count = 0
@@ -662,11 +659,13 @@ class HardwareTelemetryWorker:
                     gpu_throttling_reasons = int(gpu_throttle_raw) & 0x7FFF
                     
                     gpu_core_clock = pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS)
-                    gpu_mem_clock_raw = pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM)
-                    gpu_mem_clock_raw &= 0x7FFFFFFF
-                    gpu_mem_clock = int(gpu_mem_clock_raw) if gpu_mem_clock_raw <= 32767 else 32767
+                    # 列类型为 integer，NVML 返回真实显存时钟(MHz)；去掉旧的 smallint(32767)截断 bug。
+                    gpu_mem_clock = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM))
+                    if gpu_mem_clock < 0 or gpu_mem_clock > 100000:
+                        gpu_mem_clock = 0
 
-                    gpu_voltage_est = 0.85 + (gpu_usage * 0.0025)
+                    # 占位(下游 collect_hardware_snapshot 会用 LHM 真实核心电压覆盖；NVML 在 GeForce 无法提供)。
+                    gpu_voltage_est = 0.0
                     tx_bytes = pynvml.nvmlDeviceGetPcieThroughput(self.gpu_handle, NVML_PCIE_UTIL_TX_BYTES)
                     rx_bytes = pynvml.nvmlDeviceGetPcieThroughput(self.gpu_handle, NVML_PCIE_UTIL_RX_BYTES)
                     pcie_bus_utilization = ((tx_bytes + rx_bytes) / 64000000.0) * 100.0
@@ -703,6 +702,27 @@ class HardwareTelemetryWorker:
                     break
                 time.sleep(0.1)
 
+    @staticmethod
+    def _get_commit_charge_gb():
+        # 真实"提交内存"(Committed Bytes，与任务管理器"已提交"一致) = 提交上限 - 可提交余量。
+        # 旧实现误用 swap_memory().used(仅页面文件占用)，严重偏小且语义错误。
+        try:
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("ullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+            m = MEMORYSTATUSEX()
+            m.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                return max(0.0, (m.ullTotalPageFile - m.ullAvailPageFile) / (1024 ** 3))
+        except Exception:
+            pass
+        return 0.0
+
     def collect_hardware_snapshot(self, foreground_app_name):
         self.active_foreground_app = foreground_app_name if foreground_app_name else ""
         now_ts = asyncio.get_event_loop().time()
@@ -730,21 +750,28 @@ class HardwareTelemetryWorker:
             pcie_bus_utilization = self.cached_pdh_data["pcie_bus_utilization"]
 
         with self.wmi_lock:
-            w_temp = self.cached_wmi_temp
-            w_power = self.cached_wmi_power
+            lhm_temp = self.cached_wmi_temp
+            lhm_power = self.cached_wmi_power
             cpu_vcore = self.cached_cpu_vcore
+            lhm_gpu_voltage = self.cached_gpu_voltage
+            lhm_gpu_hotspot = self.cached_gpu_hotspot
 
-        if cpu_package_temp is None:
-            if w_temp is not None:
-                cpu_package_temp = w_temp
-            else:
-                cpu_package_temp = 39.0 + (cpu_total * 0.46)
-        
-        if cpu_package_power is None:
-            if w_power is not None:
-                cpu_package_power = w_power
-            else:
-                cpu_package_power = 24.0 + (cpu_total * 1.46)
+        # CPU 封装温度/功率：优先 LHM 真实读数(Tctl/Tdie、Package)，其次 PDH(ACPI 热区/电表)，最后合成兜底。
+        if lhm_temp is not None:
+            cpu_package_temp = lhm_temp
+        elif cpu_package_temp is None:
+            cpu_package_temp = 39.0 + (cpu_total * 0.46)
+
+        if lhm_power is not None:
+            cpu_package_power = lhm_power
+        elif cpu_package_power is None:
+            cpu_package_power = 24.0 + (cpu_total * 1.46)
+
+        # GPU 核心电压：NVML 在 GeForce 无法提供，仅采用 LHM 真实读数，无则置空(NULL)，不再伪造。
+        gpu_core_voltage = lhm_gpu_voltage
+        # GPU 热点温度：优先 LHM 显存结点真实温度，否则退化为 NVML 估算(core+12)。
+        if lhm_gpu_hotspot is not None:
+            gpu_hotspot_temp = lhm_gpu_hotspot
 
         ccd0_load = 0.0
         ccd1_load = 0.0
@@ -763,11 +790,7 @@ class HardwareTelemetryWorker:
         self.last_ctx_switches = current_ctx
         
         ram_pct = psutil.virtual_memory().percent
-        commit_gb = 0.0
-        try: 
-            commit_gb = psutil.swap_memory().used / (1024 ** 3)
-        except Exception: 
-            pass
+        commit_gb = self._get_commit_charge_gb()
 
         system_dpc_latency = self.dpc_checker.get_latency_us()
 
@@ -803,9 +826,9 @@ class HardwareTelemetryWorker:
             "frametime_ms": frametime_ms if frametime_ms is not None else 0.0,
             "frametime_jitter": frametime_jitter if frametime_jitter is not None else 0.0,
             
-            "cpu_total_usage": cpu_total, 
-            "cpu_vcore_voltage": cpu_vcore if cpu_vcore is not None else 1.25, 
-            "cpu_clock_mhz": cpu_mhz, 
+            "cpu_total_usage": cpu_total,
+            "cpu_vcore_voltage": cpu_vcore,   # LHM 主板真实 Vcore；不可用时写 NULL，绝不伪造
+            "cpu_clock_mhz": cpu_mhz,
             "cpu_package_temp": cpu_package_temp,
             "cpu_package_power": cpu_package_power, 
             "system_dpc_latency": system_dpc_latency,
@@ -813,9 +836,9 @@ class HardwareTelemetryWorker:
             "system_ram_usage_pct": ram_pct,
             "system_commit_size_gb": commit_gb, 
             "system_hard_page_faults": system_hard_page_faults,
-            "gpu_usage": gpu_usage if gpu_usage is not None else 0.0, 
-            "gpu_core_voltage": gpu_core_voltage if gpu_core_voltage is not None else 0.0, 
-            "gpu_core_clock": gpu_core_clock if gpu_core_clock is not None else 0, 
+            "gpu_usage": gpu_usage if gpu_usage is not None else 0.0,
+            "gpu_core_voltage": gpu_core_voltage,   # LHM(NVAPI) RTX5080 真实核心电压；不可用时写 NULL
+            "gpu_core_clock": gpu_core_clock if gpu_core_clock is not None else 0,
             "gpu_mem_clock": gpu_mem_clock if gpu_mem_clock is not None else 0,
             "gpu_core_temp": gpu_core_temp if gpu_core_temp is not None else 0.0, 
             "gpu_hotspot_temp": gpu_hotspot_temp if gpu_hotspot_temp is not None else 0.0, 

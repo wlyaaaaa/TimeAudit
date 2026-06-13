@@ -1,0 +1,6 @@
+# 防止 Claude 在后台盲目扫描这些巨型文件夹浪费你的 Pro 额度
+postgres_data/
+grafana_data/
+log/
+*.sql
+*.csv

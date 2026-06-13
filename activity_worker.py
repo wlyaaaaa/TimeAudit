@@ -207,7 +207,8 @@ class ProcessActivityWorker:
         self.path_elevation_cache = {} 
         self.nvml_initialized = False
         self.gpu_handle = None
-        
+        self.gpu_total_vram_gb = 0.0   # RTX5080 整卡显存容量(GB)，每进程专用显存的物理上限
+
         self.cpu_time_cache = {}
         self.affinity_cache = {}
         self.pid_key_cache = {}
@@ -218,8 +219,18 @@ class ProcessActivityWorker:
         
         self.vram_map_cache = {}
         self.gpu_util_map_cache = {}
-        # 双 GPU 环境下动态锁定的独显(RTX5080)适配器键，LUID 每次开机会变，故运行时识别
-        self.target_gpu_adapter = None
+        # 【RTX5080 永久锁定】本机为三适配器拓扑：RTX5080 独显 + 9950X3D 的 AMD 核显 + 向日葵
+        # 虚拟显示器(OrayIddDriver)。AMD 核显是 UMA 架构，会把大块系统内存误报成"专用显存"
+        # (实测 dwm 在核显上"专用显存"高达 47GB，远超任何物理显存)，旧的"每轮取最大专用显存"
+        # 启发式因此会被核显骗到，把游戏的显存/占用算到核显上、导致 RTX5080 进程数据恒为 ~0。
+        # 现改为开机时从 DirectX 注册表按厂商 ID(NVIDIA=0x10DE)确定锁定 RTX5080 的 LUID 前缀，
+        # 之后所有每进程 GPU 数据只认这张卡。LUID 每次开机重分配，故每次启动重读；来源是确定的
+        # 硬件厂商 ID，绝非动态猜测，满足"不需要动态识别、永远是 RTX5080"的要求。
+        self.nvidia_luid_prefixes = self._detect_nvidia_luid_prefixes()
+        if self.nvidia_luid_prefixes:
+            print(f"[🎮 GPU 进程遥测] 已按厂商 ID 锁定 NVIDIA 独显 LUID 前缀 {sorted(self.nvidia_luid_prefixes)}，核显/虚拟显示器一律隔离。")
+        else:
+            print("[⚠️ GPU 进程遥测] 未能从 DirectX 注册表识别 NVIDIA 独显，将周期性重试；在此之前不做适配器过滤。")
 
         self.last_net_bytes_sent = 0
         self.last_net_bytes_recv = 0
@@ -238,6 +249,12 @@ class ProcessActivityWorker:
             pynvml.nvmlInit()
             self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
             self.nvml_initialized = True
+            try:
+                # 整卡显存容量，用作每进程专用显存的物理上限。WDDM 下 PDH 的 Dedicated Usage 对
+                # dwm 合成器等会聚合上报远超物理显存的虚高值(实测 dwm 达 68GB)，必须按此上限钳制。
+                self.gpu_total_vram_gb = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle).total / (1024 ** 3)
+            except Exception:
+                pass
         except:
             self.nvml_initialized = False
 
@@ -295,6 +312,53 @@ class ProcessActivityWorker:
         m = re.search(r'luid_0x[0-9A-Fa-f]+_0x[0-9A-Fa-f]+_phys_\d+', name)
         return m.group(0) if m else None
 
+    @staticmethod
+    def _luid_prefix(name):
+        # 仅提取 LUID 前缀 luid_0xHIGH_0xLOW(不含 _phys_N)，统一小写以跨"适配器/进程/引擎"实例比对。
+        m = re.search(r'luid_0x[0-9A-Fa-f]+_0x[0-9A-Fa-f]+', name)
+        return m.group(0).lower() if m else None
+
+    @staticmethod
+    def _detect_nvidia_luid_prefixes():
+        """从 Windows DirectX 注册表读取所有 NVIDIA(VendorId=0x10DE) 适配器的 LUID 前缀。
+
+        PDH 的 GPU 计数器实例名形如 pid_1234_luid_0xHIGH_0xLOW_phys_0_eng_0_engtype_3D，
+        其中 luid 段唯一标识物理适配器。注册表 HKLM\\SOFTWARE\\Microsoft\\DirectX 下每个适配器
+        子键含 VendorId 与 AdapterLuid(QWORD = (HighPart<<32)|LowPart)，据此即可把 NVIDIA 卡的
+        LUID 转成与 PDH 同构的前缀字符串，实现厂商级精确锁定。返回小写前缀集合(可能含历史残留项，
+        但只有当前在网的 LUID 会真正匹配到实例，故无害)。"""
+        import winreg
+        prefixes = set()
+        try:
+            base = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\DirectX")
+        except OSError:
+            return prefixes
+        try:
+            idx = 0
+            while True:
+                try:
+                    sub_name = winreg.EnumKey(base, idx)
+                    idx += 1
+                except OSError:
+                    break
+                try:
+                    sub = winreg.OpenKey(base, sub_name)
+                    try:
+                        vendor, _ = winreg.QueryValueEx(sub, "VendorId")
+                        luid, _ = winreg.QueryValueEx(sub, "AdapterLuid")
+                    finally:
+                        sub.Close()
+                    if int(vendor) == 0x10DE and luid is not None:
+                        u = int(luid) & 0xFFFFFFFFFFFFFFFF
+                        low = u & 0xFFFFFFFF
+                        high = (u >> 32) & 0xFFFFFFFF
+                        prefixes.add("luid_0x%08x_0x%08x" % (high, low))
+                except OSError:
+                    continue
+        finally:
+            base.Close()
+        return prefixes
+
     def _background_telemetry_loop(self):
         pdh = None
         pdh_query = wintypes.HANDLE()
@@ -333,7 +397,10 @@ class ProcessActivityWorker:
                 # (usedGpuMemory 恒为 None)，也拿不到每进程利用率 (接口不支持)。
                 # 必须改用 Windows 图形内核 (dxgkrnl) 的 PDH 性能计数器 —— 即任务管理器同源数据。
                 h_shared_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Shared Usage")
-                h_dedicated_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Dedicated Usage")
+                # 【显存精度修复】用 Local Usage(GPU 本地/专用显存段的常驻量) 而非 Dedicated Usage。
+                # 实测 Dedicated Usage 含已提交/保留的地址空间，对 dwm 合成器爆表(72GB)；Local Usage
+                # 才是常驻专用显存：dwm 仅 1.35GB，且全进程合计 ~4.9GB 与整卡实际已用 ~5.7GB 吻合。
+                h_dedicated_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Local Usage")
                 h_gpu_engine = self._pdh_add_counter(pdh, pdh_query, "\\GPU Engine(*)\\Utilization Percentage")
                 # 每适配器专用显存总量，用于在双 GPU(独显+核显+虚拟显示器)中识别独显 RTX5080
                 h_adapter_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Adapter Memory(*)\\Dedicated Usage")
@@ -387,39 +454,55 @@ class ProcessActivityWorker:
                 try:
                     res = pdh.PdhCollectQueryData(pdh_query)
                     if res == 0:
-                        # 【双 GPU 甄别】：动态锁定独立显卡(RTX5080)适配器。
-                        # 本机含 AMD 核显(9950X3D) + 向日葵虚拟显示器(OrayIddDriver)，共 3 个 GPU
-                        # 适配器；独显专用显存占用远高于核显(≈0)与虚拟显示器，据此识别。
-                        # LUID 每次开机重分配，故每轮动态识别，绝不硬编码。
-                        target_key = None
-                        best_ded = 0.0
-                        for name, val in self._read_pdh_pid_array(pdh, h_adapter_mem):
-                            key = self._extract_adapter_key(name)
-                            if key and val > best_ded:
-                                best_ded = val
-                                target_key = key
-                        if target_key and target_key != self.target_gpu_adapter:
-                            print(f"[🎮 GPU 进程遥测] 已锁定独显适配器 {target_key} (专用显存 {best_ded / (1024 ** 3):.2f}GB)，仅统计该卡进程，隔离核显/虚拟显示器。")
-                        self.target_gpu_adapter = target_key
+                        # 【RTX5080 厂商级锁定】只统计 NVIDIA 独显上的每进程显存/占用，彻底隔离
+                        # AMD 核显(UMA 会把系统内存误报成巨量专用显存)与向日葵虚拟显示器。
+                        nv = self.nvidia_luid_prefixes
+                        if not nv:
+                            # 开机时注册表读取失败的兜底：周期性重试，一旦识别成功即永久锁定。
+                            nv = self.nvidia_luid_prefixes = self._detect_nvidia_luid_prefixes()
+                            if nv:
+                                print(f"[🎮 GPU 进程遥测] 已补充锁定 NVIDIA 独显 LUID 前缀 {sorted(nv)}。")
+
+                        def _is_rtx5080(instance_name):
+                            # 仅保留 NVIDIA 独显的实例；nv 为空(极端兜底)时不过滤，退化为全卡合计。
+                            if not nv:
+                                return True
+                            p = ProcessActivityWorker._luid_prefix(instance_name)
+                            return p is not None and p in nv
 
                         for name, val in self._read_pdh_pid_array(pdh, h_shared_mem):
-                            if target_key and self._extract_adapter_key(name) != target_key:
+                            if not _is_rtx5080(name):
                                 continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
                                 pid = int(match.group(1))
                                 temp_shared_vram[pid] = temp_shared_vram.get(pid, 0) + int(val / (1024 * 1024))
 
+                        # 每进程专用显存物理上限：取"整卡容量"与"整卡当前已用总量"的较小者。
+                        # 单进程常驻专用显存不可能超过整卡当前已驻留总量，据此把 dwm 等聚合虚高值
+                        # 收紧到现实量级(实测整卡仅用 ~5.7GB，而 PDH 给 dwm 报 68GB)。
+                        cap_gb = self.gpu_total_vram_gb
+                        try:
+                            if self.nvml_initialized:
+                                used_gb = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle).used / (1024 ** 3)
+                                if used_gb > 0:
+                                    cap_gb = min(cap_gb, used_gb) if cap_gb > 0 else used_gb
+                        except Exception:
+                            pass
                         for name, val in self._read_pdh_pid_array(pdh, h_dedicated_mem):
-                            if target_key and self._extract_adapter_key(name) != target_key:
+                            if not _is_rtx5080(name):
                                 continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
                                 pid = int(match.group(1))
-                                temp_pdh_dedicated_gb[pid] = temp_pdh_dedicated_gb.get(pid, 0.0) + val / (1024 ** 3)
+                                val_gb = val / (1024 ** 3)
+                                # 物理上限保护：单进程常驻专用显存不可能超过整卡容量(dwm 合成器虚高规避)
+                                if cap_gb > 0 and val_gb > cap_gb:
+                                    val_gb = cap_gb
+                                temp_pdh_dedicated_gb[pid] = temp_pdh_dedicated_gb.get(pid, 0.0) + val_gb
 
                         for name, val in self._read_pdh_pid_array(pdh, h_gpu_engine):
-                            if target_key and self._extract_adapter_key(name) != target_key:
+                            if not _is_rtx5080(name):
                                 continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:

@@ -1,9 +1,8 @@
-cd /d E:\TimeAudit
-Set-Content .gitignore @"
 postgres_data/
 grafana_data/
+log/
 *.log
 telemetry.log
 __pycache__/
 *.pyc
-"@
+time_audit_perfect_archive.sql
