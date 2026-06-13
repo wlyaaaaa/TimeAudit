@@ -1,121 +1,288 @@
-# TimeAudit 🦅 | Windows 11 原生全时段无感工时遥测数仓
+# TimeAudit — 你这台 Windows 电脑的"黑匣子"
 
-TimeAudit 是一个专为个人主站和硬核极客打造的 **Windows 11 活体进程、前台全量上下文及顶级硬件能效** 全时段秒级遥测异步数仓基础设施。
+> 一个 7×24 小时在后台默默运行的个人遥测系统：每 3 秒给你的电脑拍一张"全身 X 光"，
+> 把"哪个窗口在用、每个进程吃了多少 CPU/显卡/内存/硬盘/网络、整机温度功耗帧率、
+> 哪个进程刚出生/刚崩溃"全部记进数据库，然后用网页大盘（Grafana）回放出来。
 
-整个后端完全脱离传统客户端或易崩溃的 WMI 依赖，依托 Python 高并发异步流控管道进行动态采样，将捕获的数据流无感拍入本地 Docker 部署的 PostgreSQL 15-alpine 时序分区桶中。通过微秒级主时钟对齐机制，在前台 Grafana 网页端完美呈现一台怪兽级工作站的数字生命全景图谱。
+这份 README 写给两类读者：
 
----
+- **人类开发者**：哪怕你没接触过这个项目，也能在 20 分钟内搞懂它"是什么、怎么转、每个文件干嘛"。
+- **AI 维护者**（比如接手改代码的 Claude）：文末有"关键不变量 / 千万别踩的坑 / 测试入口"，先读那部分再动手。
 
-## 🚀 终极破案：六大王牌尸检与常态化审计功能
-
-### 1. 像素级“时空穿梭”卡顿确诊
-* **痛点**：在打游戏团战、写代码大规模编译、或者无边框拉伸窗口时，画面发生了一次恶心的轻微掉帧或微顿卡。
-* **数仓破案**：事后来到大盘框选卡顿发生的 2 秒区间。大盘依靠事实表 `PRIMARY KEY (timestamp)` 的微秒级对齐能力，直接把这一秒内宏观的 1% Low FPS 塌陷、Frametime Jitter 突刺，与微观上哪个后台流氓进程突然暴涨的 `proc_disk_read_rate_mb`（读盘速率）或网络丢包红墙，百分之百像素级拼装在同一条垂直时间线上。
-
-### 2. 后台“篡位者”与“隐藏李鬼”深度清算
-* **痛点**：某些未知程序在后台偷偷作恶，或者未知木马流氓软件篡改伪装成系统核心组件名。
-* **数仓破案**：在大盘中通过 `is_foreground = 0` 全面清查非前台活动。得益于 `dim_process_registry` 维度表追加的全面指纹特征，大盘会把铁证直接拍在内鬼脸上：
-  * **动机清算**：通过 `command_line` 直接看清它背后执行的完整静默脚本参数与恶意下载源。
-  * **特权审计**：通过 `is_elevated` 抓出它是否暗中通过提权拿到了 Administrator 权限。
-  * **真伪识破**：通过 `signature_status` 数字签名状态判定，一眼看穿它到底是微软官方核心文件（值为1），还是无签名的病毒伪装者（值为0）。
-
-### 3. `svchost.exe` 寄生内鬼终极剥离
-* **痛点**：Windows 任务管理器里最让人头疼的是，经常看到数十个 `svchost.exe` 吃满了 CPU 或疯狂读写硬盘，但你根本不知道这堆母进程里到底是哪一个具体服务在作恶。
-* **数仓破案**：探针在内存层深度解耦。当映像名为 `svchost.exe` 时，活动舱通过 `proc.services()` 内核流自动识别，在数仓中通过 `service_name` 字段精准还原出其背后寄生的具体系统服务（如 `SysMain` 或第三方驱动服务名），直接把锅扣到具体的幕后黑手头上。
-
-### 4. 窗口形态与拉伸重绘冲突审计
-* **痛点**：很多卡牌游戏或挂机工具在窗口化运行、高频切屏时，往往会引发诡异的底层排队延迟。
-* **数仓破案**：大盘通过联动 `window_mode`（全屏/窗口化形态）与全局的 `system_dpc_latency`（DPC 延迟）、`system_context_switches`（上下文切换率），一眼判定是不是由于窗口化拉伸触发了系统的底层 D3D 重绘冲突。
-
-### 5. 9950X3D 跨 CCD 调度瘫痪与 RTX 5080 撞墙尸检
-* **痛点**：顶级硬件没有跑满满血性能，出现莫名其妙的帧率抖动。
-* **数仓破案**：
-  * **CPU 侧（AMD 9950X3D）**：通过 `proc_cpu_affinity` 锁死 32 位全线程掩码，并在数据层引入 `cpu_ccd0_usage` 与 `cpu_ccd1_usage`。复盘时直接透视游戏进程主要跑在哪个 CCD 上。如果发现游戏线程横跨或挤占到了非常规高频的 CCD1，而大缓存 V-Cache CCD0 发生瘫痪，一针见血确诊系统调度瘫痪。
-  * **GPU 侧（NVIDIA RTX 5080 Blackwell）**：硬件性能舱内嵌 Blackwell 极限能效解码器，高频捕捉 `gpu_throttling_reasons` 二进制状态位，秒懂 5080 在那一秒钟发生降频掉速是因为撞了功耗墙（`SW_POWER`）、温度热点（`HW_THERMAL`）超标，还是电源瞬时压降导致的电压墙。
-
-### 6. 进程无故闪退“死因溯源”
-* **痛点**：写代码跑脚本或大型游戏在毫无征兆的情况下突然“咔哒”一声闪退，桌面上什么都没留下，Windows 事件查看器里只有一堆废话。
-* **数仓破案**：事实表通过 `exit_code` 牢牢锁死退出代码。你可以在卡顿舱中直接调出它死前最后一秒的全量账单（比如 `0xC0000005` 代表内存越界非法访问直接崩溃，或者是被哪个父进程强行掐断），真正做到活要见人，死要见尸。
+> 想直接装起来 / 换电脑 / 灾后恢复？看隔壁的 **[快速部署.md](快速部署.md)**。
 
 ---
 
-## 🎨 视觉常态化大盘呈现 (`Grafana`)
+## 1. 一句话：它解决什么问题？
 
-数据层在月度/周度分区和覆盖索引的加持下，在本地形成了冷酷、没有断层的“全维硬件时空长河”。在 Grafana 前端定制了**“PC 时空穿梭主舱”**页面：
+普通的任务管理器只能看"此刻"，看完就没了。**TimeAudit 的核心是"留底"+"回放"**——它把你电脑每一秒的状态都存下来，于是你可以**事后**回答这些问题：
 
-* **顶层宏观常态面**：用大字报常态化显示系统今天的累计开机时长（已剔除睡眠）、键鼠活跃估计总时间、显示器熄灭时长及深睡眠状态。
-* **中层时空复盘轴**：一根雷打不动的横向时间轴。无论你把时间拖到哪一天，下方的折线图都会平滑地拉出那一天的温度、功耗、网络 Ping 值以及 Packet Loss 心电图。
-* **底层微观动机网**：在大盘里框选任意一个常态区间，下方会自动联动专注时间流（心流时刻），清晰地按使用时长和开销降序排列出那段时间你运行过的所有前后台程序和具体窗口上下文（如：正在用 Chrome 查阅 `Google Gemini` 的具体业务）。
-* **算力电费与健康老化大账单**：锁死 `cpu_package_power` 与 `gpu_board_power`。通过积分公式 $\sum (\text{功耗} \times \text{时间})$，精准算出来你的电脑通宵跑 AI 训练或大规模编译消耗了多少度电，并对比数月满载下的平均温度线，在显卡硅脂热解缩缸前发出自主更换提示。
+| 你想知道的事 | TimeAudit 怎么回答 |
+| :--- | :--- |
+| "刚才打游戏突然卡了一下，到底谁干的？" | 把时间轴拖回那 2 秒，看那一刻是哪个后台进程突然狂读硬盘 / 网络丢包 / GPU 撞了功耗墙。 |
+| "我的硬盘半夜一直在响，是谁？" | 查 `is_foreground=0` 的后台进程，按磁盘读写速率排序，凶手立现。 |
+| "几十个 svchost.exe 哪个在吃 CPU？" | 每个 svchost 都还原出了它背后真正的服务名（`service_name`）。 |
+| "这个进程是不是病毒伪装的系统文件？" | 看 `signature_status`（数字签名）和 `command_line`（完整启动命令）。 |
+| "我今天到底在哪个软件上花了最多时间？" | 前台聚焦时长（`duration_ms`）按 App 汇总。 |
+| "通宵跑 AI 训练耗了多少电？" | 对 `gpu_board_power` + `cpu_package_power` 按时间积分。 |
+| "那个程序无缘无故闪退，死因是什么？" | 查它的 `EXIT` 事件里的退出码（如 `0xC0000005` = 内存非法访问）。 |
+
+**适用场景**：个人的高配工作站（本项目就是为 Windows 11 + AMD 9950X3D + RTX 5080 这套机器调的），
+想长期、细粒度地审计自己电脑的性能与时间花销。它**不是**给公司批量部署的监控（没有多机、没有告警推送），就是一个硬核极客的"自己电脑的飞行记录仪"。
 
 ---
 
-## 🛠️ 后端分布式探针架构
-
-```text
-TimeAudit/
-├── main.py                # 中央主控心跳核心 (带自愈外壳与日志 50MB 无感物理截断)
-├── context_worker.py      # 前台上下文舱 (Win32 API 高频轮询、切窗焦点句柄状态机)
-├── activity_worker.py     # 活跃进程舱 (批量进程元数据动态提取、网络连接及磁盘 I/O Delta 运算)
-├── hardware_worker.py     # 硬件性能舱 (Blackwell 状态位解码、PDH-CPPC 引擎、PresentMon 监听器)
-├── lifecycle_worker.py    # 离散事件舱 (内存级 PID 差分引擎，秒级判定 START 与 EXIT 离散事件)
-├── Dockerfile             # Ingest 异步数据管道离线自动化构建配置
-├── docker-compose.yml     # 核心持久层生态 (PostgreSQL 15 + Grafana OSS)
-├── start_all.bat          # 宿主机开机自启完全隐形守护脚本
-└── 任务管理器.docx        # 数仓架构王牌设计白皮书
-```
-
-### 💎 硬核工程优化亮点
-
-1. **网络流控动态清洗**：针对浏览器（Chrome/Edge）等高频产生冗余 CLI 进程的特性，`sanitize_command_line` 采用精准正则，将带有动态句柄、客户端 ID（如 `--mojo-platform-channel-handle=\d+`）的复杂命令行统一剪裁为标准化占位符，**降低维度表 90% 冗余碰撞率**。
-2. **多候选 PDH CPPC 引擎底座**：针对 Windows 核心技术计数器容易因主板型号、系统语言不同而绑定失败的问题，硬件性能舱开发了多候选路径探测绑定器，并网自愈ACPI，在 PDH 传感器未就绪时自动启动 WMI 星链降级与物理拟合补偿机制。
-3. **高精度用户态 DPC 延迟监测**：主循环并发挂载 `DpcLatencyChecker` 线程，通过调用内核 `winmm.timeBeginPeriod(1)` 锁死微秒级时钟切片，高频测量硬件中断排队引发的用户态微观抖动（Jitter）。
-4. **零开销内存高速缓存**：在 `activity_worker` 中引入 `path_elevation_cache` 路径-特权本地高速缓存，当高频扫描遇到进程已死的极端场景，系统逐级降级从内存和归档中打捞历史状态，彻底消灭单人工作站并发穿透开销。
-5. **绝对主时钟对齐**：主控循环末尾采用精确计时对齐算法，动态计算当前一轮所有舱室采样耗费的真实毫秒数，并在 `asyncio.sleep()` 中物理扣除该增量值，**彻底消灭累积时钟漂移**。
-
-## 🗄️ 数仓 DDL 物理分区与索引蓝图
-
-项目在持久层建立了极其严密的覆盖索引与物理范围划分策略，确保高频采样下 NVMe 固态硬盘的 I/O 永远通透：
-
-### 维度指纹表：`dim_process_registry`
-
-通过精细的复合唯一索引，杜绝多舱并发插入时的事务死锁与主键冲突：
-
-SQL
+## 2. 整体怎么转？（数据从哪来，到哪去）
 
 ```
-CREATE UNIQUE INDEX idx_unique_process_bloodline ON dim_process_registry (
-    process_name, 
-    md5(executable_path), 
-    COALESCE(parent_process, ''::character varying),
-    md5(COALESCE(command_line, ''::text)), 
-    COALESCE(service_name, ''::character varying),
-    is_elevated, 
-    signature_status
-);
+┌─────────────────────────── 你的 Windows 11 主机 ───────────────────────────┐
+│                                                                            │
+│  采集端（宿主机，管理员权限运行）                                          │
+│                                                                            │
+│   main.py  ──┬─ context_worker   前台窗口：哪个窗口在用、标题、聚焦多久      │
+│  (总调度)    ├─ activity_worker   每个活跃进程：CPU/GPU/内存/显存/磁盘/网络  │
+│              ├─ hardware_worker   整机硬件：FPS/温度/功耗/电压/时钟/Ping     │
+│              └─ lifecycle_worker  进程出生(START)/死亡(EXIT)事件 + 退出码    │
+│                     │         ▲                                            │
+│                     │         │ 读硬件真值                                  │
+│                     │     LibreHardwareMonitor.exe (CPU/GPU 电压温度, HTTP :8085)
+│                     │     PresentMonConsole.exe     (游戏 FPS / 帧时间)      │
+│                     ▼                                                       │
+│             [asyncpg 异步批量写入]                                          │
+│                     │                                                       │
+│  另一条独立旧管线：   │                                                       │
+│   TimeAudit.ahk ─→ log/buffer.csv ─→ (容器内) ingest.py ─→ app_usage_logs   │
+│                     │                                                       │
+└─────────────────────┼──────────────────────────────────────────────────────┘
+                      ▼
+        ┌──────────── Docker 容器群 (docker-compose) ────────────┐
+        │  audit-postgres   PostgreSQL 15   端口 55432  ← 数据仓库 │
+        │  audit-ingester   跑 ingest.py    搬 CSV→app_usage_logs  │
+        │  audit-grafana    Grafana 大盘    端口 53000  ← 看数据   │
+        └────────────────────────────────────────────────────────┘
+                      ▲
+                      │ 浏览器打开 http://localhost:53000
+                  （你在这里看图）
 ```
 
-### 时序事实表物理 Range 分区分配
+一句话总结：**采集端（Python）每 3 秒采一拍 → 直接写进 Docker 里的 PostgreSQL → 你用浏览器开 Grafana 看图。**
 
-数据层采用全自动预热机制（`auto_warmup_partitions`），每 12 小时自动预构建并绑定未来物理舱室：
+---
 
-- **`fact_process_context`（上下文切窗事实表）**：按**周**进行物理分区划分（如 `fact_process_context_y2026w24`）。
-- **`fact_process_activity`（进程活跃事实表）**：按**周**进行物理分区划分，并针对频繁查询的 CPU/GPU 指标挂载了覆盖索引 `idx_process_activity_ts_key_covering`。
-- **`fact_process_lifecycle_events`（生命周期离散事实表）**：挂载 `idx_lifecycle_lookup` 索引，实现对死前最后一秒的全量追踪。
-- **`fact_system_hardware`（系统硬件性能事实表）**：按**月**进行高精分区（如 `fact_system_hardware_y2026m06`），全量承载 FPS、DPC 延迟、电压及双 CCD 负载。
+## 3. ⚠️ 一个容易搞混的点：这里其实有"两条"数据管线
 
-## 🛠️ 宿主机自动化运维指南
+项目历史上长出了两套前台记录，**它们同时在跑、互不干扰**，新手最容易在这里懵：
 
-### 1. 实时查看日志流 (PowerShell 原生支持)
+| | 管线 A：旧版「简版工时」 | 管线 B：主引擎「全量遥测」 |
+| :--- | :--- | :--- |
+| 谁采集 | `TimeAudit.ahk`（AutoHotkey 脚本） | `main.py` + 5 个 worker（Python） |
+| 采什么 | 只采"前台哪个窗口、用了多久"，自带空闲/睡眠/锁屏判定 | 前台窗口 + 全部进程指标 + 整机硬件 + 进程生死 |
+| 怎么落库 | 先写 `log/buffer.csv`，再由容器里的 `ingest.py` 每 10 秒搬进数据库 | Python 直接异步写数据库 |
+| 进哪张表 | `app_usage_logs`（一张简单表） | `fact_*` / `dim_*` 一套分区事实表 |
 
-得益于 `main.py` 的行级物理缓冲，你可以在任何时候打开 PowerShell 运行以下指令，微秒级流式同步查看探针内核的“迎接新生”和“临终尸检”报告：
+**你真正要看的、信息量最大的，是管线 B（`fact_*` 表）**。管线 A 是更早的轻量版本，留着兜底/对照。
+本 README 后面讲的"采集舱""数据表"主要指**管线 B**。
 
-PowerShell
+---
+
+## 4. 采集端：5 个 worker 各管一摊
+
+主程序 `main.py` 是"总指挥"：它建数据库连接池、把 4 个采集 worker 拉起来，然后进入一个**每 3 秒一拍**的主循环，
+每拍让各 worker 采一次数据并批量写库。下面逐个说人话。
+
+### `main.py` — 总调度 + 守护外壳
+- 每 3 秒一拍驱动所有采集。
+- **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
+- **崩溃自愈外壳**：主循环若整个崩了，外层 `while True` 会等 5 秒重启它。
+- **睡眠/唤醒处理**（重点，见第 7 节）：用"墙上时间"判断系统是否刚从睡眠/休眠醒来，醒来后把跨睡眠的脏数据截断掉。
+- **冷启动清理**：每次启动先把上次"关机时没来得及收尾"的前台会话补上结束时间（否则会留下永远不结束的"幽灵行"）。
+- **分区预热**：每 12 小时（按墙上时间）提前把"下一周/下一月"的数据库分区建好，免得到了周一零点没表可写而丢数据。
+- **日志治理**：`telemetry.log` 超过 50MB 自动清空截断。
+
+### `context_worker.py` — 前台上下文舱
+- 用 Win32 API 高频问："现在最前面的窗口是谁、标题是什么、是全屏还是窗口"。
+- 窗口一换，就把上一个窗口的会话"结算"：写下它聚焦了多少毫秒（`duration_ms`）。
+- 写进 `fact_process_context`。
+
+### `activity_worker.py` — 活跃进程舱
+- 用 NTDLL 一次性拿到全系统进程快照（比逐个 psutil 快得多），算出每个进程这一拍的 CPU、磁盘读写、IOPS（都是"速率"，靠两拍差分算）。
+- GPU 显存/占用走 Windows 图形内核的 PDH 计数器（和任务管理器同源），并**只认 RTX 5080 这张独显**（按厂商 ID 锁 LUID，隔离核显和虚拟显示器，见第 7 节）。
+- 网络流量按"每进程连接数占比"近似分摊（这是个已知的粗略估算，不是精确值）。
+- 写进 `fact_process_activity`，并维护进程身份维度表 `dim_process_registry`。
+
+### `hardware_worker.py` — 整机硬件舱
+- NVML 读 GPU：利用率、温度、功耗、显存时钟、PCIe、降频原因。
+- PDH 读 CPU：频率、ACPI 温度、硬缺页等。
+- **LibreHardwareMonitor**（外部 exe）通过 HTTP `http://127.0.0.1:8085/data.json` 读 NVML/PDH 给不出来的真值：CPU 核心电压(Vcore)、CPU 封装温度(Tctl/Tdie)、GPU 核心电压、GPU 热点温度。
+- **PresentMonConsole**（外部 exe）抓游戏的 FPS / 帧时间 / 1% Low。
+- 自己测 DPC 延迟、Ping、丢包、抖动。
+- 这两个外部 exe 都有**看门狗**：进程没了自动隐身重启；LHM 的网页服务卡死了也会强杀重拉。
+- 写进 `fact_system_hardware`。
+
+### `lifecycle_worker.py` — 进程生死舱
+- 每秒对全系统进程做一次"差分"：这一秒多出来的就是"出生(START)"，少掉的就是"死亡(EXIT)"。
+- 进程出生时就提前抓住它的内核句柄，这样它死的时候才能读到**真实退出码**（如 `0xC0000005`）和存活时长。
+- 顺带做"数字签名校验"（判断是不是微软官方签名）和"是否提权"。
+- 写进 `fact_process_lifecycle_events`。
+
+---
+
+## 5. 数据库里有哪些表？（每张表存什么，大白话）
+
+数据库名 `time_audit`，跑在 Docker 容器 `audit-postgres` 里，宿主机端口 **55432**。
+
+| 表名 | 类型 | 存什么 | 怎么分区 |
+| :--- | :--- | :--- | :--- |
+| `dim_process_registry` | 维度表 | 每个"独一无二的程序身份"一行：进程名+路径+命令行+父进程+是否提权+签名状态。事实表用整数 `process_key` 指向它，省空间。 | 不分区 |
+| `fact_process_activity` | 事实表 | 每 3 秒 × 每个活跃进程一行：CPU/GPU/内存/显存/磁盘/网络/线程数等。 | 按**周** |
+| `fact_process_context` | 事实表 | 前台窗口会话：哪个窗口、标题、`duration_ms`（聚焦多久）。 | 按**周** |
+| `fact_system_hardware` | 事实表 | 每 3 秒一行整机硬件画像：FPS、CPU/GPU 温度功耗电压时钟、内存、磁盘延迟、Ping。 | 按**月** |
+| `fact_process_lifecycle_events` | 事实表 | 进程 START/EXIT 离散事件 + 退出码 + 存活秒数。 | 不分区 |
+| `app_usage_logs` | 旧版表 | 管线 A（AHK→CSV）的简版前台工时。 | 不分区 |
+
+**几个关键字段的含义**（看图时会用到）：
+
+- `proc_cpu_usage`：**整机口径 0–100%**（已按 32 个逻辑核归一化）。不是单核百分比，所以一个多线程进程也不会超过 100%。
+- `signature_status`：`1`=有效数字签名（多半是正经软件），`0`=没签名（可疑），`-1/-2`=校验出错。
+- `is_elevated`：`1`=管理员权限运行，`0`=普通，`-1/-2`=查不到。
+- `window_mode`：`2`=全屏/无边框，`3`=普通窗口。
+- `gpu_throttling_reasons`：GPU 降频原因的二进制位（撞功耗墙/温度墙等）。
+- `duration_ms`：前台窗口连续聚焦的毫秒数。**注意**：跨睡眠/锁屏的会话会被引擎截断，不会把睡觉时间算成"在用"。
+
+> 完整建表语句见 **[schema.sql](schema.sql)**（全新装机时用它建表）。
+
+---
+
+## 6. 存储 + 展示：Docker 那三个容器
+
+`docker-compose.yml` 定义了 3 个容器（开机由 `start_all.bat` 里的 `docker compose up -d` 拉起）：
+
+| 容器 | 镜像 | 端口 | 干嘛 |
+| :--- | :--- | :--- | :--- |
+| `audit-postgres` | postgres:15-alpine | `55432→5432` | 数据仓库。数据存在宿主机 `./postgres_data` 目录。 |
+| `audit-ingester` | 本地 Dockerfile 构建 | 无 | 跑 `ingest.py`，每 10 秒把 `log/buffer.csv` 搬进 `app_usage_logs`。 |
+| `audit-grafana` | grafana-oss:latest | `53000→3000` | 网页大盘。配置从 `./grafana_provisioning` 注入，数据存 `./grafana_data`。 |
+
+**账号/端口速查**：
+
+- PostgreSQL：`localhost:55432`，用户 `leyang`，密码 `SecurePassword123`，库 `time_audit`。
+- Grafana：浏览器开 `http://localhost:53000`。
+
+---
+
+## 7. 关键设计 & 千万别踩的坑（给 AI 维护者重点看）
+
+这一节是整个项目最值钱的部分——很多写法是**故意这样写的**，看着别扭但有血泪原因。改代码前务必读完。
+
+1. **睡眠/关机边界，一律用"墙上时间"`time.time()`，绝不用"单调时钟"。**
+   `asyncio` 的事件循环时钟（单调时钟 monotonic）在系统睡眠时会**暂停**，所以"靠单调时钟跳变来判断唤醒"是永远不会触发的死代码。
+   现在 `main.py` 用墙上时间差（超过 60 秒）判断刚睡醒，醒来后会：① 把当前前台会话按"睡前那一刻"截断（否则你合盖睡 8 小时，醒来会被算成"看了这个文档 8 小时"——这是真实发生过的 24 小时脏数据）；② 重置网络/CPU 速率基线；③ 强制补建分区。
+
+2. **网络/CPU/IO 的"速率"用单调时钟 `time.monotonic()`，免疫 NTP 对时回拨。**
+   墙上时间偶尔会被 NTP 往回拨几秒，如果用它算速率，分母会变成极小值导致瞬间几千倍的假尖刺。所以**速率算分母**用单调时钟，而**落库时间戳**用墙上时间（UTC）。两者分工不能混。
+
+3. **前台会话时长 `duration_ms` 永远不为负。** 不管是正常切窗还是睡眠截断，结束时间若早于开始时间，一律收敛成 0。
+
+4. **`fact_process_context` 的 UPDATE 必须带 `timestamp` 主键。**
+   闭合前台会话的 UPDATE 语句 WHERE 里一定要带分区键 `timestamp`，否则会扫遍所有周/月分区（慢），而且 Windows 复用 PID 时还可能误闭合几个月前的旧行。
+
+5. **每进程 CPU 归一化到 0–100%**（除以逻辑核数并封顶）。不要改回"单核百分比"，否则多线程进程会冒出 2500% 这种吓人的值。
+
+6. **GPU 只认 RTX 5080 这张独显。** 这台机器有三个显示适配器（RTX5080 独显 + AMD 核显 + 向日葵虚拟显示器）。核显是 UMA 架构会把系统内存误报成几十 GB"专用显存"。所以开机时从注册表按厂商 ID(NVIDIA=0x10DE) 锁定独显的 LUID 前缀，之后每进程 GPU 数据只认这张卡。
+
+7. **NVML 的每个易失败调用要各自隔离。**
+   降频原因、PCIe 吞吐这些调用在某些驱动版本会抛异常；它们各自包了 try，单个失败不会把整块 GPU 采集拖垮、更不会触发 `nvmlShutdown` 把 GPU 数据全部清零。（注：throttle 接口在本机 RTX5080 上实测是支持的，不会崩。）
+
+8. **两个外部 exe 必须保持在线，靠"看门狗重拉"而不是"降级造假"。**
+   LibreHardwareMonitor / PresentMon 掉了就自动隐身重启；LHM 网页服务卡死连续 ~15 秒也强杀重拉。理念是"要么采到真值，要么重启再采，绝不写假数据"。
+
+9. **外部 exe 需要管理员权限。** 非提权环境下 PresentMon/LHM 会报 `WinError 740`，引擎会退避重试而**不会崩**，但拿不到 FPS/电压。所以**引擎必须以管理员身份运行**（开机自启任务已配好提权，见快速部署.md）。
+
+10. **日志会自动控制大小**：`telemetry.log` 超 50MB 截断；`presentmon_debug.log` 用滚动文件处理器封顶 ~15MB。
+
+11. **进程差分扫描器的快照推进放在 `finally` 里**：即使处理某个进程时抛异常，也保证基线快照前进，不会把同一个 START/EXIT 事件重复投递。
+
+---
+
+## 8. 怎么跑起来 / 怎么看数据 / 怎么排查
+
+> 完整安装、换机、容灾步骤在 **[快速部署.md](快速部署.md)**。这里只列日常最常用的几条。
+
+**看实时日志**（引擎在干嘛、谁出生谁死亡）：
+```powershell
+Get-Content -Wait -Tail 20 E:\TimeAudit\telemetry.log -Encoding utf8
+```
+
+**一键体检**（强烈推荐排查问题时先跑它，会逐项检查：组件存活 / 真值入库 / CPU 归一化 / 显存锁卡 / 分区建表 / 数据质量）：
+```powershell
+python E:\TimeAudit\test_telemetry_health.py
+```
+
+**跑单元测试套件**（改完代码后回归，应 6/6 全绿）：
+```powershell
+python E:\TimeAudit\telemetry_test_suite.py
+```
+
+**手动重启引擎**（用配好的提权计划任务，最干净）：
+```powershell
+schtasks /run /tn TimeAudit_AutoStart
+```
+
+**手动备份数据库**：
+```powershell
+powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_db.ps1
+```
+
+**看大盘**：浏览器开 `http://localhost:53000`。
+
+---
+
+## 9. 目录结构
 
 ```
-Get-Content -Wait -Tail 10 E:\TimeAudit\telemetry.log -Encoding utf8
+E:\TimeAudit\
+├── main.py                  总调度 + 3 秒主循环 + 睡眠/分区/自愈
+├── context_worker.py        前台窗口上下文舱 → fact_process_context
+├── activity_worker.py       活跃进程舱 → fact_process_activity (+ dim_process_registry)
+├── hardware_worker.py       整机硬件舱 → fact_system_hardware
+├── lifecycle_worker.py      进程生死舱 → fact_process_lifecycle_events
+│
+├── TimeAudit.ahk            旧版前台工时脚本（管线 A）→ log/buffer.csv
+├── ingest.py                容器内：把 buffer.csv 搬进 app_usage_logs
+│
+├── docker-compose.yml       Postgres + Ingester + Grafana 三容器编排
+├── Dockerfile               Ingester 容器构建
+├── schema.sql               【全新装机用】建好所有父表+索引
+├── requirements.txt         宿主机 Python 依赖 (psutil / nvidia-ml-py / asyncpg)
+├── backup_db.ps1            一键备份数据库（pg_dump -Fc + 自动清旧）
+│
+├── start_all.bat            开机自启：拉起 AHK + Docker + 提权的 main.py
+├── check_status_gui.ps1     图形化状态体检小工具
+│
+├── test_telemetry_health.py 在线健康综合体检（先跑它排查问题）
+├── telemetry_test_suite.py  单元/集成测试套件（6 个用例）
+│
+├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :8085）
+├── PresentMonConsole.exe    外部帧率探针（FPS / 帧时间）
+│
+├── postgres_data/           PostgreSQL 数据卷（别手删！）
+├── grafana_data/            Grafana 数据卷
+├── grafana_provisioning/    Grafana 大盘配置（自动注入容器）
+├── backups/                 backup_db.ps1 生成的备份
+└── log/                     AHK 的 buffer.csv 缓冲目录
 ```
 
-### 2. 物理截断保障
+---
 
-当 `telemetry.log` 的物理体积超越 **50MB** 时，中央主控会自动在预热周期中安全剥离当前接管的句柄，执行 `"w"` 模式无感清空置零，PowerShell 的 `-Wait` 句柄不会中断，同时确保 VS Code 任何时候都能秒开。
+## 10. 给 AI 维护者的快速上手清单
+
+1. **先读第 7 节"关键设计 & 坑"**，那里是历史血泪，照着它就不会把修好的 bug 改回去。
+2. **改完代码先跑两件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。
+3. **跑测试要用 UTF-8**：默认 GBK 控制台会因日志里的 emoji 崩；套件已自愈 stdout，但你手动跑别的脚本时记得 `PYTHONUTF8=1`。
+4. **这是写密集时序库**：每 3 秒几十行写入。加索引、改表结构前先想清楚写放大代价。
+5. **本机就是目标机**（RTX 5080 + 9950X3D，PostgreSQL 跑在 55432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
+6. **测试里 mock NVML 时，假句柄(MagicMock)千万别传给真实 NVML 函数**——会在 C 层访问违例直接把进程干崩（try/except 拦不住）。所有 NVML 函数名都要 mock 到位。
+
+---
+
+*TimeAudit 是个人项目。数据全部留在本机，不上传任何云端。*

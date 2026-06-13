@@ -1,0 +1,20 @@
+# ============================================================
+# TimeAudit 宿主机 Python 遥测引擎依赖
+# 安装:  pip install -r requirements.txt
+# ============================================================
+
+# 进程 / 网络连接 / 磁盘 IO / 内存 采集（跨进程系统信息）
+psutil>=5.9
+
+# NVIDIA 显卡 NVML 绑定：读取 GPU 利用率、温度、功耗、显存、PCIe、降频原因。
+# 官方包名是 nvidia-ml-py，但 import 名仍是 pynvml（即 `import pynvml`）。
+# 旧的同名 pynvml 包已废弃；新装机请用 nvidia-ml-py。
+nvidia-ml-py>=12.535
+
+# PostgreSQL 异步高并发写入驱动（main.py 批量落库用）
+asyncpg>=0.29
+
+# 说明：
+# - 本引擎其余底层调用（Win32 句柄、Wintrust 数字签名、PDH 性能计数器、NTDLL 进程快照）
+#   全部走 Python 自带的 ctypes，不需要 pywin32。
+# - Docker 容器里的 ingest.py 用的是 psycopg（写在 Dockerfile 里，宿主机不用装）。

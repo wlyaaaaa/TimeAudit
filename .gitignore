@@ -6,3 +6,12 @@ telemetry.log
 __pycache__/
 *.pyc
 time_audit_perfect_archive.sql
+
+# 数据库备份（本地/异地保存，不进版本库）
+backups/
+
+# 临时/调试草稿文件
+_live_dash.json
+_panels_dump.txt
+tmp_dash/
+_suite*.txt

@@ -278,12 +278,15 @@ class HardwareTelemetryWorker:
     def _start_presentmon_listener(self):
         import queue
         import logging
+        from logging.handlers import RotatingFileHandler
         pm_logger = logging.getLogger("PresentMon_Debugger")
         pm_logger.setLevel(logging.DEBUG)
         if not pm_logger.handlers:
             script_dir = os.path.dirname(os.path.abspath(__file__))
             log_path = os.path.join(script_dir, "presentmon_debug.log")
-            fh = logging.FileHandler(log_path, encoding='utf-8')
+            # 【日志治理】用滚动文件处理器替代裸 FileHandler：单文件封顶 5MB、保留 2 个历史份，
+            # 总占用 ≤ ~15MB。此前是无上限 FileHandler，7x24 常驻数月会无声膨胀到 GB 级。
+            fh = RotatingFileHandler(log_path, maxBytes=5 * 1024 * 1024, backupCount=2, encoding='utf-8')
             fh.setFormatter(logging.Formatter('%(asctime)s - [%(levelname)s] - %(message)s'))
             pm_logger.addHandler(fh)
 
