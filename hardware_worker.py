@@ -480,6 +480,7 @@ class HardwareTelemetryWorker:
 
         url = "http://127.0.0.1:%d/data.json" % self._read_lhm_port()
         lhm_process = None
+        lhm_stuck_fails = 0   # 连续 JSON 拉取失败计数：进程在但 Web 服务卡死时据此强制重启自愈
         lhm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitor.exe")
 
         def flatten(node, path, out):
@@ -520,10 +521,12 @@ class HardwareTelemetryWorker:
                                 print(f"[⚠️ 硬件探针] 自动看门狗拉起 LibreHardwareMonitor 失败: {e}")
 
                 cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
+                json_ok = False
                 try:
                     with urllib.request.urlopen(url, timeout=1.5) as resp:
                         flat = {}
                         flatten(_json.loads(resp.read().decode("utf-8", "ignore")), "", flat)
+                    json_ok = True
 
                     for key, raw in flat.items():
                         if key.endswith("/voltages/vcore"):
@@ -541,6 +544,31 @@ class HardwareTelemetryWorker:
                                 gpu_hotspot = v
                 except Exception:
                     pass
+
+                # 【自愈】LHM 进程在、但 Web 服务连续 ~15s 无响应(卡死/端口冲突)时，强制结束 LHM，
+                # 令上方看门狗拉起健康新实例 —— 贯彻"始终在采集、绝不默默降级为 NULL"。
+                if json_ok:
+                    lhm_stuck_fails = 0
+                else:
+                    lhm_stuck_fails += 1
+                    if lhm_stuck_fails >= 15:
+                        killed = False
+                        for proc in psutil.process_iter(['name']):
+                            try:
+                                if proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe":
+                                    proc.kill()
+                                    killed = True
+                            except Exception:
+                                pass
+                        if lhm_process:
+                            try:
+                                lhm_process.kill()
+                            except Exception:
+                                pass
+                            lhm_process = None
+                        if killed:
+                            print("[⚠️ 硬件探针] LHM Web 服务连续无响应，已强制重启以恢复真实采集(非降级)。")
+                        lhm_stuck_fails = 0
 
                 with self.wmi_lock:
                     self.cached_wmi_temp = cpu_temp

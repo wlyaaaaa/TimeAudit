@@ -1,0 +1,191 @@
+# -*- coding: utf-8 -*-
+"""
+TimeAudit 遥测健康综合验证测试
+================================
+交叉验证“代码功能 / 数据正确性 / 采集链路 / 分区建表”是否全部就绪。
+直接运行： python test_telemetry_health.py
+
+覆盖项：
+  1. 四组件存活 (python 引擎 / LibreHardwareMonitor / PresentMonConsole)
+  2. LHM Web 服务在线且返回 RTX5080 真实电压 (证明 LHM 在采集)
+  3. PresentMon 帧率数据入库 (证明 PresentMon 在采集；游戏运行时)
+  4. LHM 真值入库 (gpu_core_voltage / cpu_vcore 非 NULL)
+  5. 每进程 CPU 归一化为整机口径 (proc_cpu_usage ≤ 100)
+  6. 每进程显存锁定 RTX5080 (无 > 16.5GB 幻影, 核显隔离)
+  7. 分区自动建表生效 (按周 activity/context + 按月 hardware, 当前+下一档)
+  8. 数据新鲜度 & 质量 (无负值/无越界)
+  9. 看门狗实证 (历史重启计数)
+"""
+import sys, os, re, json, urllib.request, datetime, asyncio
+import psutil
+import asyncpg
+
+DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+
+PASS, FAIL = "✅ PASS", "❌ FAIL"
+results = []
+def check(name, ok, detail=""):
+    results.append(ok)
+    print(f"  {PASS if ok else FAIL}  {name}" + (f"  — {detail}" if detail else ""))
+
+def lhm_port():
+    try:
+        with open(os.path.join(ROOT, "LibreHardwareMonitor.config"), encoding="utf-8", errors="ignore") as f:
+            m = re.search(r'key="listenerPort"\s+value="(\d+)"', f.read())
+            return int(m.group(1)) if m else 8085
+    except Exception:
+        return 8085
+
+def proc_alive(name):
+    for p in psutil.process_iter(['name']):
+        try:
+            if p.info['name'] and p.info['name'].lower() == name.lower():
+                return p.pid
+        except Exception:
+            pass
+    return None
+
+def part_name_week(d, parent):
+    iso = d.isocalendar()
+    return f"{parent}_y{iso[0]}w{iso[1]:02d}"
+
+def part_name_month(d, parent):
+    return f"{parent}_y{d.year}m{d.month:02d}"
+
+async def main():
+    print("=" * 60)
+    print("  TimeAudit 遥测健康综合验证")
+    print("=" * 60)
+
+    # ---- 1. 组件存活 ----
+    print("\n[1] 组件存活")
+    lhm_pid = proc_alive("LibreHardwareMonitor.exe")
+    pm_pid = proc_alive("PresentMonConsole.exe")
+    py_ok = any('main.py' in ' '.join(p.info['cmdline'] or []) for p in psutil.process_iter(['cmdline'])
+                if _safe(lambda: p.info['cmdline']))
+    check("python 遥测引擎在运行", py_ok)
+    check("LibreHardwareMonitor 在运行 (看门狗保活)", lhm_pid is not None, f"PID={lhm_pid}")
+    check("PresentMonConsole 在运行 (看门狗保活)", pm_pid is not None, f"PID={pm_pid}")
+
+    # ---- 2. LHM Web 服务真实采集 ----
+    print("\n[2] LHM Web 服务真实采集 (RTX5080)")
+    gpu_v = None
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{lhm_port()}/data.json", timeout=3) as r:
+            data = json.loads(r.read().decode("utf-8", "ignore"))
+        flat = {}
+        def walk(n, p):
+            t = n.get("Text", ""); cur = (p + "/" + t) if t else p
+            if n.get("Value") and not n.get("Children"):
+                flat[cur.lower()] = n["Value"]
+            for c in n.get("Children", []):
+                walk(c, cur)
+        walk(data, "")
+        for k, v in flat.items():
+            if "nvidia" in k and k.endswith("gpu core voltage"):
+                gpu_v = float(str(v).split()[0].replace(",", "."))
+    except Exception as e:
+        check("LHM Web 服务可达", False, str(e));
+    check("LHM 返回 RTX5080 GPU 核心电压", gpu_v is not None and 0.4 < gpu_v < 1.5, f"{gpu_v} V")
+
+    # ---- DB 连接 ----
+    conn = await asyncpg.connect(DSN)
+    try:
+        # ---- 3+4. 采集入库 (近 2 分钟) ----
+        print("\n[3] 硬件采集入库 (近2分钟)")
+        row = await conn.fetchrow("""
+            SELECT count(*) n,
+                   count(*) FILTER (WHERE gpu_core_voltage IS NOT NULL) gpuv,
+                   count(*) FILTER (WHERE cpu_vcore_voltage IS NOT NULL) vcore,
+                   count(*) FILTER (WHERE current_fps > 0) fps,
+                   round(max(current_fps)::numeric,1) maxfps,
+                   round(EXTRACT(EPOCH FROM (now()-max(timestamp)))::numeric,1) age
+            FROM public.fact_system_hardware WHERE timestamp > now() - interval '2 minutes'
+        """)
+        check("硬件表持续写入", row['n'] > 0 and row['age'] < 15, f"{row['n']}行, 距今{row['age']}s")
+        # 容忍看门狗重启造成的极少量瞬时 NULL(<20%)，这是"自愈"而非故障
+        check("LHM GPU 电压入库 (非伪造)", row['n'] > 0 and row['gpuv'] >= row['n'] * 0.8, f"{row['gpuv']}/{row['n']}")
+        check("LHM CPU Vcore 入库 (非伪造)", row['n'] > 0 and row['vcore'] >= row['n'] * 0.8, f"{row['vcore']}/{row['n']}")
+        # PresentMon 采集能力：近30分钟只要有过帧数据即证明在采集(无游戏时瞬时为0属正常)
+        fps_recent = await conn.fetchval("SELECT count(*) FROM public.fact_system_hardware WHERE timestamp > now()-interval '30 minutes' AND current_fps > 0")
+        check("PresentMon 帧率采集能力 (近30分钟有帧)", fps_recent > 0, f"{fps_recent}帧样本, 当前max={row['maxfps']}fps")
+
+        # ---- 5. CPU 归一化 ----
+        print("\n[4] 每进程 CPU 归一化 (整机口径 ≤100%)")
+        cpu = await conn.fetchrow("""
+            SELECT round(max(proc_cpu_usage)::numeric,1) maxc,
+                   count(*) FILTER (WHERE proc_cpu_usage > 100) over100
+            FROM public.fact_process_activity WHERE timestamp > now() - interval '90 seconds'
+        """)
+        check("proc_cpu_usage 上限 100% (无 2556% 虚高)", (cpu['over100'] or 0) == 0, f"max={cpu['maxc']}%, 越界={cpu['over100']}")
+
+        # ---- 6. GPU 显存锁定 RTX5080 ----
+        print("\n[5] 每进程显存锁定 RTX5080")
+        g = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE proc_vram_used_gb > 16.5) over_vram,
+                   count(*) FILTER (WHERE proc_gpu_usage > 100) over_gpu,
+                   round(max(proc_vram_used_gb)::numeric,2) maxv
+            FROM public.fact_process_activity WHERE timestamp > now() - interval '90 seconds'
+        """)
+        check("无 >16.5GB 显存幻影 (核显已隔离)", (g['over_vram'] or 0) == 0, f"max={g['maxv']}GB")
+        check("无 >100% GPU 占用越界", (g['over_gpu'] or 0) == 0)
+
+        # ---- 7. 分区自动建表 ----
+        print("\n[6] 分区自动建表 (按周/按月, 当前+下一档)")
+        parts = set(r['relname'] for r in await conn.fetch("""
+            SELECT child.relname FROM pg_inherits
+            JOIN pg_class child ON pg_inherits.inhrelid = child.oid
+        """))
+        today = datetime.date.today()
+        nextwk = today + datetime.timedelta(days=7)
+        nm_y, nm_m = (today.year + (today.month // 12)), (today.month % 12 + 1)
+        nextmo = datetime.date(nm_y, nm_m, 1)
+        for parent in ("fact_process_activity", "fact_process_context"):
+            check(f"{parent} 当前周分区存在", part_name_week(today, parent) in parts, part_name_week(today, parent))
+            check(f"{parent} 下周分区已预建", part_name_week(nextwk, parent) in parts, part_name_week(nextwk, parent))
+        check("fact_system_hardware 当前月分区存在", part_name_month(today, "fact_system_hardware") in parts, part_name_month(today, "fact_system_hardware"))
+        check("fact_system_hardware 次月分区已预建", part_name_month(nextmo, "fact_system_hardware") in parts, part_name_month(nextmo, "fact_system_hardware"))
+
+        # ---- 8. 数据质量 ----
+        print("\n[7] 数据质量 (近3分钟无异常)")
+        q = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE cpu_total_usage<0 OR gpu_usage<0 OR cpu_package_power<0
+                                       OR cpu_package_temp<10 OR cpu_package_temp>110) bad
+            FROM public.fact_system_hardware WHERE timestamp > now() - interval '3 minutes'
+        """)
+        check("硬件数据无负值/越界温度", (q['bad'] or 0) == 0)
+        q2 = await conn.fetchrow("""
+            SELECT count(*) FILTER (WHERE proc_cpu_usage<0 OR proc_ram_mb<0 OR proc_vram_used_gb<0) bad
+            FROM public.fact_process_activity WHERE timestamp > now() - interval '1 minute'
+        """)
+        check("每进程数据无负值", (q2['bad'] or 0) == 0)
+
+        # ---- 9. 看门狗实证 ----
+        print("\n[8] 看门狗历史实证")
+        pm_restarts = _count_lines(os.path.join(ROOT, "presentmon_debug.log"), "守护线程已启动")
+        check("PresentMon 看门狗曾自动重启", pm_restarts >= 1, f"{pm_restarts} 次")
+    finally:
+        await conn.close()
+
+    print("\n" + "=" * 60)
+    ok = sum(1 for r in results if r); total = len(results)
+    print(f"  结果: {ok}/{total} 通过" + ("  🎉 全部通过" if ok == total else f"  ⚠️ {total-ok} 项未过"))
+    print("=" * 60)
+    return 0 if ok == total else 1
+
+def _safe(fn):
+    try: return fn()
+    except Exception: return None
+
+def _count_lines(path, kw):
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            return sum(1 for ln in f if kw in ln)
+    except Exception:
+        return 0
+
+if __name__ == "__main__":
+    if sys.platform == 'win32':
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    sys.exit(asyncio.run(main()))

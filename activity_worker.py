@@ -208,6 +208,7 @@ class ProcessActivityWorker:
         self.nvml_initialized = False
         self.gpu_handle = None
         self.gpu_total_vram_gb = 0.0   # RTX5080 整卡显存容量(GB)，每进程专用显存的物理上限
+        self.num_cpus = psutil.cpu_count(logical=True) or 1   # 逻辑核数(9950X3D=32)，用于把每进程 CPU 归一化为整机占用%
 
         self.cpu_time_cache = {}
         self.affinity_cache = {}
@@ -696,19 +697,23 @@ class ProcessActivityWorker:
                 next_io_cache[cache_key] = (r_bytes, w_bytes, r_ops, w_ops, other_bytes, now_ts)
             
             cpu_time = p_info["cpu_time"]
-            cpu = 0.0
+            cpu = 0.0       # 整机归一化占用% (0-100, 与任务管理器口径一致)
+            cpu_raw = 0.0   # 多核合计原始占用% (可超 100, 仅用于活跃度过滤的灵敏度保持)
             if cache_key in self.cpu_time_cache:
                 last_cpu_time, last_t = self.cpu_time_cache[cache_key]
                 dt = max(0.001, now_ts - last_t)
                 if dt >= 0.1:
-                    cpu = max(0.0, ((cpu_time - last_cpu_time) / dt) * 100.0)
+                    cpu_raw = max(0.0, ((cpu_time - last_cpu_time) / dt) * 100.0)
+                    # 【CPU 占用 bug 修复】按全部逻辑核(32)归一化并上限 100%。
+                    # 旧实现是"单核占用%"，多线程进程会累加到 2556% 等虚高值；现统一为整机口径 0-100。
+                    cpu = min(100.0, cpu_raw / self.num_cpus)
                     self.cpu_time_cache[cache_key] = (cpu_time, now_ts)
                 else:
                     self.cpu_time_cache[cache_key] = (last_cpu_time, last_t)
             else:
                 self.cpu_time_cache[cache_key] = (cpu_time, now_ts)
 
-            if cpu <= 0.1 and r_rate_mb <= 0.01 and w_rate_mb <= 0.01 and other_rate_kb <= 0.5: 
+            if cpu_raw <= 0.1 and r_rate_mb <= 0.01 and w_rate_mb <= 0.01 and other_rate_kb <= 0.5:
                 continue
 
             p_key = self.pid_key_cache.get(cache_key)
