@@ -125,15 +125,20 @@ def enforce_singleton():
         
     return mutex
 
+# 【关键】分区边界必须对齐北京时区(UTC+8)本地午夜，与 DDL 既有分区(边界 = 本地午夜 = 16:00 UTC)
+# 严格一致。否则自动建表会生成 UTC 午夜(= 北京 08:00)边界，与既有分区错位 8 小时，产生重叠/缝隙，
+# 导致预建分区用完后 CREATE 失败、写入丢数据。边界串带 +08 偏移，PostgreSQL 会正确存为 timestamptz。
+CN_TZ = datetime.timezone(datetime.timedelta(hours=8))
+
 def get_week_bounds(delta_weeks=0):
-    today = datetime.datetime.now(datetime.timezone.utc).date() + datetime.timedelta(weeks=delta_weeks)
+    today = datetime.datetime.now(CN_TZ).date() + datetime.timedelta(weeks=delta_weeks)
     monday = today - datetime.timedelta(days=today.weekday())
     next_monday = monday + datetime.timedelta(days=7)
     iso_year, iso_week, _ = monday.isocalendar()
-    return iso_year, iso_week, f"{monday} 00:00:00+00", f"{next_monday} 00:00:00+00"
+    return iso_year, iso_week, f"{monday} 00:00:00+08", f"{next_monday} 00:00:00+08"
 
 def get_month_bounds(delta_months=0):
-    today = datetime.datetime.now(datetime.timezone.utc).date()
+    today = datetime.datetime.now(CN_TZ).date()
     year = today.year
     month = today.month + delta_months
     while month > 12:
@@ -141,7 +146,7 @@ def get_month_bounds(delta_months=0):
         year += 1
     start_date = datetime.date(year, month, 1)
     end_date = datetime.date(year + 1, 1, 1) if month == 12 else datetime.date(year, month + 1, 1)
-    return year, month, f"{start_date} 00:00:00+00", f"{end_date} 00:00:00+00"
+    return year, month, f"{start_date} 00:00:00+08", f"{end_date} 00:00:00+08"
 
 async def auto_warmup_partitions(pool):
     async with pool.acquire() as conn:
