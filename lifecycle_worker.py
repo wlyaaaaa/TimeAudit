@@ -134,7 +134,9 @@ def check_catalog_signature(filepath):
     FILE_ATTRIBUTE_NORMAL = 0x80
     
     hFile = kernel32.CreateFileW(filepath, GENERIC_READ, FILE_SHARE_READ, None, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, None)
-    if hFile == -1 or hFile == 4294967295:
+    # 【修复】64 位 Python 下 CreateFileW 失败返回 INVALID_HANDLE_VALUE(-1)，经 c_void_p 还原为无符号
+    # 0xFFFFFFFFFFFFFFFF；它既不等于 -1 也不等于 32 位的 0xFFFFFFFF。漏判会拿无效句柄继续调用并泄露。
+    if not hFile or hFile in (-1, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF):
         return 0
     
     ctx = wintypes.HANDLE()
@@ -363,64 +365,68 @@ class ProcessLifecycleWorker:
                 if not self.is_running: break
                 
                 current_snapshot = get_process_snapshot()
-                
+
                 started_keys = set(current_snapshot.keys()) - set(last_snapshot.keys())
                 exited_keys = set(last_snapshot.keys()) - set(current_snapshot.keys())
-                
-                for pid, create_time in started_keys:
-                    pinfo = current_snapshot[(pid, create_time)]
-                    name = pinfo['name'] or "Unknown"
-                    try:
-                        proc_obj = psutil.Process(pid)
-                        exe = proc_obj.exe()
-                    except Exception:
-                        exe = f"C:\\Windows\\System32\\{name}"
 
-                    self.pid_start_time[pid] = create_time
-                    
-                    h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-                    if h_proc:
-                        self.pid_handles[pid] = h_proc
-                        
-                    metadata = self.harvest_live_pid_metadata_sync(pid, name, exe)
+                # 【修复】把基线快照推进放进 finally：即便下面任一 START/EXIT 处理(权限/极短命进程
+                # 的 Win32 查询)抛异常，也保证 last_snapshot 前进，避免下一拍基于旧快照重复差分、把
+                # 已投递过的 START/EXIT 二次投递(每次 now() 不同 → 主键不同 → 产生重复生命周期行)。
+                try:
+                    for pid, create_time in started_keys:
+                        pinfo = current_snapshot[(pid, create_time)]
+                        name = pinfo['name'] or "Unknown"
+                        try:
+                            proc_obj = psutil.Process(pid)
+                            exe = proc_obj.exe()
+                        except Exception:
+                            exe = f"C:\\Windows\\System32\\{name}"
 
-                    loop.call_soon_threadsafe(
-                        self.event_queue.put_nowait,
-                        {
-                            "type": "START", 
-                            "os_pid": pid, 
-                            "name": name, 
-                            "exe": exe, 
-                            "metadata": metadata,
-                            "timestamp": datetime.datetime.now(datetime.timezone.utc)
-                        }
-                    )
-                
-                for pid, create_time in exited_keys:
-                    start_ts = self.pid_start_time.pop(pid, None)
-                    lifetime_sec = int(time.time() - start_ts) if start_ts else None
-                    
-                    exit_code_str = "0x00000000"
-                    h_proc = self.pid_handles.pop(pid, None)
-                    if h_proc:
-                        exit_code = wintypes.DWORD()
-                        if kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)):
-                            if exit_code.value != 259:  
-                                exit_code_str = f"0x{exit_code.value:08X}"
-                        kernel32.CloseHandle(h_proc)
-                    
-                    loop.call_soon_threadsafe(
-                        self.event_queue.put_nowait,
-                        {
-                            "type": "EXIT", 
-                            "os_pid": pid, 
-                            "lifetime_sec": lifetime_sec, 
-                            "exit_code": exit_code_str, 
-                            "timestamp": datetime.datetime.now(datetime.timezone.utc)
-                        }
-                    )
-                
-                last_snapshot = current_snapshot
+                        self.pid_start_time[pid] = create_time
+
+                        h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+                        if h_proc:
+                            self.pid_handles[pid] = h_proc
+
+                        metadata = self.harvest_live_pid_metadata_sync(pid, name, exe)
+
+                        loop.call_soon_threadsafe(
+                            self.event_queue.put_nowait,
+                            {
+                                "type": "START",
+                                "os_pid": pid,
+                                "name": name,
+                                "exe": exe,
+                                "metadata": metadata,
+                                "timestamp": datetime.datetime.now(datetime.timezone.utc)
+                            }
+                        )
+
+                    for pid, create_time in exited_keys:
+                        start_ts = self.pid_start_time.pop(pid, None)
+                        lifetime_sec = int(time.time() - start_ts) if start_ts else None
+
+                        exit_code_str = "0x00000000"
+                        h_proc = self.pid_handles.pop(pid, None)
+                        if h_proc:
+                            exit_code = wintypes.DWORD()
+                            if kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)):
+                                if exit_code.value != 259:
+                                    exit_code_str = f"0x{exit_code.value:08X}"
+                            kernel32.CloseHandle(h_proc)
+
+                        loop.call_soon_threadsafe(
+                            self.event_queue.put_nowait,
+                            {
+                                "type": "EXIT",
+                                "os_pid": pid,
+                                "lifetime_sec": lifetime_sec,
+                                "exit_code": exit_code_str,
+                                "timestamp": datetime.datetime.now(datetime.timezone.utc)
+                            }
+                        )
+                finally:
+                    last_snapshot = current_snapshot
             except Exception:
                 pass
 

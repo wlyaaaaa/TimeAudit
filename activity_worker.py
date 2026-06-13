@@ -245,6 +245,21 @@ class ProcessActivityWorker:
         self.bg_thread = threading.Thread(target=self._background_telemetry_loop, daemon=True)
         self.bg_thread.start()
 
+    def reset_on_resume(self):
+        """【Bug5 修复】系统睡眠唤醒后由主控调用：丢弃过期的每进程速率基线。否则唤醒后第一拍会把
+        "睡眠期间几乎为零的字节增量"除以巨大的时间差(网络速率用墙钟 time.time()、CPU/IO 用可能在睡眠
+        中暂停的 monotonic)，导致网络监控图表出现一次归零式断崖或 CPU/IO 虚高。清空增量缓存即令下一拍
+        重新锚定基线(期间仅一拍速率为 0，符合"睡眠期间确无活动"的事实)。仅触碰主线程拥有的缓存。"""
+        self.cpu_time_cache.clear()
+        self.io_delta_cache.clear()
+        try:
+            net_io = psutil.net_io_counters()
+            self.last_net_bytes_sent = net_io.bytes_sent
+            self.last_net_bytes_recv = net_io.bytes_recv
+            self.last_net_time = time.time()
+        except Exception:
+            pass
+
     def _init_nvml(self):
         try:
             pynvml.nvmlInit()

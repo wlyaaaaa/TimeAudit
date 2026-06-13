@@ -77,7 +77,11 @@ from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
 
 DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
-WARMUP_INTERVAL_SEC = 43200  
+WARMUP_INTERVAL_SEC = 43200
+# 墙钟跨度超过此值即判定刚从系统睡眠/休眠(S3/S4)唤醒。正常节拍约 3s，故 60s 阈值不会被 GC/DB 抖动误触，
+# 而真实睡眠必远超之。用墙钟(time.time())而非 asyncio 的 monotonic 时钟——后者在系统睡眠时会暂停，
+# 旧的 monotonic 跳变侦测因此是永不触发的死代码(Bug1)。
+SLEEP_RESUME_THRESHOLD_SEC = 60
 
 def enforce_singleton():
     mutex_name = "Global\\TimeAuditTelemetryEngineMutex"
@@ -174,6 +178,28 @@ async def auto_warmup_partitions(pool):
             await conn.execute(query)
         print("[✅ 预热引擎] 当期及未来分区舱室绑定完毕！")
 
+async def cleanup_orphan_context_sessions(pool):
+    """【Bug4 修复】启动时闭合上次"关机/崩溃被强杀"遗留的前台 slice：这些行 end_timestamp 永久为 NULL，
+    在 Grafana 里会变成"永不结束"的幽灵会话并不断堆积(开机当下库内已实测有 5 条)。无从得知真实结束时刻，
+    故保守地以其自身起始时刻闭合(duration_ms=0)——既消除幽灵、又绝不伪造时长。限定近 90 天以利分区裁剪、
+    避免全历史顺序扫描。"""
+    try:
+        async with pool.acquire() as conn:
+            n = await conn.fetchval("""
+                WITH upd AS (
+                    UPDATE public.fact_process_context
+                    SET end_timestamp = "timestamp", duration_ms = 0
+                    WHERE end_timestamp IS NULL
+                      AND "timestamp" >= now() - interval '90 days'
+                    RETURNING 1
+                )
+                SELECT count(*) FROM upd;
+            """)
+        if n:
+            print(f"[{datetime.datetime.now().strftime('%X')} 🧹 冷启清理] 闭合上轮关机遗留的 {n} 条未结束前台会话(幽灵 NULL)。")
+    except Exception as e:
+        print(f"[启动清理] 幽灵会话闭合跳过: {e}")
+
 async def main():
     _singleton_mutex = enforce_singleton()
 
@@ -199,7 +225,7 @@ async def main():
             print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 等待数仓] {e}，5秒后重试...")
             await asyncio.sleep(5)
 
-    last_warmup_time = 0
+    last_warmup_wall = 0.0
     global_pid_key_map = {}
     
     tracker = WindowStateTracker()
@@ -217,22 +243,41 @@ async def main():
             except Exception: 
                 continue
     print(f"[主控] 初次活体映射扫描完毕，共计登记了 {len(global_pid_key_map)} 个存活进程。")
-    
+
+    # 冷启动闭合上次关机遗留的幽灵前台会话(end_timestamp 永久 NULL)。
+    await cleanup_orphan_context_sessions(pool)
+
     last_known_pid = None
     fg_app_name = ""
-    last_tick_time = asyncio.get_event_loop().time()
-    
+    wall_anchor = time.time()   # 上一拍进入休眠前记录的墙钟，用于侦测系统睡眠跨度
+
     try:
         while True:
             t0 = asyncio.get_event_loop().time()
-            
-            if t0 - last_tick_time > 10.0:
-                print(f"[{datetime.datetime.now().strftime('%X')} 🔄 休眠监测] 时钟发生大跨度跳变({t0 - last_tick_time:.1f}秒)，判定系统已恢复唤醒...")
-            
-            if t0 - last_warmup_time >= WARMUP_INTERVAL_SEC or last_warmup_time == 0:
+            now_wall = time.time()
+
+            # 【Bug1/3/5 修复】用墙钟跨度侦测系统睡眠/休眠唤醒(asyncio 的 monotonic 在睡眠时暂停，
+            # 旧的 monotonic 跳变侦测永不触发、是死代码)。唤醒后立刻：截断前台 slice 到睡前边界(杜绝把
+            # 睡眠时长注水成聚焦时长)、重置每进程速率基线、清零上下文切换基线，并强制本拍预热分区。
+            if now_wall - wall_anchor > SLEEP_RESUME_THRESHOLD_SEC:
+                gap = now_wall - wall_anchor
+                pre_sleep_dt = datetime.datetime.fromtimestamp(wall_anchor, datetime.timezone.utc)
+                print(f"[{datetime.datetime.now().strftime('%X')} 🔄 唤醒自愈] 墙钟跳变 {gap:.0f}s，判定系统从睡眠/休眠唤醒，正在截断会话并重置速率基线...")
+                try:
+                    tracker.mark_sleep_boundary(pre_sleep_dt)
+                    activity_worker.reset_on_resume()
+                    hardware_worker.last_ctx_switches = None
+                except Exception as resume_err:
+                    print(f"[唤醒自愈] 状态重置部分失败: {resume_err}")
+                last_warmup_wall = 0.0   # 睡眠可能已跨自然周/月边界，强制本拍在写库前补建分区
+
+            # 【Bug2 修复】分区预热按"墙钟"调度：旧版用睡眠中暂停的 monotonic，会把 12h 真实间隔拖成
+            # 12 天纯活跃时长，极可能跨过自然周/月物理边界 → PostgreSQL "no partition of relation found"
+            # 丢数。预热建"当期+下一档"，墙钟 12h 复检即可长期保证当期与下一档始终就绪。
+            if last_warmup_wall == 0.0 or (now_wall - last_warmup_wall) >= WARMUP_INTERVAL_SEC:
                 try:
                     await auto_warmup_partitions(pool)
-                    last_warmup_time = t0
+                    last_warmup_wall = now_wall
                 except Exception as e:
                     print(f"❌ 警告: 自动分区预热失败, 详情: {e}")
 
@@ -251,8 +296,8 @@ async def main():
                     print("[连接池] 自愈引擎：重新构建并穿透数据库连接池成功！")
                 except Exception as reconnect_err:
                     print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 自愈重试] 重建连接池失败: {reconnect_err}，等待下次循环...")
+                    wall_anchor = time.time()
                     await asyncio.sleep(5)
-                    last_tick_time = asyncio.get_event_loop().time()
                     continue
 
             batch_timestamp = datetime.datetime.now(datetime.timezone.utc)
@@ -295,10 +340,9 @@ async def main():
                 print(f"⚠️ 并发遥测落库异动: {loop_err}")
                 
             elapsed = asyncio.get_event_loop().time() - t0
+            wall_anchor = time.time()   # 进入节拍休眠前锚定墙钟；下一拍据此识别系统睡眠跨度
             await asyncio.sleep(max(0.01, 3.0 - elapsed))
-            
-            last_tick_time = asyncio.get_event_loop().time()
-            
+
     except asyncio.CancelledError:
         print("[主控] 捕获终止信号，停机...")
     finally:

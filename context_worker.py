@@ -167,6 +167,29 @@ class WindowStateTracker:
             metadata.get("signature_status", 0)
         )
 
+    def mark_sleep_boundary(self, boundary_ts):
+        """【Bug3 修复】系统睡眠/休眠唤醒时由主控调用：把当前正聚焦的 slice 按"睡前最后清醒时刻"
+        (boundary_ts) 截断关闭，使睡眠时长绝不被计入"前台聚焦时长"。否则用户合盖睡 8 小时后切窗，
+        会把这 8 小时全算作"正在阅读该文档"，污染 TimeAudit 核心时长(已实证库内 max_duration≈24h)。
+        关闭事件入队 pending_updates，由下一拍 poll_heartbeat 落库；同时清空 last_pid/last_title，
+        令唤醒后开启一个全新的、不含睡眠的 slice。纯内存操作、无 DB 调用，可安全从事件循环线程调用。"""
+        if self.active_slice:
+            prev = self.active_slice
+            end = boundary_ts
+            if end < prev["timestamp"]:
+                end = prev["timestamp"]   # 时钟异常兜底：duration 收敛为 0，绝不为负
+            prev["end_timestamp"] = end
+            prev["duration_ms"] = int((end - prev["timestamp"]).total_seconds() * 1000)
+            self.pending_updates.append({
+                "timestamp": prev["timestamp"], "os_pid": prev["os_pid"],
+                "end_timestamp": prev["end_timestamp"], "duration_ms": prev["duration_ms"],
+                "metadata": prev["metadata"], "process_key": prev.get("process_key")
+            })
+            self.active_slice = None
+        self.last_pid = None
+        self.last_title = None
+        self.last_start_time = None
+
     async def poll_heartbeat(self, pool, timestamp=None):
         fast_info = self.check_foreground_window_fast()
         if not fast_info: return
@@ -238,12 +261,16 @@ class WindowStateTracker:
 
                         for item in self.pending_updates:
                             if item.get("process_key"):
+                                # 【Bug6 修复】WHERE 必须带分区键 timestamp，命中主键 (timestamp, process_key, os_pid)
+                                # 实现 O(1) 单分区定位。旧版缺 timestamp 会触发跨所有周/月分区的顺序扫描，且在
+                                # Windows 复用 PID 时把几个月前同 (process_key, os_pid) 的幽灵 NULL 行误闭合，
+                                # 产生"聚焦半年但 duration 仅几秒"的悖论脏数据。timestamp 即该 slice 开启时刻。
                                 query = """
-                                    UPDATE public.fact_process_context 
-                                    SET end_timestamp = $1, duration_ms = $2 
-                                    WHERE process_key = $3 AND os_pid = $4 AND end_timestamp IS NULL;
+                                    UPDATE public.fact_process_context
+                                    SET end_timestamp = $1, duration_ms = $2
+                                    WHERE "timestamp" = $3 AND process_key = $4 AND os_pid = $5 AND end_timestamp IS NULL;
                                 """
-                                await conn.execute(query, item["end_timestamp"], item["duration_ms"], item["process_key"], item["os_pid"])
+                                await conn.execute(query, item["end_timestamp"], item["duration_ms"], item["timestamp"], item["process_key"], item["os_pid"])
                                 successful_updates.append(item)
                 
                 for item in successful_inserts:
