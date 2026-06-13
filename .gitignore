@@ -10,6 +10,9 @@ time_audit_perfect_archive.sql
 # 数据库备份（本地/异地保存，不进版本库）
 backups/
 
+# Grafana 二进制库备份(grafana.db 拷贝)不进 git；但 dashboards/*.json 要进 git
+grafana_backups/grafana_db/
+
 # 临时/调试草稿文件
 _live_dash.json
 _panels_dump.txt

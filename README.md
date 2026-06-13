@@ -228,10 +228,12 @@ python E:\TimeAudit\telemetry_test_suite.py
 schtasks /run /tn TimeAudit_AutoStart
 ```
 
-**手动备份数据库**：
+**手动全量备份（数据库 + Grafana 仪表盘）**：
 ```powershell
-powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_db.ps1
+powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_all.ps1
 ```
+> 数据库和 Grafana 仪表盘每天凌晨 4 点会由计划任务 `TimeAudit_DailyBackup` 自动备份，
+> 仪表盘还会自动 commit + push 到 GitHub。无需手动导出。详见[快速部署.md](快速部署.md)。
 
 **看大盘**：浏览器开 `http://localhost:53000`。
 
@@ -254,7 +256,11 @@ E:\TimeAudit\
 ├── Dockerfile               Ingester 容器构建
 ├── schema.sql               【全新装机用】建好所有父表+索引
 ├── requirements.txt         宿主机 Python 依赖 (psutil / nvidia-ml-py / asyncpg)
-├── backup_db.ps1            一键备份数据库（pg_dump -Fc + 自动清旧）
+│
+├── backup_all.ps1           一键全量备份(库+大盘)；每日计划任务调用它
+├── backup_db.ps1            备份数据库（pg_dump -Fc + 自动清旧）
+├── backup_grafana.py        备份 Grafana 仪表盘(导出JSON+git push) + grafana.db
+├── restore_grafana.py       从备份 JSON 恢复 Grafana 仪表盘
 │
 ├── start_all.bat            开机自启：拉起 AHK + Docker + 提权的 main.py
 ├── check_status_gui.ps1     图形化状态体检小工具
@@ -266,10 +272,11 @@ E:\TimeAudit\
 ├── PresentMonConsole.exe    外部帧率探针（FPS / 帧时间）
 │
 ├── postgres_data/           PostgreSQL 数据卷（别手删！）
-├── grafana_data/            Grafana 数据卷
-├── grafana_provisioning/    Grafana 大盘配置（自动注入容器）
-├── backups/                 backup_db.ps1 生成的备份
-└── log/                     AHK 的 buffer.csv 缓冲目录
+├── grafana_data/            Grafana 数据卷（含 grafana.db 仪表盘库）
+├── grafana_provisioning/    Grafana 数据源/大盘 provider 配置（自动注入容器）
+├── backups/                 数据库 .dump 备份（不进 git）
+├── grafana_backups/         dashboards/*.json(进 git) + grafana_db/*.db(不进 git)
+└── log/                     AHK 的 buffer.csv + 备份日志 backup.log
 ```
 
 ---
