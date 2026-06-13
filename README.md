@@ -275,7 +275,8 @@ E:\TimeAudit\
 ├── grafana_data/            Grafana 数据卷（含 grafana.db 仪表盘库）
 ├── grafana_provisioning/    Grafana 数据源/大盘 provider 配置（自动注入容器）
 ├── backups/                 数据库 .dump 备份（不进 git）
-├── grafana_backups/         dashboards/*.json(进 git) + grafana_db/*.db(不进 git)
+├── grafana_dashboards/      Grafana 仪表盘 JSON = 前端"代码"(进 git, 每日自动导出+push)
+├── grafana_backups/         grafana.db 二进制库备份 = "数据"(不进 git, 轮转14份)
 └── log/                     AHK 的 buffer.csv + 备份日志 backup.log
 ```
 

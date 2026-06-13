@@ -42,8 +42,10 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
+# 仪表盘 JSON = 前端"代码"，放进 git 跟踪的 grafana_dashboards/。
+# grafana.db 二进制 = "数据"备份，放进 gitignore 的 grafana_backups/。两者刻意分开。
+DASH_DIR = os.path.join(ROOT, "grafana_dashboards")
 BACKUP_DIR = os.path.join(ROOT, "grafana_backups")
-DASH_DIR = os.path.join(BACKUP_DIR, "dashboards")
 DB_BACKUP_DIR = os.path.join(BACKUP_DIR, "grafana_db")
 GRAFANA_DB = os.path.join(ROOT, "grafana_data", "grafana.db")
 
@@ -126,8 +128,8 @@ def git(args, check=False):
 
 
 def git_commit_and_push(do_push):
-    """只把 dashboards/*.json 的变化提交（隔离其它改动），有变化才提交。"""
-    rel = "grafana_backups/dashboards"
+    """只把 grafana_dashboards/*.json 的变化提交（隔离其它改动），有变化才提交。"""
+    rel = "grafana_dashboards"
     status = git(["status", "--porcelain", "--", rel]).stdout.strip()
     if not status:
         log("仪表盘 JSON 无变化，无需提交。")

@@ -31,7 +31,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
-DASH_DIR = os.path.join(ROOT, "grafana_backups", "dashboards")
+DASH_DIR = os.path.join(ROOT, "grafana_dashboards")
 
 
 def log(msg):
