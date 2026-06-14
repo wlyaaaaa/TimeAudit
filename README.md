@@ -9,7 +9,8 @@
 - **人类开发者**：哪怕你没接触过这个项目，也能在 20 分钟内搞懂它"是什么、怎么转、每个文件干嘛"。
 - **AI 维护者**（比如接手改代码的 Claude）：文末有"关键不变量 / 千万别踩的坑 / 测试入口"，先读那部分再动手。
 
-> 想直接装起来 / 换电脑 / 灾后恢复？看隔壁的 **[快速部署.md](快速部署.md)**。
+> 想直接装起来 / 换电脑 / 灾后恢复？看 **[快速部署.md](快速部署.md)**。
+> 想看懂 6 张仪表盘的**每一个面板**、学会用数据判断电脑性能与问题？看 **[使用手册.md](使用手册.md)**（面向完全小白，78 个面板逐个精讲）。
 
 ---
 
@@ -168,6 +169,10 @@
 - PostgreSQL：`localhost:55432`，用户 `leyang`，密码 `SecurePassword123`，库 `time_audit`。
 - Grafana：浏览器开 `http://localhost:53000`。
 
+**PostgreSQL 性能配置写在 `docker-compose.yml` 的 `command:` 里**（不是 postgresql.conf）：`shared_buffers=2GB`、`work_mem=16MB`、`effective_cache_size=8GB`，以及 NVMe 友好的 `random_page_cost=1.1` / `effective_io_concurrency=200`；外加 `shm_size: '512mb'`（并行查询大分区时 `/dev/shm` 的上限，防 "could not resize shared memory segment ... No space left on device"）。改这些要编辑 compose 后 `docker compose up -d audit-db` 重建容器才生效。
+
+> ⚠️ Grafana 里有 **3 个 PostgreSQL 数据源**，全部指向同一个 `time_audit` 库：硬件大盘用 `P7A9DAD60F8AB4C18`，其余大盘用 `bfoc1vymtgni8a`，还有一个 provisioning 注入的 `PostgreSQL` 没被引用。**不同大盘用不同 UID 不是 bug**（都连同一个库），别去「统一」它们，否则现有面板会断。
+
 ---
 
 ## 7. 关键设计 & 千万别踩的坑（给 AI 维护者重点看）
@@ -202,6 +207,10 @@
 
 11. **进程差分扫描器的快照推进放在 `finally` 里**：即使处理某个进程时抛异常，也保证基线快照前进，不会把同一个 START/EXIT 事件重复投递。
 
+12. **PG 掉线重连别用裸 `await pool.close()`。** 连接已死时它会等待"未释放连接"挂起 60s+（实测刷屏 `Pool.close() is taking over 60 seconds`），把整个 3 秒主循环卡死、停止写库。`main.py` 已改为 `asyncio.wait_for(pool.close(), 5s)` 超时 + 失败回退 `pool.terminate()` 强制拔线，PG 重启后秒级自愈。改重连逻辑时别把这个保护去掉。
+
+13. **`is_not_responding` 用 `IsHungAppWindow`（任务管理器同源）判定，不是 `psutil.STATUS_STOPPED`。** 后者是 Unix 概念、Windows 上几乎永不为真（曾导致该字段恒为 0）。现由 `activity_worker._scan_hung_pids()` 每拍 `EnumWindows` 标记消息泵卡死(>5s)的窗口属主 PID，采集时 O(1) 查表。注意它必须跑在**用户交互会话**里（EnumWindows 才看得到用户窗口），所以引擎不能用 SYSTEM 账户跑。
+
 ---
 
 ## 8. 怎么跑起来 / 怎么看数据 / 怎么排查
@@ -221,6 +230,11 @@ python E:\TimeAudit\test_telemetry_health.py
 **跑单元测试套件**（改完代码后回归，应 6/6 全绿）：
 ```powershell
 python E:\TimeAudit\telemetry_test_suite.py
+```
+
+**跑优化/修复回归测试**（连接池封顶 / 数据库调优 / 无响应检测 / 前端面板回归，应 14/14 全绿）：
+```powershell
+python E:\TimeAudit\test_optimizations.py
 ```
 
 **手动重启引擎**（用配好的提权计划任务，最干净）：
@@ -257,6 +271,10 @@ E:\TimeAudit\
 ├── schema.sql               【全新装机用】建好所有父表+索引
 ├── requirements.txt         宿主机 Python 依赖 (psutil / nvidia-ml-py / asyncpg)
 │
+├── README.md                本文件：架构 / 数据流 / 关键设计与坑（给开发者+AI 维护者）
+├── 快速部署.md              全新安装 / 换机迁移 / 容灾恢复 / 日常运维
+├── 使用手册.md              6 张仪表盘 78 个面板逐个精讲（给小白看数据/排查）
+│
 ├── backup_all.ps1           一键全量备份(库+大盘)；每日计划任务调用它
 ├── backup_db.ps1            备份数据库（pg_dump -Fc + 自动清旧）
 ├── backup_grafana.py        备份 Grafana 仪表盘(导出JSON+git push) + grafana.db
@@ -267,6 +285,7 @@ E:\TimeAudit\
 │
 ├── test_telemetry_health.py 在线健康综合体检（先跑它排查问题）
 ├── telemetry_test_suite.py  单元/集成测试套件（6 个用例）
+├── test_optimizations.py    优化/修复回归测试（连接池/调优/无响应检测/前端，14 用例）
 │
 ├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :8085）
 ├── PresentMonConsole.exe    外部帧率探针（FPS / 帧时间）
@@ -285,7 +304,7 @@ E:\TimeAudit\
 ## 10. 给 AI 维护者的快速上手清单
 
 1. **先读第 7 节"关键设计 & 坑"**，那里是历史血泪，照着它就不会把修好的 bug 改回去。
-2. **改完代码先跑两件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。
+2. **改完代码先跑三件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_optimizations.py`（应 14/14 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。
 3. **跑测试要用 UTF-8**：默认 GBK 控制台会因日志里的 emoji 崩；套件已自愈 stdout，但你手动跑别的脚本时记得 `PYTHONUTF8=1`。
 4. **这是写密集时序库**：每 3 秒几十行写入。加索引、改表结构前先想清楚写放大代价。
 5. **本机就是目标机**（RTX 5080 + 9950X3D，PostgreSQL 跑在 55432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
