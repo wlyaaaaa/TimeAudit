@@ -1088,13 +1088,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH daily_max_power AS (\n  SELECT \n    date_trunc('day', timestamp) AS day,\n    MAX(cpu_package_power) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY 1\n),\ndaily_load_metrics AS (\n  SELECT \n    date_trunc('day', hw.timestamp) AS day,\n    AVG(CASE WHEN dp.max_cpu_pwr > 40.0 AND hw.cpu_package_power >= 0.7 * dp.max_cpu_pwr THEN hw.cpu_package_temp ELSE NULL END) AS cpu_load_temp,\n    AVG(CASE WHEN dp.max_cpu_pwr > 40.0 AND hw.cpu_package_power >= 0.7 * dp.max_cpu_pwr THEN hw.cpu_package_power ELSE NULL END) AS cpu_load_pwr,\n    AVG(CASE WHEN dp.max_cpu_pwr > 40.0 AND hw.cpu_package_power >= 0.7 * dp.max_cpu_pwr THEN hw.cpu_clock_mhz ELSE NULL END) AS cpu_load_clock,\n    AVG(CASE WHEN dp.max_cpu_pwr > 40.0 AND hw.cpu_package_power >= 0.7 * dp.max_cpu_pwr THEN hw.cpu_vcore_voltage ELSE NULL END) AS cpu_load_voltage\n  FROM public.fact_system_hardware hw\n  JOIN daily_max_power dp ON date_trunc('day', hw.timestamp) = dp.day\n  WHERE hw.timestamp >= $__timeFrom()::timestamptz\n    AND hw.timestamp <= $__timeTo()::timestamptz\n  GROUP BY 1\n)\nSELECT \n  day AS \"time\",\n  cpu_load_temp AS \"CPU 负载温度\",\n  cpu_load_pwr AS \"CPU 负载功率\",\n  cpu_load_clock AS \"CPU 负载主频\",\n  cpu_load_voltage AS \"CPU 负载电压\"\nFROM daily_load_metrics\nORDER BY 1;",
+          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('day', timestamp) AS day,\n    cpu_package_power,\n    cpu_package_temp,\n    cpu_clock_mhz,\n    cpu_vcore_voltage,\n    MAX(cpu_package_power) OVER(PARTITION BY date_trunc('day', timestamp)) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  day AS \"time\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_package_temp ELSE NULL END) AS \"CPU 负载温度\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_package_power ELSE NULL END) AS \"CPU 负载功率\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_clock_mhz ELSE NULL END) AS \"CPU 负载主频\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_vcore_voltage ELSE NULL END) AS \"CPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
       "title": "CPU 散热老化与能效衰减趋势 (负载均值)",
       "type": "timeseries",
-      "timeFrom": "$aging_window"
+      "timeFrom": "now-$aging_window"
     },
     {
       "datasource": {
@@ -1262,13 +1262,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH daily_max_power AS (\n  SELECT \n    date_trunc('day', timestamp) AS day,\n    MAX(gpu_board_power) AS max_gpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY 1\n),\ndaily_load_metrics AS (\n  SELECT \n    date_trunc('day', hw.timestamp) AS day,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_core_temp ELSE NULL END) AS gpu_load_temp,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_hotspot_temp ELSE NULL END) AS gpu_hotspot_load_temp,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_board_power ELSE NULL END) AS gpu_load_pwr,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_core_clock ELSE NULL END) AS gpu_load_clock,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_core_voltage ELSE NULL END) AS gpu_load_voltage\n  FROM public.fact_system_hardware hw\n  JOIN daily_max_power dp ON date_trunc('day', hw.timestamp) = dp.day\n  WHERE hw.timestamp >= $__timeFrom()::timestamptz\n    AND hw.timestamp <= $__timeTo()::timestamptz\n  GROUP BY 1\n)\nSELECT \n  day AS \"time\",\n  gpu_load_temp AS \"GPU 核心负载温度\",\n  gpu_hotspot_load_temp AS \"GPU 热点负载温度\",\n  gpu_load_pwr AS \"GPU 负载功率\",\n  gpu_load_clock AS \"GPU 负载时钟\",\n  gpu_load_voltage AS \"GPU 负载电压\"\nFROM daily_load_metrics\nORDER BY 1;",
+          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('day', timestamp) AS day,\n    gpu_board_power,\n    gpu_core_temp,\n    gpu_hotspot_temp,\n    gpu_core_clock,\n    gpu_core_voltage,\n    MAX(gpu_board_power) OVER(PARTITION BY date_trunc('day', timestamp)) AS max_gpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  day AS \"time\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_core_temp ELSE NULL END) AS \"GPU 核心负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_hotspot_temp ELSE NULL END) AS \"GPU 热点负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_board_power ELSE NULL END) AS \"GPU 负载功率\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_core_clock ELSE NULL END) AS \"GPU 负载时钟\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_core_voltage ELSE NULL END) AS \"GPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
       "title": "GPU 散热老化与能效衰减趋势 (负载均值)",
       "type": "timeseries",
-      "timeFrom": "$aging_window"
+      "timeFrom": "now-$aging_window"
     },
     {
       "datasource": {
@@ -2110,7 +2110,7 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 14,
+  "version": 15,
   "templating": {
     "list": [
       {
