@@ -1098,7 +1098,7 @@
           "mode": "single",
           "sort": "none"
         },
-        "xField": "日期",
+        "xField": "审计日期",
         "xTickLabelRotation": 0,
         "xTickLabelSpacing": 0
       },
@@ -1113,7 +1113,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\r\n  -- ⚡ 核心解法：直接强转为中文年月日字符串，彻底封印 Grafana 的自动时区转换与轴缩放逻辑！\r\n  TO_CHAR(date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai'), 'YYYY年MM月DD日') as \"审计日期\",\r\n  -- 📊 真实活跃时间：排除暂离、物理睡眠和黑屏\r\n  SUM(CASE WHEN process_name NOT IN ('System_Idle', 'System_Sleep', 'System_DisplayOff') THEN duration_seconds ELSE 0 END) as \"真实键鼠活跃时间\",\r\n  -- 💤 挂机静止时间\r\n  SUM(CASE WHEN process_name = 'System_Idle' THEN duration_seconds ELSE 0 END) as \"挂机静止暂离时间\"\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\nGROUP BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai')\r\nORDER BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai') ASC;",
+          "rawSql": "SELECT\r\n  -- ⚡ 核心解法：直接强转为中文年月日字符串，彻底封印 Grafana 的自动时区转换与轴缩放逻辑！\r\n  TO_CHAR(date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai'), 'FMMM\".\"FMDD') as \"审计日期\",\r\n  -- 📊 真实活跃时间：排除暂离、物理睡眠和黑屏\r\n  SUM(CASE WHEN process_name NOT IN ('System_Idle', 'System_Sleep', 'System_DisplayOff') THEN duration_seconds ELSE 0 END) as \"真实键鼠活跃时间\",\r\n  -- 💤 挂机静止时间\r\n  SUM(CASE WHEN process_name = 'System_Idle' THEN duration_seconds ELSE 0 END) as \"挂机静止暂离时间\"\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\nGROUP BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai')\r\nORDER BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai') ASC;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1162,5 +1162,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 43
+  "version": 44
 }
