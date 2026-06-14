@@ -10,15 +10,32 @@
           "custom": {
             "axisPlacement": "auto",
             "drawStyle": "line",
-            "fillOpacity": 12,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "showPoints": "never",
             "spanNulls": false
           },
+          "min": 0,
           "unit": "celsius"
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 封装温度"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -30,8 +47,19 @@
                 "value": "watt"
               },
               {
+                "id": "min",
+                "value": 0
+              },
+              {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
               }
             ]
           }
@@ -79,12 +107,15 @@
           "custom": {
             "axisPlacement": "auto",
             "drawStyle": "line",
-            "fillOpacity": 12,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "showPoints": "never",
             "spanNulls": false
           },
+          "max": 100,
+          "min": 0,
           "unit": "percent"
         },
         "overrides": [
@@ -96,11 +127,67 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "none"
+                "value": "mhz"
+              },
+              {
+                "id": "min",
+                "value": 0
               },
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CCD0 负载 (大缓存)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CCD1 负载 (高频)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 总负载"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
               }
             ]
           }
@@ -148,15 +235,47 @@
           "custom": {
             "axisPlacement": "auto",
             "drawStyle": "line",
-            "fillOpacity": 12,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "showPoints": "never",
             "spanNulls": false
           },
+          "min": 0,
           "unit": "celsius"
         },
         "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 核心温度"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 热点温度"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
           {
             "matcher": {
               "id": "byName",
@@ -168,8 +287,19 @@
                 "value": "watt"
               },
               {
+                "id": "min",
+                "value": 0
+              },
+              {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
               }
             ]
           }
@@ -217,12 +347,15 @@
           "custom": {
             "axisPlacement": "auto",
             "drawStyle": "line",
-            "fillOpacity": 12,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "showPoints": "never",
             "spanNulls": false
           },
+          "max": 100,
+          "min": 0,
           "unit": "percent"
         },
         "overrides": [
@@ -234,11 +367,22 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "none"
+                "value": "mhz"
+              },
+              {
+                "id": "min",
+                "value": 0
               },
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
               }
             ]
           },
@@ -250,11 +394,52 @@
             "properties": [
               {
                 "id": "unit",
-                "value": "none"
+                "value": "mhz"
+              },
+              {
+                "id": "min",
+                "value": 0
               },
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 利用率"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PCIe 带宽利用率"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
               }
             ]
           }
@@ -302,15 +487,48 @@
           "custom": {
             "axisPlacement": "auto",
             "drawStyle": "line",
-            "fillOpacity": 12,
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
             "lineInterpolation": "smooth",
             "lineWidth": 2,
             "showPoints": "never",
             "spanNulls": false
           },
+          "min": 0,
           "unit": "volt"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 核心电压"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 核心电压"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -376,7 +594,104 @@
           },
           "unit": "celsius"
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 温度"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 70
+                    },
+                    {
+                      "color": "orange",
+                      "value": 83
+                    },
+                    {
+                      "color": "red",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 核心"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 65
+                    },
+                    {
+                      "color": "orange",
+                      "value": 75
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 热点"
+            },
+            "properties": [
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 70
+                    },
+                    {
+                      "color": "orange",
+                      "value": 85
+                    },
+                    {
+                      "color": "red",
+                      "value": 92
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
       },
       "gridPos": {
         "h": 8,
@@ -471,12 +786,99 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  CASE\n    WHEN bool_or((gpu_throttling_reasons & 96) > 0) THEN '🔥 温度墙'\n    WHEN bool_or((gpu_throttling_reasons & 132) > 0) THEN '⚡ 功耗墙'\n    WHEN bool_or((gpu_throttling_reasons & 8) > 0) THEN '🛑 硬件降速'\n    WHEN bool_or(gpu_throttling_reasons = 1) THEN '💤 空闲降频'\n    ELSE '✅ 满血运行'\n  END AS \"GPU 降频状态\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  CASE\n    WHEN bool_or((gpu_throttling_reasons & 96) > 0) THEN '🔥 温度墙'\n    WHEN bool_or((gpu_throttling_reasons & 132) > 0) THEN '⚡ 功耗墙'\n    WHEN bool_or((gpu_throttling_reasons & 8) > 0) THEN '🛑 硬件降速'\n    WHEN bool_or((gpu_throttling_reasons & 1) > 0) THEN '💤 空闲降频'\n    ELSE '✅ 满血运行'\n  END AS \"GPU 降频状态\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
           "refId": "A"
         }
       ],
       "title": "GPU 降频原因解码时间线 (撞了哪堵墙)",
       "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#EF4444",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "min": 0,
+          "unit": "µs"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "系统上下文切换次数/秒"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "short"
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 31
+      },
+      "id": 8,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(system_dpc_latency) AS \"系统 DPC 延迟 (μs)\",\n  AVG(system_context_switches) AS \"系统上下文切换次数/秒\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "系统延迟与系统调用压力 (DPC Latency & Context Switches)",
+      "type": "timeseries"
     }
   ],
   "refresh": "10s",
@@ -492,5 +894,5 @@
   "timezone": "browser",
   "title": "🌡️ 硬件温控与能效大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 1
+  "version": 2
 }
