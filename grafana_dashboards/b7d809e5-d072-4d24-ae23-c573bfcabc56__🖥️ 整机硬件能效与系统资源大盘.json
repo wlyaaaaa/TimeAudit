@@ -1614,7 +1614,7 @@
             "showPoints": "never",
             "spanNulls": false
           },
-          "unit": "binbytes/s"
+          "unit": "binBps"
         },
         "overrides": [
           {
@@ -1875,7 +1875,7 @@
             "showPoints": "never",
             "spanNulls": false
           },
-          "unit": "binbytes/s"
+          "unit": "binBps"
         },
         "overrides": [
           {
@@ -2110,7 +2110,7 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 16,
+  "version": 17,
   "templating": {
     "list": [
       {
