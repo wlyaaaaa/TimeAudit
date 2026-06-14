@@ -19,3 +19,5 @@ _live_dash.json
 _panels_dump.txt
 tmp_dash/
 _suite*.txt
+
+time_audit_perfect_archive.sql
