@@ -940,6 +940,118 @@
       ],
       "title": "系统延迟与系统调用压力 (DPC Latency & Context Switches)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 峰值温度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 核心峰值温度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 热点峰值温度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 34
+      },
+      "id": 9,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT \n  date_trunc('day', timestamp) AS \"time\",\n  MAX(cpu_package_temp) AS \"CPU 峰值温度\",\n  MAX(gpu_core_temp) AS \"GPU 核心峰值温度\",\n  MAX(gpu_hotspot_temp) AS \"GPU 热点峰值温度\"\nFROM public.fact_system_hardware\nWHERE timestamp >= now() - interval '30 days'\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "now-30d",
+      "title": "温度老化与散热衰减趋势 (最近 30 天日峰值)",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",
@@ -955,5 +1067,5 @@
   "timezone": "browser",
   "title": "🌡️ 硬件温控与能效大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 5
+  "version": 6
 }
