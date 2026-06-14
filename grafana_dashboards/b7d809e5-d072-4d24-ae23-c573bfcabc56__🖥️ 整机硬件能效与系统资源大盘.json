@@ -1607,7 +1607,7 @@
     "to": "now"
   },
   "timezone": "browser",
-  "title": "🌡️ 硬件温控与能效大盘",
+  "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 12
+  "version": 13
 }
