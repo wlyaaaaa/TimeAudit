@@ -1153,8 +1153,7 @@
               "tooltip": false,
               "viz": false
             }
-          },
-          "unit": "s"
+          }
         }
       },
       "gridPos": {
@@ -1169,10 +1168,7 @@
           "displayMode": "list",
           "placement": "right",
           "showLegend": true,
-          "values": [
-            "percent",
-            "value"
-          ]
+          "values": []
         },
         "pieType": "donut",
         "reduceOptions": {
@@ -1196,7 +1192,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  CASE \n    WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe', 'idea64.exe', 'datagrip64.exe', 'windowsterminal.exe', 'powershell_ise.exe', 'cmd.exe', 'typora.exe', 'notepad.exe', 'git-credential-manager.exe', 'java.exe') \n         OR LOWER(process_name) LIKE 'python%' \n         OR LOWER(process_name) IN ('claude.exe', 'antigravity.exe') THEN '💻 开发与AI工具'\n    WHEN LOWER(process_name) IN ('chrome.exe', 'msedge.exe', 'firefox.exe') THEN '🌐 浏览器'\n    WHEN LOWER(process_name) IN ('slaythespire2.exe', 'masterduel.exe', 'forzahorizon6.exe', 'flyingbird.exe', 'steamwebhelper.exe', 'uu.exe') THEN '🎮 游戏与娱乐'\n    WHEN LOWER(process_name) IN ('weixin.exe', 'qq.exe', 'dingtalk.exe') THEN '💬 社交与通讯'\n    ELSE '🛠️ 其他应用'\n  END as \"分类\",\n  SUM(duration_seconds) as \"累计时长\"\nFROM app_usage_logs\nWHERE $__timeFilter(start_time)\n  AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\nGROUP BY 1\nORDER BY 2 DESC;",
+          "rawSql": "WITH base_data AS (\n  SELECT\n    CASE \n      WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe', 'idea64.exe', 'datagrip64.exe', 'windowsterminal.exe', 'powershell_ise.exe', 'cmd.exe', 'typora.exe', 'notepad.exe', 'git-credential-manager.exe', 'java.exe') \n           OR LOWER(process_name) LIKE 'python%' \n           OR LOWER(process_name) IN ('claude.exe', 'antigravity.exe') THEN '💻 开发与AI工具'\n      WHEN LOWER(process_name) IN ('chrome.exe', 'msedge.exe', 'firefox.exe') THEN '🌐 浏览器'\n      WHEN LOWER(process_name) IN ('slaythespire2.exe', 'masterduel.exe', 'forzahorizon6.exe', 'flyingbird.exe', 'steamwebhelper.exe', 'uu.exe') THEN '🎮 游戏与娱乐'\n      WHEN LOWER(process_name) IN ('weixin.exe', 'qq.exe', 'dingtalk.exe') THEN '💬 社交与通讯'\n      ELSE '🛠️ 其他应用'\n    END as cat,\n    SUM(duration_seconds) as dur\n  FROM app_usage_logs\n  WHERE $__timeFilter(start_time)\n    AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\n  GROUP BY 1\n),\ntotal_data AS (\n  SELECT SUM(dur) as total_dur FROM base_data\n)\nSELECT\n  cat || ' (' || ROUND(dur / 3600.0, 2) || '小时, ' || ROUND(dur * 100.0 / total_dur, 1) || '%)' as \"分类\",\n  dur as \"累计时长\"\nFROM base_data, total_data\nORDER BY dur DESC;",
           "refId": "A"
         }
       ],
@@ -1367,5 +1363,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 48
+  "version": 50
 }
