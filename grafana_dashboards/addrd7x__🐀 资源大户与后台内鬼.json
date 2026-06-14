@@ -254,7 +254,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nWITH bg_stats AS (\n  SELECT\n    r.process_name,\n    ROUND(AVG(a.proc_cpu_usage)::numeric, 2) AS \"CPU 均值 (%)\",\n    ROUND(MAX(a.proc_cpu_usage)::numeric, 2) AS \"CPU 峰值 (%)\",\n    ROUND(AVG(a.proc_gpu_usage)::numeric, 2) AS \"GPU 均值 (%)\",\n    ROUND(AVG(a.proc_ram_mb)::numeric, 0) AS \"内存均值 (MB)\",\n    ROUND(AVG(a.proc_disk_read_rate_mb + a.proc_disk_write_rate_mb)::numeric, 2) AS \"磁盘 IO (MB/s)\",\n    ROUND(AVG(a.proc_network_send_kb + a.proc_network_recv_kb)::numeric, 1) AS \"网络 (KB/s)\",\n    r.service_name AS \"服务名\",\n    CASE WHEN r.signature_status = 1 THEN '✅ 已签名'\n         WHEN r.signature_status = 0 THEN '⚠️ 未签名'\n         ELSE '❓ 未知' END AS \"签名状态\",\n    COUNT(*) AS \"后台采样数\"\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  LEFT JOIN public.fact_process_context ctx\n    ON a.process_key = ctx.process_key\n    AND a.os_pid = ctx.os_pid\n    AND a.\"timestamp\" >= ctx.\"timestamp\"\n    AND (a.\"timestamp\" < ctx.end_timestamp OR ctx.end_timestamp IS NULL)\n    AND ctx.is_foreground = 1\n  WHERE $__timeFilter(a.\"timestamp\")\n    AND ctx.process_key IS NULL\n  GROUP BY r.process_name, r.service_name, r.signature_status\n  HAVING COUNT(*) >= 3\n)\nSELECT\n  process_name AS \"后台内鬼进程\",\n  \"CPU 均值 (%)\",\n  \"CPU 峰值 (%)\",\n  \"GPU 均值 (%)\",\n  \"内存均值 (MB)\",\n  \"磁盘 IO (MB/s)\",\n  \"网络 (KB/s)\",\n  \"服务名\",\n  \"签名状态\",\n  \"后台采样数\"\nFROM bg_stats\nORDER BY \"CPU 均值 (%)\" + \"GPU 均值 (%)\" + \"内存均值 (MB)\" / 1024.0 DESC\nLIMIT 20;\n",
+          "rawSql": "\nWITH bg_stats AS (\n  SELECT\n    r.process_name,\n    ROUND(AVG(a.proc_cpu_usage)::numeric, 2) AS \"CPU 均值 (%)\",\n    ROUND(MAX(a.proc_cpu_usage)::numeric, 2) AS \"CPU 峰值 (%)\",\n    ROUND(AVG(a.proc_gpu_usage)::numeric, 2) AS \"GPU 均值 (%)\",\n    ROUND(AVG(a.proc_ram_mb)::numeric, 0) AS \"内存均值 (MB)\",\n    ROUND(AVG(a.proc_disk_read_rate_mb + a.proc_disk_write_rate_mb)::numeric, 2) AS \"磁盘 IO (MB/s)\",\n    ROUND(AVG(a.proc_network_send_kb + a.proc_network_recv_kb)::numeric, 1) AS \"网络 (KB/s)\",\n    r.service_name AS \"服务名\",\n    CASE WHEN r.signature_status = 1 THEN '✅ 已签名'\n         WHEN r.signature_status = 0 THEN '⚠️ 未签名'\n         ELSE '❓ 未知' END AS \"签名状态\",\n    COUNT(*) AS \"后台采样数\"\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  LEFT JOIN public.fact_process_context ctx\n    ON a.process_key = ctx.process_key\n    AND a.os_pid = ctx.os_pid\n    AND a.\"timestamp\" >= ctx.\"timestamp\"\n    AND (a.\"timestamp\" < ctx.end_timestamp OR ctx.end_timestamp IS NULL)\n    AND ctx.timestamp BETWEEN $__timeFrom()::timestamptz - interval '2 hours' AND $__timeTo()::timestamptz\n    AND ctx.is_foreground = 1\n  WHERE $__timeFilter(a.\"timestamp\")\n    AND ctx.process_key IS NULL\n  GROUP BY r.process_name, r.service_name, r.signature_status\n  HAVING COUNT(*) >= 3\n)\nSELECT\n  process_name AS \"后台内鬼进程\",\n  \"CPU 均值 (%)\",\n  \"CPU 峰值 (%)\",\n  \"GPU 均值 (%)\",\n  \"内存均值 (MB)\",\n  \"磁盘 IO (MB/s)\",\n  \"网络 (KB/s)\",\n  \"服务名\",\n  \"签名状态\",\n  \"后台采样数\"\nFROM bg_stats\nORDER BY \"CPU 均值 (%)\" + \"GPU 均值 (%)\" + \"内存均值 (MB)\" / 1024.0 DESC\nLIMIT 20;\n",
           "refId": "A"
         }
       ],
@@ -476,16 +476,27 @@
             "fillOpacity": 100,
             "lineWidth": 0
           },
+          "mappings": [
+            {
+              "options": {
+                "🟢 正常": {
+                  "color": "green",
+                  "index": 0
+                },
+                "🔴 无响应": {
+                  "color": "red",
+                  "index": 1
+                }
+              },
+              "type": "value"
+            }
+          ],
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 1
               }
             ]
           }
@@ -529,7 +540,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.t_to - b.t_from)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\nnr_events AS (\n  SELECT\n    a.\"timestamp\" AS time,\n    r.process_name AS metric,\n    a.is_not_responding AS value\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n)\nSELECT\n  time,\n  metric,\n  CASE WHEN value = 1 THEN '🔴 无响应' ELSE '🟢 正常' END AS value\nFROM nr_events\nORDER BY time ASC;\n",
+          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nstuck_processes AS (\n  SELECT DISTINCT a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n),\nnr_events AS (\n  SELECT\n    a.\"timestamp\" AS time,\n    r.process_name AS metric,\n    a.is_not_responding AS value\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  JOIN stuck_processes sp ON a.process_key = sp.process_key\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n)\nSELECT\n  time,\n  metric,\n  CASE WHEN value = 1 THEN '🔴 无响应' ELSE '🟢 正常' END AS value\nFROM nr_events\nORDER BY time ASC;\n",
           "refId": "A"
         }
       ],
@@ -687,7 +698,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nprocess_mem_trend AS (\n  SELECT\n    r.process_name,\n    a.process_key,\n    -- 取时间范围前 10% 的平均内存\n    AVG(CASE WHEN a.\"timestamp\" < (SELECT t_from + (t_to - t_from) * 0.1 FROM time_bounds)\n         THEN a.proc_ram_mb END) AS mem_start,\n    -- 取时间范围后 10% 的平均内存\n    AVG(CASE WHEN a.\"timestamp\" > (SELECT t_to - (t_to - t_from) * 0.1 FROM time_bounds)\n         THEN a.proc_ram_mb END) AS mem_end,\n    AVG(CASE WHEN a.\"timestamp\" < (SELECT t_from + (t_to - t_from) * 0.1 FROM time_bounds)\n         THEN COALESCE(a.proc_vram_used_gb, 0) END) AS vram_start,\n    AVG(CASE WHEN a.\"timestamp\" > (SELECT t_to - (t_to - t_from) * 0.1 FROM time_bounds)\n         THEN COALESCE(a.proc_vram_used_gb, 0) END) AS vram_end,\n    COUNT(*) AS samples\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  WHERE $__timeFilter(a.\"timestamp\")\n  GROUP BY r.process_name, a.process_key\n  HAVING COUNT(*) >= 20\n)\nSELECT\n  process_name AS \"进程名\",\n  ROUND(mem_start::numeric, 0) AS \"起始内存 (MB)\",\n  ROUND(mem_end::numeric, 0) AS \"结束内存 (MB)\",\n  ROUND((mem_end - mem_start)::numeric, 0) AS \"内存增量 (MB)\",\n  CASE WHEN mem_start > 0 THEN ROUND(((mem_end - mem_start) / mem_start * 100)::numeric, 1) ELSE 0 END AS \"内存增幅 (%)\",\n  ROUND(vram_start::numeric * 1024, 0) AS \"起始显存 (MB)\",\n  ROUND(vram_end::numeric * 1024, 0) AS \"结束显存 (MB)\",\n  ROUND((vram_end - vram_start)::numeric * 1024, 0) AS \"显存增量 (MB)\",\n  samples AS \"采样数\"\nFROM process_mem_trend\nWHERE mem_start IS NOT NULL AND mem_end IS NOT NULL\n  AND (mem_end - mem_start) > 10\nORDER BY (mem_end - mem_start) DESC\nLIMIT 15;\n",
+          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nprocess_lifespan AS (\n  SELECT\n    a.process_key,\n    MIN(a.\"timestamp\") AS first_t,\n    MAX(a.\"timestamp\") AS last_t,\n    COUNT(*) AS samples\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n  GROUP BY a.process_key\n  HAVING COUNT(*) >= 10 AND (MAX(a.\"timestamp\") - MIN(a.\"timestamp\")) >= interval '5 minutes'\n),\nprocess_mem_trend AS (\n  SELECT\n    pl.process_key,\n    r.process_name,\n    pl.samples,\n    AVG(CASE WHEN a.\"timestamp\" < pl.first_t + (pl.last_t - pl.first_t) * 0.1 THEN a.proc_ram_mb END) AS mem_start,\n    AVG(CASE WHEN a.\"timestamp\" > pl.last_t - (pl.last_t - pl.first_t) * 0.1 THEN a.proc_ram_mb END) AS mem_end,\n    AVG(CASE WHEN a.\"timestamp\" < pl.first_t + (pl.last_t - pl.first_t) * 0.1 THEN COALESCE(a.proc_vram_used_gb, 0) END) AS vram_start,\n    AVG(CASE WHEN a.\"timestamp\" > pl.last_t - (pl.last_t - pl.first_t) * 0.1 THEN COALESCE(a.proc_vram_used_gb, 0) END) AS vram_end\n  FROM public.fact_process_activity a\n  JOIN process_lifespan pl ON a.process_key = pl.process_key\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n  GROUP BY pl.process_key, r.process_name, pl.samples\n)\nSELECT\n  process_name AS \"进程名\",\n  ROUND(mem_start::numeric, 0) AS \"起始内存 (MB)\",\n  ROUND(mem_end::numeric, 0) AS \"结束内存 (MB)\",\n  ROUND((mem_end - mem_start)::numeric, 0) AS \"内存增量 (MB)\",\n  CASE WHEN mem_start > 0 THEN ROUND(((mem_end - mem_start) / mem_start * 100)::numeric, 1) ELSE 0 END AS \"内存增幅 (%)\",\n  ROUND(vram_start::numeric * 1024, 0) AS \"起始显存 (MB)\",\n  ROUND(vram_end::numeric * 1024, 0) AS \"结束显存 (MB)\",\n  ROUND((vram_end - vram_start)::numeric * 1024, 0) AS \"显存增量 (MB)\",\n  samples AS \"采样数\"\nFROM process_mem_trend\nWHERE mem_start IS NOT NULL AND mem_end IS NOT NULL\n  AND (mem_end - mem_start) > 10\nORDER BY (mem_end - mem_start) DESC\nLIMIT 15;\n",
           "refId": "A"
         }
       ],
@@ -846,7 +857,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS range_start,\n    $__timeTo()::timestamptz AS range_end\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 1500)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\nfg_keys AS (\n  SELECT DISTINCT ON (g.grid_time)\n    g.grid_time,\n    ctx.process_key,\n    ctx.os_pid\n  FROM time_grid g\n  JOIN public.fact_process_context ctx\n    ON g.grid_time >= ctx.\"timestamp\"\n    AND (g.grid_time < ctx.end_timestamp OR ctx.end_timestamp IS NULL)\n    AND ctx.is_foreground = 1\n  ORDER BY g.grid_time, ctx.\"timestamp\" DESC\n),\nresource_split AS (\n  SELECT\n    g.grid_time AS time,\n    SUM(CASE WHEN fk.process_key IS NOT NULL THEN a.proc_cpu_usage ELSE 0 END) AS \"前台进程 CPU (%)\",\n    SUM(CASE WHEN fk.process_key IS NULL THEN a.proc_cpu_usage ELSE 0 END) AS \"后台总 CPU (%)\",\n    SUM(CASE WHEN fk.process_key IS NOT NULL THEN a.proc_gpu_usage ELSE 0 END) AS \"前台进程 GPU (%)\",\n    SUM(CASE WHEN fk.process_key IS NULL THEN a.proc_gpu_usage ELSE 0 END) AS \"后台总 GPU (%)\"\n  FROM time_grid g\n  JOIN public.fact_process_activity a ON a.\"timestamp\" = g.grid_time\n  LEFT JOIN fg_keys fk\n    ON g.grid_time = fk.grid_time\n    AND a.process_key = fk.process_key\n    AND a.os_pid = fk.os_pid\n  GROUP BY g.grid_time\n)\nSELECT time, \"前台进程 CPU (%)\", \"后台总 CPU (%)\", \"前台进程 GPU (%)\", \"后台总 GPU (%)\"\nFROM resource_split\nORDER BY time ASC;\n",
+          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nfg_intervals AS (\n  SELECT\n    process_key,\n    os_pid,\n    timestamp AS t_start,\n    COALESCE(end_timestamp, (SELECT t_to FROM time_bounds)) AS t_end\n  FROM public.fact_process_context\n  CROSS JOIN time_bounds b\n  WHERE timestamp BETWEEN b.t_from - interval '2 hours' AND b.t_to\n    AND is_foreground = 1\n),\nraw_activity AS (\n  SELECT\n    date_trunc('second', a.\"timestamp\") AS time_sec,\n    a.proc_cpu_usage,\n    a.proc_gpu_usage,\n    CASE WHEN f.process_key IS NOT NULL THEN 1 ELSE 0 END AS is_fg\n  FROM public.fact_process_activity a\n  LEFT JOIN fg_intervals f\n    ON a.process_key = f.process_key\n    AND a.os_pid = f.os_pid\n    AND a.\"timestamp\" >= f.t_start\n    AND a.\"timestamp\" < f.t_end\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n),\nbucketed AS (\n  SELECT\n    time_sec,\n    SUM(CASE WHEN is_fg = 1 THEN proc_cpu_usage ELSE 0 END) AS fg_cpu,\n    SUM(CASE WHEN is_fg = 0 THEN proc_cpu_usage ELSE 0 END) AS bg_cpu,\n    SUM(CASE WHEN is_fg = 1 THEN proc_gpu_usage ELSE 0 END) AS fg_gpu,\n    SUM(CASE WHEN is_fg = 0 THEN proc_gpu_usage ELSE 0 END) AS bg_gpu\n  FROM raw_activity\n  GROUP BY time_sec\n)\nSELECT\n  $__timeGroupAlias(time_sec, $__interval) AS \"time\",\n  ROUND(AVG(fg_cpu)::numeric, 2) AS \"前台进程 CPU (%)\",\n  ROUND(AVG(bg_cpu)::numeric, 2) AS \"后台总 CPU (%)\",\n  ROUND(AVG(fg_gpu)::numeric, 2) AS \"前台进程 GPU (%)\",\n  ROUND(AVG(bg_gpu)::numeric, 2) AS \"后台总 GPU (%)\"\nFROM bucketed\nGROUP BY 1\nORDER BY 1 ASC;\n",
           "refId": "A"
         }
       ],
@@ -856,9 +867,9 @@
   ],
   "schemaVersion": 41,
   "tags": [
-    "timeaudit",
-    "process",
-    "resource"
+    "时间审计",
+    "进程资源",
+    "后台监控"
   ],
   "templating": {
     "list": []

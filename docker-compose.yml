@@ -14,6 +14,11 @@ services:
       - "55432:5432"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
+    # /dev/shm 上限：并行查询(posix DSM)扫描大分区(fact_process_activity 周分区已达 ~1.8GB)时在此申请共享内存，
+    # Docker 默认 64MB 过小会触发 "could not resize shared memory segment ... No space left on device"。
+    # 512MB 已远超实际所需——DSM 用量受 work_mem(4MB) × 并行度(max_parallel_workers_per_gather=2) 约束，
+    # 与物理内存无关，切勿按 64GB 内存比例放大(那只会让失控查询经 tmpfs 吃光内存)。tmpfs 惰性分配，闲时实占≈0。
+    shm_size: '512mb'
 
   # 🚀 异步数据管道：负责无感将 AHK 写入的 CSV 批量拍进数据库
   audit-ingest:
