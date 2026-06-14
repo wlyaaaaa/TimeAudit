@@ -1088,7 +1088,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('day', timestamp) AS day,\n    cpu_package_power,\n    cpu_package_temp,\n    cpu_clock_mhz,\n    cpu_vcore_voltage,\n    MAX(cpu_package_power) OVER(PARTITION BY date_trunc('day', timestamp)) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  day AS \"time\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_package_temp ELSE NULL END) AS \"CPU 负载温度\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_package_power ELSE NULL END) AS \"CPU 负载功率\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_clock_mhz ELSE NULL END) AS \"CPU 负载主频\",\n  AVG(CASE WHEN max_cpu_pwr > 40.0 AND cpu_package_power >= 0.7 * max_cpu_pwr THEN cpu_vcore_voltage ELSE NULL END) AS \"CPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('$aging_step', timestamp) AS period,\n    cpu_package_power,\n    cpu_package_temp,\n    cpu_clock_mhz,\n    cpu_vcore_voltage,\n    MAX(cpu_package_power) OVER(PARTITION BY date_trunc('$aging_step', timestamp)) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  period AS \"time\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_temp ELSE NULL END) AS \"CPU 负载温度\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_power ELSE NULL END) AS \"CPU 负载功率\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_clock_mhz ELSE NULL END) AS \"CPU 负载主频\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_vcore_voltage ELSE NULL END) AS \"CPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -1262,7 +1262,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('day', timestamp) AS day,\n    gpu_board_power,\n    gpu_core_temp,\n    gpu_hotspot_temp,\n    gpu_core_clock,\n    gpu_core_voltage,\n    MAX(gpu_board_power) OVER(PARTITION BY date_trunc('day', timestamp)) AS max_gpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  day AS \"time\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_core_temp ELSE NULL END) AS \"GPU 核心负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_hotspot_temp ELSE NULL END) AS \"GPU 热点负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_board_power ELSE NULL END) AS \"GPU 负载功率\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_core_clock ELSE NULL END) AS \"GPU 负载时钟\",\n  AVG(CASE WHEN max_gpu_pwr > 80.0 AND gpu_board_power >= 0.7 * max_gpu_pwr THEN gpu_core_voltage ELSE NULL END) AS \"GPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('$aging_step', timestamp) AS period,\n    gpu_board_power,\n    gpu_core_temp,\n    gpu_hotspot_temp,\n    gpu_core_clock,\n    gpu_core_voltage,\n    MAX(gpu_board_power) OVER(PARTITION BY date_trunc('$aging_step', timestamp)) AS max_gpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  period AS \"time\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_core_temp ELSE NULL END) AS \"GPU 核心负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_hotspot_temp ELSE NULL END) AS \"GPU 热点负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_board_power ELSE NULL END) AS \"GPU 负载功率\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_core_clock ELSE NULL END) AS \"GPU 负载时钟\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_core_voltage ELSE NULL END) AS \"GPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -2110,7 +2110,7 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 15,
+  "version": 16,
   "templating": {
     "list": [
       {
@@ -2145,6 +2145,170 @@
           }
         ],
         "query": "30d,90d,180d,365d",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "value": "day",
+          "text": "按天聚合 (精细)"
+        },
+        "hide": 0,
+        "label": "📅 趋势统计步长",
+        "name": "aging_step",
+        "options": [
+          {
+            "selected": true,
+            "value": "day",
+            "text": "按天聚合 (精细)"
+          },
+          {
+            "selected": false,
+            "value": "week",
+            "text": "按周聚合 (平滑)"
+          },
+          {
+            "selected": false,
+            "value": "month",
+            "text": "按月聚合 (长期)"
+          }
+        ],
+        "query": "day,week,month",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "value": "0.7",
+          "text": "70% 负载 (默认)"
+        },
+        "hide": 0,
+        "label": "⚙️ 负载判定比例 (Ratio)",
+        "name": "aging_load_ratio",
+        "options": [
+          {
+            "selected": false,
+            "value": "0.5",
+            "text": "50% 负载"
+          },
+          {
+            "selected": false,
+            "value": "0.6",
+            "text": "60% 负载"
+          },
+          {
+            "selected": true,
+            "value": "0.7",
+            "text": "70% 负载 (默认)"
+          },
+          {
+            "selected": false,
+            "value": "0.8",
+            "text": "80% 负载"
+          },
+          {
+            "selected": false,
+            "value": "0.9",
+            "text": "90% 负载"
+          }
+        ],
+        "query": "0.5,0.6,0.7,0.8,0.9",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "value": "40",
+          "text": "40W (默认)"
+        },
+        "hide": 0,
+        "label": "⚙️ CPU 最低功耗 (W)",
+        "name": "cpu_min_watt",
+        "options": [
+          {
+            "selected": false,
+            "value": "20",
+            "text": "20W"
+          },
+          {
+            "selected": false,
+            "value": "30",
+            "text": "30W"
+          },
+          {
+            "selected": true,
+            "value": "40",
+            "text": "40W (默认)"
+          },
+          {
+            "selected": false,
+            "value": "60",
+            "text": "60W"
+          },
+          {
+            "selected": false,
+            "value": "80",
+            "text": "80W"
+          },
+          {
+            "selected": false,
+            "value": "100",
+            "text": "100W"
+          }
+        ],
+        "query": "20,30,40,60,80,100",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      },
+      {
+        "current": {
+          "selected": true,
+          "value": "80",
+          "text": "80W (默认)"
+        },
+        "hide": 0,
+        "label": "⚙️ GPU 最低功耗 (W)",
+        "name": "gpu_min_watt",
+        "options": [
+          {
+            "selected": false,
+            "value": "50",
+            "text": "50W"
+          },
+          {
+            "selected": true,
+            "value": "80",
+            "text": "80W (默认)"
+          },
+          {
+            "selected": false,
+            "value": "100",
+            "text": "100W"
+          },
+          {
+            "selected": false,
+            "value": "150",
+            "text": "150W"
+          },
+          {
+            "selected": false,
+            "value": "200",
+            "text": "200W"
+          },
+          {
+            "selected": false,
+            "value": "300",
+            "text": "300W"
+          }
+        ],
+        "query": "50,80,100,150,200,300",
         "queryValue": "",
         "skipUrlSync": false,
         "type": "custom"
