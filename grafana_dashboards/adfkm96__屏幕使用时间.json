@@ -727,7 +727,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH time_grid AS (\r\n  -- 1. 🛡️ 骨架核心：动态生成当前查看窗口内、每 1 分钟精准递增的时间骨架\r\n  SELECT generate_series(\r\n    $__timeFrom(),\r\n    $__timeTo(),\r\n    '1 minute'::interval\r\n  ) AS grid_time\r\n),\r\nactual_logs AS (\r\n  -- 2. 🗜️ 提取并清洗真实的 AHK 日志\r\n  SELECT\r\n    start_time,\r\n    start_time + (duration_seconds || ' seconds')::interval AS end_time,\r\n    CASE\r\n      WHEN process_name = 'System_Sleep' THEN '⬛ 绝对睡眠 (风扇停转)'\r\n      WHEN process_name = 'System_DisplayOff' THEN '🟥 屏幕关闭 (伪睡眠/锁屏)' -- ✅ 精确还原文字顺序\r\n      WHEN process_name = 'System_Idle' THEN '🟡 键鼠静止 (人不在暂离)'\r\n      ELSE '🟢 深度工作 (正常使用中)'\r\n    END as state,\r\n    CASE\r\n      WHEN process_name = 'System_Sleep' THEN 4\r\n      WHEN process_name = 'System_DisplayOff' THEN 3\r\n      WHEN process_name = 'System_Idle' THEN 2\r\n      ELSE 1\r\n    END as priority,\r\n    duration_seconds\r\n  FROM app_usage_logs\r\n  WHERE $__timeFilter(start_time)\r\n),\r\ngrid_mapped AS (\r\n  -- 3. 🔗 交叉碰撞：将每分钟的时间骨架与真实日志做区间重叠判定\r\n  SELECT\r\n    g.grid_time,\r\n    al.state,\r\n    al.duration_seconds,\r\n    -- 如果同一分钟内不幸发生多状态掐架，依旧死守权力优先级\r\n    ROW_NUMBER() OVER (PARTITION BY g.grid_time ORDER BY al.priority DESC, al.duration_seconds DESC) as rn\r\n  FROM time_grid g\r\n  LEFT JOIN actual_logs al \r\n    ON g.grid_time >= al.start_time AND g.grid_time < al.end_time\r\n)\r\n-- 4. 🏁 终审输出：完美恢复你的双重时区转换与原始字段命名\r\nSELECT\r\n  (grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\r\n  COALESCE(duration_seconds, 60) as \"持续秒数\",\r\n  COALESCE(state, '📴 关机离线 (未通电/无数据)') as \"全盘宏观状态\"\r\nFROM grid_mapped\r\nWHERE rn = 1\r\nORDER BY time ASC;",
+          "rawSql": "SELECT\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\n  COALESCE(al.duration_seconds, 60) as \"持续秒数\",\n  COALESCE(al.state, '📴 关机离线 (未通电/无数据)') as \"全盘宏观状态\"\nFROM (\n  -- 1. 活体骨架层：自适应分桶时间骨架，最大像素宽度限额 ~2000，解决长范围时间轴下卡死问题\n  SELECT generate_series(\n    $__timeFrom()::timestamptz,\n    $__timeTo()::timestamptz,\n    GREATEST(interval '1 minute', make_interval(secs => ceil(extract(epoch from ($__timeTo()::timestamptz - $__timeFrom()::timestamptz)) / 2000)::int))\n  ) AS grid_time\n) g\nLEFT JOIN LATERAL (\n  -- 2. 局部快速寻址：利用 start_time 上的 B-Tree 索引，以 O(log N) 级反向检索覆盖该网格点的状态\n  SELECT \n    duration_seconds,\n    CASE\n      WHEN process_name = 'System_Sleep' THEN '⬛ 绝对睡眠 (风扇停转)'\n      WHEN process_name = 'System_DisplayOff' THEN '🟥 屏幕关闭 (伪睡眠/锁屏)'\n      WHEN process_name = 'System_Idle' THEN '🟡 键鼠静止 (人不在暂离)'\n      ELSE '🟢 深度工作 (正常使用中)'\n    END as state\n  FROM app_usage_logs\n  WHERE start_time <= g.grid_time \n    AND start_time + (duration_seconds || ' seconds')::interval > g.grid_time\n  ORDER BY start_time DESC\n  LIMIT 1\n) al ON true\nORDER BY time ASC;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1363,5 +1363,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 50
+  "version": 51
 }
