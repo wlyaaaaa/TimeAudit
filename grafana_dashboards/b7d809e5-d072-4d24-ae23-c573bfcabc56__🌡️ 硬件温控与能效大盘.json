@@ -964,7 +964,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "CPU 峰值温度"
+              "options": "CPU 负载温度"
             },
             "properties": [
               {
@@ -983,31 +983,20 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "GPU 核心峰值温度"
+              "options": "CPU 负载功率"
             },
             "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              },
               {
                 "id": "min",
                 "value": 0
               },
               {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#10B981",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "GPU 热点峰值温度"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
+                "id": "custom.axisPlacement",
+                "value": "right"
               },
               {
                 "id": "color",
@@ -1022,7 +1011,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 24,
+        "w": 12,
         "x": 0,
         "y": 34
       },
@@ -1045,12 +1034,132 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT \n  date_trunc('day', timestamp) AS \"time\",\n  MAX(cpu_package_temp) AS \"CPU 峰值温度\",\n  MAX(gpu_core_temp) AS \"GPU 核心峰值温度\",\n  MAX(gpu_hotspot_temp) AS \"GPU 热点峰值温度\"\nFROM public.fact_system_hardware\nWHERE timestamp >= now() - interval '30 days'\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "WITH daily_max_power AS (\n  SELECT \n    date_trunc('day', timestamp) AS day,\n    MAX(cpu_package_power) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '30 days'\n  GROUP BY 1\n),\ndaily_load_metrics AS (\n  SELECT \n    date_trunc('day', hw.timestamp) AS day,\n    AVG(CASE WHEN dp.max_cpu_pwr > 40.0 AND hw.cpu_package_power >= 0.7 * dp.max_cpu_pwr THEN hw.cpu_package_temp ELSE NULL END) AS cpu_load_temp,\n    AVG(CASE WHEN dp.max_cpu_pwr > 40.0 AND hw.cpu_package_power >= 0.7 * dp.max_cpu_pwr THEN hw.cpu_package_power ELSE NULL END) AS cpu_load_pwr\n  FROM public.fact_system_hardware hw\n  JOIN daily_max_power dp ON date_trunc('day', hw.timestamp) = dp.day\n  GROUP BY 1\n)\nSELECT \n  day AS \"time\",\n  cpu_load_temp AS \"CPU 负载温度\",\n  cpu_load_pwr AS \"CPU 负载功率\"\nFROM daily_load_metrics\nORDER BY 1;",
           "refId": "A"
         }
       ],
       "timeFrom": "now-30d",
-      "title": "温度老化与散热衰减趋势 (最近 30 天日峰值)",
+      "title": "CPU 散热老化与能效衰减趋势 (30天日负载均值)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 核心负载温度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 热点负载温度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "GPU 负载功率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 34
+      },
+      "id": 10,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH daily_max_power AS (\n  SELECT \n    date_trunc('day', timestamp) AS day,\n    MAX(gpu_board_power) AS max_gpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '30 days'\n  GROUP BY 1\n),\ndaily_load_metrics AS (\n  SELECT \n    date_trunc('day', hw.timestamp) AS day,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_core_temp ELSE NULL END) AS gpu_load_temp,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_hotspot_temp ELSE NULL END) AS gpu_hotspot_load_temp,\n    AVG(CASE WHEN dp.max_gpu_pwr > 80.0 AND hw.gpu_board_power >= 0.7 * dp.max_gpu_pwr THEN hw.gpu_board_power ELSE NULL END) AS gpu_load_pwr\n  FROM public.fact_system_hardware hw\n  JOIN daily_max_power dp ON date_trunc('day', hw.timestamp) = dp.day\n  GROUP BY 1\n)\nSELECT \n  day AS \"time\",\n  gpu_load_temp AS \"GPU 核心负载温度\",\n  gpu_hotspot_load_temp AS \"GPU 热点负载温度\",\n  gpu_load_pwr AS \"GPU 负载功率\"\nFROM daily_load_metrics\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "timeFrom": "now-30d",
+      "title": "GPU 散热老化与能效衰减趋势 (30天日负载均值)",
       "type": "timeseries"
     }
   ],
@@ -1067,5 +1176,5 @@
   "timezone": "browser",
   "title": "🌡️ 硬件温控与能效大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 6
+  "version": 7
 }
