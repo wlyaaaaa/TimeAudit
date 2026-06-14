@@ -778,7 +778,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_package_power,\n    gpu_board_power,\n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    -- 12V 外设：15W - 50W\n    15.0 + (cpu_total_usage / 100.0 * 15.0) + (gpu_usage / 100.0 * 20.0) AS p12v_periph_watt,\n    -- 5V 外设 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt,\n    -- 3.3V 外设 (主板/M.2)：10W - 20W\n    10.0 + (cpu_total_usage / 100.0 * 10.0) AS p3_3v_watt,\n    cpu_package_power + gpu_board_power AS dc_chips_watt\n  FROM latest_hw\n),\ncalculation AS (\n  SELECT \n    dc_chips_watt + p12v_periph_watt + p5v_watt + p3_3v_watt AS dc_total_watt,\n    (dc_chips_watt + p12v_periph_watt + p5v_watt + p3_3v_watt) / 1000.0 * 100.0 AS psu_load_pct\n  FROM estimation\n),\nac_calculation AS (\n  SELECT \n    dc_total_watt,\n    psu_load_pct,\n    CASE \n      WHEN dc_total_watt < 100 THEN 0.85\n      WHEN dc_total_watt < 250 THEN 0.89\n      WHEN dc_total_watt < 600 THEN 0.91\n      ELSE 0.89\n    END AS psu_efficiency\n  FROM calculation\n),\nfinal_metrics AS (\n  SELECT \n    dc_total_watt / psu_efficiency AS ac_wall_watt,\n    psu_load_pct,\n    (dc_total_watt / psu_efficiency) / 220.0 AS ac_current_amp\n  FROM ac_calculation\n)\nSELECT '⚡ 估算墙上输入功耗' AS metric, ROUND(ac_wall_watt::numeric, 1) AS value FROM final_metrics\nUNION ALL\nSELECT '🔌 1000W电源负载率', ROUND(psu_load_pct::numeric, 1) FROM final_metrics\nUNION ALL\nSELECT '🔌 220V输入电流估算', ROUND(ac_current_amp::numeric, 2) FROM final_metrics;",
+          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_package_power,\n    gpu_board_power,\n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    -- 12V 外设：15W - 50W\n    15.0 + (cpu_total_usage / 100.0 * 15.0) + (gpu_usage / 100.0 * 20.0) AS p12v_periph_watt,\n    -- 5V 外设 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt,\n    -- 3.3V 外设 (主板/M.2)：10W - 20W\n    10.0 + (cpu_total_usage / 100.0 * 10.0) AS p3_3v_watt,\n    cpu_package_power + gpu_board_power AS dc_chips_watt\n  FROM latest_hw\n),\ncalculation AS (\n  SELECT \n    dc_chips_watt + p12v_periph_watt + p5v_watt + p3_3v_watt AS dc_total_watt,\n    (dc_chips_watt + p12v_periph_watt + p5v_watt + p3_3v_watt) / 1000.0 * 100.0 AS psu_load_pct\n  FROM estimation\n),\nac_calculation AS (\n  SELECT \n    dc_total_watt,\n    psu_load_pct,\n    CASE \n      WHEN dc_total_watt < 100 THEN 0.85\n      WHEN dc_total_watt < 250 THEN 0.89\n      WHEN dc_total_watt < 600 THEN 0.91\n      ELSE 0.89\n    END AS psu_efficiency\n  FROM calculation\n),\nfinal_metrics AS (\n  SELECT \n    dc_total_watt / psu_efficiency AS ac_wall_watt,\n    psu_load_pct,\n    (dc_total_watt / psu_efficiency) / 220.0 AS ac_current_amp\n  FROM ac_calculation\n)\nSELECT \n  ROUND(ac_wall_watt::numeric, 1) AS \"⚡ 估算墙上输入功耗\", \n  ROUND(psu_load_pct::numeric, 1) AS \"🔌 1000W电源负载率\", \n  ROUND(ac_current_amp::numeric, 2) AS \"🔌 220V输入电流估算\" \nFROM final_metrics;",
           "refId": "A"
         }
       ]
@@ -808,7 +808,7 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "🔌 +12V 轨总电流 (CPU/GPU/风扇)"
+              "options": "⚡ +12V 轨总电流 (CPU/GPU/风扇)"
             },
             "properties": [
               {
@@ -875,7 +875,243 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_package_power,\n    gpu_board_power,\n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    cpu_package_power + gpu_board_power AS dc_chips_watt,\n    -- 12V 外设功耗 (风扇/水冷/VRM)：15W - 50W\n    15.0 + (cpu_total_usage / 100.0 * 15.0) + (gpu_usage / 100.0 * 20.0) AS p12v_periph_watt,\n    -- 5V 外设功耗 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt,\n    -- 3.3V 外设功耗 (主板/M.2)：10W - 20W\n    10.0 + (cpu_total_usage / 100.0 * 10.0) AS p3_3v_watt\n  FROM latest_hw\n),\nrail_currents AS (\n  SELECT \n    (dc_chips_watt + p12v_periph_watt) / 12.0 AS current_12v,\n    p5v_watt / 5.0 AS current_5v,\n    p3_3v_watt / 3.3 AS current_3_3v\n  FROM estimation\n)\nSELECT '🔌 +12V 轨总电流 (CPU/GPU/风扇)' AS metric, ROUND(current_12v::numeric, 1) AS value FROM rail_currents\nUNION ALL\nSELECT '🌈 +5V 轨估算电流 (USB/RGB)' AS metric, ROUND(current_5v::numeric, 1) AS value FROM rail_currents\nUNION ALL\nSELECT '💾 +3.3V 轨估算电流 (主板/M.2)' AS metric, ROUND(current_3_3v::numeric, 1) AS value FROM rail_currents;",
+          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_package_power,\n    gpu_board_power,\n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    cpu_package_power + gpu_board_power AS dc_chips_watt,\n    -- 12V 外设功耗 (风扇/水冷/VRM)：15W - 50W\n    15.0 + (cpu_total_usage / 100.0 * 15.0) + (gpu_usage / 100.0 * 20.0) AS p12v_periph_watt,\n    -- 5V 外设功耗 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt,\n    -- 3.3V 外设功耗 (主板/M.2)：10W - 20W\n    10.0 + (cpu_total_usage / 100.0 * 10.0) AS p3_3v_watt\n  FROM latest_hw\n),\nrail_currents AS (\n  SELECT \n    (dc_chips_watt + p12v_periph_watt) / 12.0 AS current_12v,\n    p5v_watt / 5.0 AS current_5v,\n    p3_3v_watt / 3.3 AS current_3_3v\n  FROM estimation\n)\nSELECT \n  ROUND(current_12v::numeric, 1) AS \"⚡ +12V 轨总电流 (CPU/GPU/风扇)\", \n  ROUND(current_5v::numeric, 1) AS \"🌈 +5V 轨估算电流 (USB/RGB)\", \n  ROUND(current_3_3v::numeric, 1) AS \"💾 +3.3V 轨估算电流 (主板/M.2)\" \nFROM rail_currents;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "⚡ 峰电用量 (kWh)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "kwh"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "💰 峰电电费 (元)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currency:CNY"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🌙 谷电用量 (kWh)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "kwh"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "💰 谷电电费 (元)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currency:CNY"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 26
+      },
+      "id": 10,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "title": "🌙 峰谷用电量与电费占比分析",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH raw_data AS (\n  SELECT \n    timestamp,\n    (cpu_package_power + gpu_board_power) AS total_watt,\n    EXTRACT(HOUR FROM timestamp AT TIME ZONE 'Asia/Shanghai') AS hr,\n    COALESCE(EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp))), 3.0) AS dt\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz AND timestamp <= $__timeTo()::timestamptz\n),\nhourly_energy AS (\n  SELECT \n    hr,\n    total_watt * dt / 3600000.0 AS energy_kwh,\n    CASE \n      WHEN hr >= 8 AND hr < 22 THEN 'peak'\n      ELSE 'valley'\n    END AS period\n  FROM raw_data\n  WHERE dt < 60\n),\nstats AS (\n  SELECT \n    SUM(CASE WHEN period = 'peak' THEN energy_kwh ELSE 0 END) AS peak_kwh,\n    SUM(CASE WHEN period = 'valley' THEN energy_kwh ELSE 0 END) AS valley_kwh\n  FROM hourly_energy\n)\nSELECT \n  ROUND(peak_kwh::numeric, 2) AS \"⚡ 峰电用量 (kWh)\",\n  ROUND((peak_kwh * ${peak_price})::numeric, 2) AS \"💰 峰电电费 (元)\",\n  ROUND(valley_kwh::numeric, 2) AS \"🌙 谷电用量 (kWh)\",\n  ROUND((valley_kwh * ${valley_price})::numeric, 2) AS \"💰 谷电电费 (元)\"\nFROM stats;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🌈 5V 轨电流 (A)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "amp"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🔌 5V 轨负载率 (%)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🛡️ 5V 剩余电流余量 (A)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "amp"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "💚 供电状态"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "✅ 供电安全": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "⚠️ 供电吃紧": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "🔥 供电危险": {
+                        "color": "red",
+                        "index": 2
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 26
+      },
+      "id": 11,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "title": "🔌 5V 轨 (USB & RGB) 供电健康舱",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    -- 5V 外设功耗 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt\n  FROM latest_hw\n),\nmetrics AS (\n  SELECT \n    p5v_watt / 5.0 AS current_5v,\n    (p5v_watt / 100.0) * 100.0 AS load_pct_5v,\n    20.0 - (p5v_watt / 5.0) AS headroom_5v\n  FROM estimation\n)\nSELECT \n  ROUND(current_5v::numeric, 1) AS \"🌈 5V 轨电流 (A)\",\n  ROUND(load_pct_5v::numeric, 1) AS \"🔌 5V 轨负载率 (%)\",\n  ROUND(headroom_5v::numeric, 1) AS \"🛡️ 5V 剩余电流余量 (A)\",\n  CASE \n    WHEN load_pct_5v < 50.0 THEN '✅ 供电安全'\n    WHEN load_pct_5v < 80.0 THEN '⚠️ 供电吃紧'\n    ELSE '🔥 供电危险'\n  END AS \"💚 供电状态\"\nFROM metrics;",
           "refId": "A"
         }
       ]
@@ -894,8 +1130,9 @@
       {
         "allowCustomValue": true,
         "current": {
-          "text": "0.6",
-          "value": "0.6"
+          "selected": true,
+          "value": "0.58",
+          "text": "0.58"
         },
         "hide": 0,
         "includeAll": false,
@@ -905,8 +1142,13 @@
         "options": [
           {
             "selected": false,
-            "value": "0.5",
-            "text": "0.5"
+            "value": "0.53",
+            "text": "0.53"
+          },
+          {
+            "selected": false,
+            "value": "0.54",
+            "text": "0.54"
           },
           {
             "selected": false,
@@ -914,27 +1156,47 @@
             "text": "0.55"
           },
           {
+            "selected": false,
+            "value": "0.56",
+            "text": "0.56"
+          },
+          {
+            "selected": false,
+            "value": "0.57",
+            "text": "0.57"
+          },
+          {
             "selected": true,
-            "value": "0.6",
-            "text": "0.6"
+            "value": "0.58",
+            "text": "0.58"
           },
           {
             "selected": false,
-            "value": "0.65",
-            "text": "0.65"
+            "value": "0.59",
+            "text": "0.59"
           },
           {
             "selected": false,
-            "value": "0.7",
-            "text": "0.7"
+            "value": "0.60",
+            "text": "0.60"
           },
           {
             "selected": false,
-            "value": "0.8",
-            "text": "0.8"
+            "value": "0.61",
+            "text": "0.61"
+          },
+          {
+            "selected": false,
+            "value": "0.62",
+            "text": "0.62"
+          },
+          {
+            "selected": false,
+            "value": "0.63",
+            "text": "0.63"
           }
         ],
-        "query": "0.5,0.55,0.6,0.65,0.7,0.8",
+        "query": "0.53,0.54,0.55,0.56,0.57,0.58,0.59,0.60,0.61,0.62,0.63",
         "skipUrlSync": false,
         "type": "custom",
         "valuesFormat": "csv"
@@ -942,8 +1204,9 @@
       {
         "allowCustomValue": true,
         "current": {
-          "text": "0.3",
-          "value": "0.3"
+          "selected": true,
+          "value": "0.27",
+          "text": "0.27"
         },
         "hide": 0,
         "includeAll": false,
@@ -953,8 +1216,18 @@
         "options": [
           {
             "selected": false,
-            "value": "0.2",
-            "text": "0.2"
+            "value": "0.22",
+            "text": "0.22"
+          },
+          {
+            "selected": false,
+            "value": "0.23",
+            "text": "0.23"
+          },
+          {
+            "selected": false,
+            "value": "0.24",
+            "text": "0.24"
           },
           {
             "selected": false,
@@ -962,27 +1235,42 @@
             "text": "0.25"
           },
           {
+            "selected": false,
+            "value": "0.26",
+            "text": "0.26"
+          },
+          {
             "selected": true,
-            "value": "0.3",
-            "text": "0.3"
+            "value": "0.27",
+            "text": "0.27"
           },
           {
             "selected": false,
-            "value": "0.35",
-            "text": "0.35"
+            "value": "0.28",
+            "text": "0.28"
           },
           {
             "selected": false,
-            "value": "0.4",
-            "text": "0.4"
+            "value": "0.29",
+            "text": "0.29"
           },
           {
             "selected": false,
-            "value": "0.5",
-            "text": "0.5"
+            "value": "0.30",
+            "text": "0.30"
+          },
+          {
+            "selected": false,
+            "value": "0.31",
+            "text": "0.31"
+          },
+          {
+            "selected": false,
+            "value": "0.32",
+            "text": "0.32"
           }
         ],
-        "query": "0.2,0.25,0.3,0.35,0.4,0.5",
+        "query": "0.22,0.23,0.24,0.25,0.26,0.27,0.28,0.29,0.30,0.31,0.32",
         "skipUrlSync": false,
         "type": "custom",
         "valuesFormat": "csv"
@@ -1027,5 +1315,5 @@
   "timezone": "browser",
   "title": "🔌 功耗与电费诊断舱",
   "uid": "addpc9x",
-  "version": 7
+  "version": 8
 }
