@@ -45,7 +45,7 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
+        "w": 4,
         "x": 0,
         "y": 0
       },
@@ -108,8 +108,8 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 5,
-        "x": 5,
+        "w": 4,
+        "x": 4,
         "y": 0
       },
       "id": 2,
@@ -197,7 +197,7 @@
       "gridPos": {
         "h": 6,
         "w": 4,
-        "x": 10,
+        "x": 8,
         "y": 0
       },
       "id": 3,
@@ -257,16 +257,13 @@
       },
       "gridPos": {
         "h": 6,
-        "w": 10,
-        "x": 14,
+        "w": 4,
+        "x": 20,
         "y": 0
       },
       "id": 5,
       "options": {
-        "displayLabels": [
-          "value",
-          "percent"
-        ],
+        "displayLabels": [],
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
@@ -688,6 +685,200 @@
       ],
       "title": "📈 每日能耗趋势与游戏能效比 (FPS/W)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "⚡ 估算墙上输入功耗"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "watt"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🔌 1000W电源负载率"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🔌 220V输入电流估算"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "amp"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 12,
+        "y": 0
+      },
+      "id": 8,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "title": "🔌 电源输出与电流估算舱 (AC 220V)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_package_power,\n    gpu_board_power,\n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    -- 12V 外设：15W - 50W\n    15.0 + (cpu_total_usage / 100.0 * 15.0) + (gpu_usage / 100.0 * 20.0) AS p12v_periph_watt,\n    -- 5V 外设 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt,\n    -- 3.3V 外设 (主板/M.2)：10W - 20W\n    10.0 + (cpu_total_usage / 100.0 * 10.0) AS p3_3v_watt,\n    cpu_package_power + gpu_board_power AS dc_chips_watt\n  FROM latest_hw\n),\ncalculation AS (\n  SELECT \n    dc_chips_watt + p12v_periph_watt + p5v_watt + p3_3v_watt AS dc_total_watt,\n    (dc_chips_watt + p12v_periph_watt + p5v_watt + p3_3v_watt) / 1000.0 * 100.0 AS psu_load_pct\n  FROM estimation\n),\nac_calculation AS (\n  SELECT \n    dc_total_watt,\n    psu_load_pct,\n    CASE \n      WHEN dc_total_watt < 100 THEN 0.85\n      WHEN dc_total_watt < 250 THEN 0.89\n      WHEN dc_total_watt < 600 THEN 0.91\n      ELSE 0.89\n    END AS psu_efficiency\n  FROM calculation\n),\nfinal_metrics AS (\n  SELECT \n    dc_total_watt / psu_efficiency AS ac_wall_watt,\n    psu_load_pct,\n    (dc_total_watt / psu_efficiency) / 220.0 AS ac_current_amp\n  FROM ac_calculation\n)\nSELECT '⚡ 估算墙上输入功耗' AS metric, ROUND(ac_wall_watt::numeric, 1) AS value FROM final_metrics\nUNION ALL\nSELECT '🔌 1000W电源负载率', ROUND(psu_load_pct::numeric, 1) FROM final_metrics\nUNION ALL\nSELECT '🔌 220V输入电流估算', ROUND(ac_current_amp::numeric, 2) FROM final_metrics;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🔌 +12V 轨总电流 (CPU/GPU/风扇)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "amp"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "🌈 +5V 轨估算电流 (USB/RGB)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "amp"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "💾 +3.3V 轨估算电流 (主板/M.2)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "amp"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 4,
+        "x": 16,
+        "y": 0
+      },
+      "id": 9,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "center",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": true
+        },
+        "textMode": "value_and_name"
+      },
+      "title": "🔌 PSU DC 各轨电流估算 (12V/5V/3.3V)",
+      "type": "stat",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH latest_hw AS (\n  SELECT \n    cpu_package_power,\n    gpu_board_power,\n    cpu_total_usage,\n    gpu_usage\n  FROM public.fact_system_hardware\n  ORDER BY timestamp DESC\n  LIMIT 1\n),\nestimation AS (\n  SELECT \n    cpu_package_power + gpu_board_power AS dc_chips_watt,\n    -- 12V 外设功耗 (风扇/水冷/VRM)：15W - 50W\n    15.0 + (cpu_total_usage / 100.0 * 15.0) + (gpu_usage / 100.0 * 20.0) AS p12v_periph_watt,\n    -- 5V 外设功耗 (USB/RGB)：20W - 80W\n    20.0 + (cpu_total_usage / 100.0 * 30.0) + (gpu_usage / 100.0 * 30.0) AS p5v_watt,\n    -- 3.3V 外设功耗 (主板/M.2)：10W - 20W\n    10.0 + (cpu_total_usage / 100.0 * 10.0) AS p3_3v_watt\n  FROM latest_hw\n),\nrail_currents AS (\n  SELECT \n    (dc_chips_watt + p12v_periph_watt) / 12.0 AS current_12v,\n    p5v_watt / 5.0 AS current_5v,\n    p3_3v_watt / 3.3 AS current_3_3v\n  FROM estimation\n)\nSELECT '🔌 +12V 轨总电流 (CPU/GPU/风扇)' AS metric, ROUND(current_12v::numeric, 1) AS value FROM rail_currents\nUNION ALL\nSELECT '🌈 +5V 轨估算电流 (USB/RGB)' AS metric, ROUND(current_5v::numeric, 1) AS value FROM rail_currents\nUNION ALL\nSELECT '💾 +3.3V 轨估算电流 (主板/M.2)' AS metric, ROUND(current_3_3v::numeric, 1) AS value FROM rail_currents;",
+          "refId": "A"
+        }
+      ]
     }
   ],
   "preload": false,
@@ -836,5 +1027,5 @@
   "timezone": "browser",
   "title": "🔌 功耗与电费诊断舱",
   "uid": "addpc9x",
-  "version": 5
+  "version": 7
 }
