@@ -866,7 +866,10 @@ class HardwareTelemetryWorker:
             pass
 
         current_ctx = psutil.cpu_stats().ctx_switches
-        ctx_rate = int((current_ctx - self.last_ctx_switches) / dt) if self.last_ctx_switches is not None else 0
+        if self.last_ctx_switches is not None and current_ctx >= self.last_ctx_switches:
+            ctx_rate = int((current_ctx - self.last_ctx_switches) / dt)
+        else:
+            ctx_rate = 0
         self.last_ctx_switches = current_ctx
         
         ram_pct = psutil.virtual_memory().percent
