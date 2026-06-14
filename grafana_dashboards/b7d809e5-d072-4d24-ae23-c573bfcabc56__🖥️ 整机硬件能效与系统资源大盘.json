@@ -3087,8 +3087,9 @@
   "refresh": "30s",
   "schemaVersion": 42,
   "tags": [
-    "hardware",
-    "thermal"
+    "硬件大盘",
+    "能效监控",
+    "温控诊断"
   ],
   "templating": {
     "list": [

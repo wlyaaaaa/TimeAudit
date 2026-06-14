@@ -18,6 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
+  "id": 650766226681856,
   "liveNow": false,
   "panels": [
     {
@@ -727,7 +728,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\n  COALESCE(al.duration_seconds, 60) as \"持续秒数\",\n  COALESCE(al.state, '📴 关机离线 (未通电/无数据)') as \"全盘宏观状态\"\nFROM (\n  -- 1. 活体骨架层：自适应分桶时间骨架，最大像素宽度限额 ~2000，解决长范围时间轴下卡死问题\n  SELECT generate_series(\n    $__timeFrom()::timestamptz,\n    $__timeTo()::timestamptz,\n    GREATEST(interval '1 minute', make_interval(secs => ceil(extract(epoch from ($__timeTo()::timestamptz - $__timeFrom()::timestamptz)) / 2000)::int))\n  ) AS grid_time\n) g\nLEFT JOIN LATERAL (\n  -- 2. 局部快速寻址：利用 start_time 上的 B-Tree 索引，以 O(log N) 级反向检索覆盖该网格点的状态\n  SELECT \n    duration_seconds,\n    CASE\n      WHEN process_name = 'System_Sleep' THEN '⬛ 绝对睡眠 (风扇停转)'\n      WHEN process_name = 'System_DisplayOff' THEN '🟥 屏幕关闭 (伪睡眠/锁屏)'\n      WHEN process_name = 'System_Idle' THEN '🟡 键鼠静止 (人不在暂离)'\n      ELSE '🟢 深度工作 (正常使用中)'\n    END as state\n  FROM app_usage_logs\n  WHERE start_time <= g.grid_time \n    AND start_time + (duration_seconds || ' seconds')::interval > g.grid_time\n  ORDER BY start_time DESC\n  LIMIT 1\n) al ON true\nORDER BY time ASC;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '1 minute', make_interval(secs => ceil(extract(epoch from (b.t_to - b.t_from)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\ntime_grid AS (\n  SELECT g.grid_time\n  FROM time_bounds b, interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(grid_time)\n),\nstate_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    a.duration_seconds,\n    CASE\n      WHEN a.process_name = 'System_Sleep' THEN '⬛ 绝对睡眠 (风扇停转)'\n      WHEN a.process_name = 'System_DisplayOff' THEN '🟥 屏幕关闭 (伪睡眠/锁屏)'\n      WHEN a.process_name = 'System_Idle' THEN '🟡 键鼠静止 (人不在暂离)'\n      ELSE '🟢 深度工作 (正常使用中)'\n    END as state\n  FROM app_usage_logs a, time_bounds b, interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from (a.start_time + (a.duration_seconds || ' seconds')::interval)) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.start_time <= b.t_to\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n  ORDER BY g.bucket_time, a.start_time DESC\n)\nSELECT\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\n  COALESCE(sa.duration_seconds, extract(epoch from i.dt)::int) as \"持续秒数\",\n  COALESCE(sa.state, '📴 关机离线 (未通电/无数据)') as \"全盘宏观状态\"\nFROM time_grid g\nCROSS JOIN interval_calc i\nLEFT JOIN state_aligned sa ON g.grid_time = sa.bucket_time\nORDER BY time ASC;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1401,5 +1402,9 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 60
+  "version": 60,
+  "tags": [
+    "时间审计",
+    "系统监控"
+  ]
 }
