@@ -77,6 +77,10 @@ CREATE INDEX IF NOT EXISTS idx_activity_is_not_responding
     ON public.fact_process_activity ("timestamp")
     WHERE is_not_responding = 1;
 
+-- 复合索引：专门针对进程 key 和时间戳的查询进行优化，大幅提升按具体进程检索时间轴时的性能
+CREATE INDEX IF NOT EXISTS idx_activity_proc_key_ts
+    ON public.fact_process_activity (process_key, "timestamp");
+
 
 -- ====================== 3. 前台上下文事实表（按周分区）====================
 -- 记录"哪个窗口在前台、标题是什么、聚焦了多久"。duration_ms 是该窗口连续聚焦的毫秒数。
