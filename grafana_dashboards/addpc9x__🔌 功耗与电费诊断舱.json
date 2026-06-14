@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
-  "id": 3290468260966400,
   "liveNow": false,
   "panels": [
     {
@@ -688,7 +687,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\ntime_grid AS (\n  SELECT g.grid_time\n  FROM time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from b.range_start) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.range_end) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(grid_time)\n),\nhw_aligned AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    AVG(cpu_package_power) AS cpu_power,\n    AVG(gpu_board_power) AS gpu_power,\n    AVG(30.0 + (cpu_package_power + gpu_board_power) * 0.12) AS platform_power\n  FROM public.fact_system_hardware\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  WHERE timestamp >= b.range_start AND timestamp <= b.range_end\n  GROUP BY 1\n)\nSELECT\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\n  ad.cpu_power AS \"CPU 功耗 (W)\",\n  ad.gpu_power AS \"GPU 功耗 (W)\",\n  ad.platform_power AS \"外设/主板估算 (W)\",\n  (ad.cpu_power + ad.gpu_power + ad.platform_power) AS \"实时整机总功耗 (W)\"\nFROM time_grid g\nLEFT JOIN hw_aligned ad ON ad.bucket_time = g.grid_time\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS range_start,\n    $__timeTo()::timestamptz AS range_end\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\ntime_grid AS (\n  SELECT g.grid_time\n  FROM time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from b.range_start) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.range_end) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(grid_time)\n),\nhw_aligned AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    AVG(cpu_package_power) AS cpu_power,\n    AVG(gpu_board_power) AS gpu_power,\n    AVG(30.0 + (cpu_package_power + gpu_board_power) * 0.12) AS platform_power\n  FROM public.fact_system_hardware\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  WHERE timestamp >= b.range_start AND timestamp <= b.range_end\n  GROUP BY 1\n)\nSELECT\n  g.grid_time as time,\n  ad.cpu_power AS \"CPU 功耗 (W)\",\n  ad.gpu_power AS \"GPU 功耗 (W)\",\n  ad.platform_power AS \"外设/主板估算 (W)\",\n  (ad.cpu_power + ad.gpu_power + ad.platform_power) AS \"实时整机总功耗 (W)\"\nFROM time_grid g\nLEFT JOIN hw_aligned ad ON ad.bucket_time = g.grid_time\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -943,13 +942,13 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nhw_ticks AS (\n  SELECT \n    timestamp,\n    cpu_package_power,\n    gpu_board_power,\n    current_fps,\n    COALESCE(EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp))), 3.0) AS dt\n  FROM public.fact_system_hardware, time_bounds\n  WHERE timestamp >= t_from AND timestamp <= t_to\n),\nhw_clean AS (\n  SELECT *, (cpu_package_power + gpu_board_power) * dt / 3600000.0 AS energy_kwh\n  FROM hw_ticks\n  WHERE dt < 60\n),\ndaily_energy AS (\n  SELECT \n    date_trunc('day', timestamp AT TIME ZONE 'Asia/Shanghai') AS bucket_day,\n    SUM(energy_kwh) AS daily_kwh\n  FROM hw_clean\n  GROUP BY 1\n),\ndaily_efficiency AS (\n  SELECT \n    date_trunc('day', timestamp AT TIME ZONE 'Asia/Shanghai') AS bucket_day,\n    AVG(current_fps) / NULLIF(AVG(cpu_package_power + gpu_board_power), 0) * 1000.0 AS fps_per_kilojoule\n  FROM hw_clean\n  WHERE current_fps > 10\n  GROUP BY 1\n)\nSELECT\n  (m.bucket_day AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') AS \"time\",\n  m.daily_kwh AS \"每日总能耗 (kWh)\",\n  ROUND(e.fps_per_kilojoule::numeric, 2) AS \"游戏能效比 (帧/千焦耳)\"\nFROM daily_energy m\nLEFT JOIN daily_efficiency e ON m.bucket_day = e.bucket_day\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nhw_ticks AS (\n  SELECT \n    timestamp,\n    cpu_package_power,\n    gpu_board_power,\n    current_fps,\n    COALESCE(EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp))), 3.0) AS dt\n  FROM public.fact_system_hardware, time_bounds\n  WHERE timestamp >= t_from AND timestamp <= t_to\n),\nhw_clean AS (\n  SELECT *, (cpu_package_power + gpu_board_power) * dt / 3600000.0 AS energy_kwh\n  FROM hw_ticks\n  WHERE dt < 60\n),\ndaily_energy AS (\n  SELECT \n    date_trunc('day', timestamp AT TIME ZONE 'Asia/Shanghai') AS bucket_day,\n    SUM(energy_kwh) AS daily_kwh\n  FROM hw_clean\n  GROUP BY 1\n),\ndaily_efficiency AS (\n  SELECT \n    date_trunc('day', timestamp AT TIME ZONE 'Asia/Shanghai') AS bucket_day,\n    AVG(current_fps) / NULLIF(AVG(cpu_package_power + gpu_board_power), 0) * 1000.0 AS fps_per_kilojoule\n  FROM hw_clean\n  WHERE current_fps > 10\n  GROUP BY 1\n)\nSELECT\n  (m.bucket_day AT TIME ZONE 'Asia/Shanghai') AS \"time\",\n  m.daily_kwh AS \"每日总能耗 (kWh)\",\n  ROUND(e.fps_per_kilojoule::numeric, 2) AS \"游戏能效比 (帧/千焦耳)\"\nFROM daily_energy m\nLEFT JOIN daily_efficiency e ON m.bucket_day = e.bucket_day\nORDER BY 1;",
           "refId": "A"
         }
       ],
+      "timeFrom": "30d",
       "title": "📈 每日能耗趋势与游戏能效比 (FPS/W)",
-      "type": "timeseries",
-      "timeFrom": "30d"
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1144,8 +1143,8 @@
         "allowCustomValue": true,
         "current": {
           "selected": true,
-          "value": "0.58",
-          "text": "0.58"
+          "text": "0.58",
+          "value": "0.58"
         },
         "hide": 0,
         "includeAll": false,
@@ -1155,58 +1154,58 @@
         "options": [
           {
             "selected": false,
-            "value": "0.53",
-            "text": "0.53"
+            "text": "0.53",
+            "value": "0.53"
           },
           {
             "selected": false,
-            "value": "0.54",
-            "text": "0.54"
+            "text": "0.54",
+            "value": "0.54"
           },
           {
             "selected": false,
-            "value": "0.55",
-            "text": "0.55"
+            "text": "0.55",
+            "value": "0.55"
           },
           {
             "selected": false,
-            "value": "0.56",
-            "text": "0.56"
+            "text": "0.56",
+            "value": "0.56"
           },
           {
             "selected": false,
-            "value": "0.57",
-            "text": "0.57"
+            "text": "0.57",
+            "value": "0.57"
           },
           {
             "selected": true,
-            "value": "0.58",
-            "text": "0.58"
+            "text": "0.58",
+            "value": "0.58"
           },
           {
             "selected": false,
-            "value": "0.59",
-            "text": "0.59"
+            "text": "0.59",
+            "value": "0.59"
           },
           {
             "selected": false,
-            "value": "0.60",
-            "text": "0.60"
+            "text": "0.60",
+            "value": "0.60"
           },
           {
             "selected": false,
-            "value": "0.61",
-            "text": "0.61"
+            "text": "0.61",
+            "value": "0.61"
           },
           {
             "selected": false,
-            "value": "0.62",
-            "text": "0.62"
+            "text": "0.62",
+            "value": "0.62"
           },
           {
             "selected": false,
-            "value": "0.63",
-            "text": "0.63"
+            "text": "0.63",
+            "value": "0.63"
           }
         ],
         "query": "0.53,0.54,0.55,0.56,0.57,0.58,0.59,0.60,0.61,0.62,0.63",
@@ -1218,8 +1217,8 @@
         "allowCustomValue": true,
         "current": {
           "selected": true,
-          "value": "0.27",
-          "text": "0.27"
+          "text": "0.27",
+          "value": "0.27"
         },
         "hide": 0,
         "includeAll": false,
@@ -1229,58 +1228,58 @@
         "options": [
           {
             "selected": false,
-            "value": "0.22",
-            "text": "0.22"
+            "text": "0.22",
+            "value": "0.22"
           },
           {
             "selected": false,
-            "value": "0.23",
-            "text": "0.23"
+            "text": "0.23",
+            "value": "0.23"
           },
           {
             "selected": false,
-            "value": "0.24",
-            "text": "0.24"
+            "text": "0.24",
+            "value": "0.24"
           },
           {
             "selected": false,
-            "value": "0.25",
-            "text": "0.25"
+            "text": "0.25",
+            "value": "0.25"
           },
           {
             "selected": false,
-            "value": "0.26",
-            "text": "0.26"
+            "text": "0.26",
+            "value": "0.26"
           },
           {
             "selected": true,
-            "value": "0.27",
-            "text": "0.27"
+            "text": "0.27",
+            "value": "0.27"
           },
           {
             "selected": false,
-            "value": "0.28",
-            "text": "0.28"
+            "text": "0.28",
+            "value": "0.28"
           },
           {
             "selected": false,
-            "value": "0.29",
-            "text": "0.29"
+            "text": "0.29",
+            "value": "0.29"
           },
           {
             "selected": false,
-            "value": "0.30",
-            "text": "0.30"
+            "text": "0.30",
+            "value": "0.30"
           },
           {
             "selected": false,
-            "value": "0.31",
-            "text": "0.31"
+            "text": "0.31",
+            "value": "0.31"
           },
           {
             "selected": false,
-            "value": "0.32",
-            "text": "0.32"
+            "text": "0.32",
+            "value": "0.32"
           }
         ],
         "query": "0.22,0.23,0.24,0.25,0.26,0.27,0.28,0.29,0.30,0.31,0.32",
@@ -1328,5 +1327,5 @@
   "timezone": "browser",
   "title": "🔌 功耗与电费诊断舱",
   "uid": "addpc9x",
-  "version": 10
+  "version": 13
 }

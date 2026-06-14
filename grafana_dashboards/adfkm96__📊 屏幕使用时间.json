@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 650766226681856,
   "liveNow": false,
   "panels": [
     {
@@ -1381,6 +1380,10 @@
   "preload": false,
   "refresh": "10s",
   "schemaVersion": 42,
+  "tags": [
+    "时间审计",
+    "系统监控"
+  ],
   "time": {
     "from": "now/y",
     "to": "now"
@@ -1402,9 +1405,5 @@
   "timezone": "browser",
   "title": "📊 屏幕使用时间",
   "uid": "adfkm96",
-  "version": 60,
-  "tags": [
-    "时间审计",
-    "系统监控"
-  ]
+  "version": 62
 }

@@ -9,6 +9,7 @@
         },
         "enable": true,
         "hide": true,
+        "iconColor": "",
         "name": "Annotations & Alerts",
         "type": "dashboard"
       }
@@ -16,7 +17,7 @@
   },
   "editable": true,
   "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
+  "graphTooltip": 0,
   "liveNow": false,
   "panels": [
     {
@@ -34,7 +35,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "red",
@@ -57,6 +58,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -64,10 +66,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
       },
-      "title": "🔴 高危仿冒组件数",
-      "type": "stat",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -80,7 +83,9 @@
           "rawSql": "SELECT count(DISTINCT r.process_key) AS value\nFROM public.dim_process_registry r\nWHERE LOWER(r.process_name) IN ('svchost.exe', 'lsass.exe', 'services.exe', 'wininit.exe', 'smss.exe', 'csrss.exe', 'explorer.exe')\n  AND LOWER(r.executable_path) NOT LIKE 'c:\\windows\\system32%' \n  AND LOWER(r.executable_path) NOT LIKE 'c:\\windows\\syswow64%'\n  AND LOWER(r.executable_path) NOT LIKE 'c:\\windows';",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🔴 高危仿冒组件数",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -97,7 +102,7 @@
             "steps": [
               {
                 "color": "blue",
-                "value": null
+                "value": 0
               },
               {
                 "color": "orange",
@@ -120,6 +125,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -127,10 +133,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
       },
-      "title": "🔑 提权进程启动次数",
-      "type": "stat",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -143,7 +150,9 @@
           "rawSql": "SELECT count(DISTINCT r.process_key) AS value\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND r.is_elevated = 1\n  AND $__timeFilter(e.event_timestamp);",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🔑 提权进程启动次数",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -160,7 +169,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "orange",
@@ -183,6 +192,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -190,10 +200,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
       },
-      "title": "⚠️ 系统未签名进程数",
-      "type": "stat",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -206,7 +217,9 @@
           "rawSql": "SELECT count(DISTINCT r.process_key) AS value\nFROM public.dim_process_registry r\nWHERE r.signature_status = 0;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "⚠️ 系统未签名进程数",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -223,7 +236,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "red",
@@ -246,6 +259,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -253,10 +267,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
       },
-      "title": "👿 进程异常崩溃次数",
-      "type": "stat",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -269,7 +284,9 @@
           "rawSql": "SELECT count(*) AS value\nFROM public.fact_process_lifecycle_events e\nWHERE e.event_type = 'EXIT'\n  AND e.exit_code IS NOT NULL \n  AND e.exit_code <> '0x00000000'\n  AND $__timeFilter(e.event_timestamp);",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "👿 进程异常崩溃次数",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -286,7 +303,7 @@
             "steps": [
               {
                 "color": "green",
-                "value": null
+                "value": 0
               },
               {
                 "color": "orange",
@@ -313,6 +330,7 @@
         "graphMode": "none",
         "justifyMode": "auto",
         "orientation": "auto",
+        "percentChangeColorMode": "standard",
         "reduceOptions": {
           "calcs": [
             "lastNotNull"
@@ -320,10 +338,11 @@
           "fields": "",
           "values": false
         },
-        "textMode": "value"
+        "showPercentChange": false,
+        "textMode": "value",
+        "wideLayout": true
       },
-      "title": "🌀 短命进程风暴频次",
-      "type": "stat",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -336,7 +355,9 @@
           "rawSql": "SELECT count(*) AS value\nFROM public.fact_process_lifecycle_events e\nWHERE e.event_type = 'EXIT' \n  AND e.process_lifetime < 5\n  AND $__timeFilter(e.event_timestamp);",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🌀 短命进程风暴频次",
+      "type": "stat"
     },
     {
       "datasource": {
@@ -349,11 +370,51 @@
             "mode": "palette-classic"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
-            "lineInterpolation": "smooth",
             "fillOpacity": 8,
             "gradientMode": "opacity",
-            "lineWidth": 2
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "auto",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "short"
         },
@@ -398,6 +459,10 @@
       },
       "id": 1,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
           "calcs": [
             "sum",
@@ -408,12 +473,12 @@
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
-      "title": "📈 进程生灭速率时间线",
-      "type": "timeseries",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -423,10 +488,12 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz,\n    GREATEST(interval '10 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\nstarts AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz AS bucket_time,\n    count(*) AS count_start\n  FROM public.fact_process_lifecycle_events, time_bounds b\n  WHERE event_type = 'START'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n),\nexits AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz AS bucket_time,\n    count(*) AS count_exit\n  FROM public.fact_process_lifecycle_events, time_bounds b\n  WHERE event_type = 'EXIT'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS time,\n  COALESCE(s.count_start, 0) AS \"进程生成速率 (次)\",\n  COALESCE(e.count_exit, 0) AS \"进程销毁速率 (次)\"\nFROM time_grid g\nLEFT JOIN starts s ON s.bucket_time = g.grid_time\nLEFT JOIN exits e ON e.bucket_time = g.grid_time\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '10 seconds', ('$__interval')::interval) AS dt\n  FROM time_bounds\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) AS grid_time\n  FROM time_bounds b\n  CROSS JOIN interval_calc i\n),\nstate_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    a.process_name\n  FROM public.app_usage_logs a\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from (a.start_time + (a.duration_seconds || ' seconds')::interval)) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.start_time <= b.t_to\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n  ORDER BY g.bucket_time, a.start_time DESC\n),\nstarts AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    count(*) AS count_start\n  FROM public.fact_process_lifecycle_events, time_bounds b, interval_calc i\n  WHERE event_type = 'START'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n),\nexits AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    count(*) AS count_exit\n  FROM public.fact_process_lifecycle_events, time_bounds b, interval_calc i\n  WHERE event_type = 'EXIT'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS time,\n  CASE \n    WHEN sa.process_name = 'System_Sleep' OR sa.process_name IS NULL THEN NULL\n    ELSE COALESCE(s.count_start, 0)\n  END AS \"进程生成速率 (次)\",\n  CASE \n    WHEN sa.process_name = 'System_Sleep' OR sa.process_name IS NULL THEN NULL\n    ELSE COALESCE(e.count_exit, 0)\n  END AS \"进程销毁速率 (次)\"\nFROM time_grid g\nLEFT JOIN state_aligned sa ON sa.bucket_time = g.grid_time\nLEFT JOIN starts s ON s.bucket_time = g.grid_time\nLEFT JOIN exits e ON e.bucket_time = g.grid_time\nORDER BY 1;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "📈 进程生灭速率时间线",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -440,7 +507,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -455,6 +541,20 @@
                 "value": "s"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "进程名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "发生频次 (次)"
+            },
+            "properties": []
           }
         ]
       },
@@ -465,9 +565,11 @@
         "y": 3
       },
       "id": 2,
-      "options": {},
-      "title": "🌀 短命进程风暴 (运行寿命 < 5s 高频)",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -480,7 +582,9 @@
           "rawSql": "SELECT \n  r.process_name AS \"进程名\",\n  count(*) AS \"发生频次 (次)\",\n  ROUND(AVG(e.process_lifetime)::numeric, 2) AS \"平均存活时间 (秒)\",\n  r.executable_path AS \"程序路径\",\n  r.command_line AS \"命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'EXIT' \n  AND e.process_lifetime < 5\n  AND $__timeFilter(e.event_timestamp)\nGROUP BY r.process_name, r.executable_path, r.command_line\nORDER BY 2 DESC\nLIMIT 100;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🌀 短命进程风暴 (运行寿命 < 5s 高频)",
+      "type": "table"
     },
     {
       "datasource": {
@@ -494,7 +598,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -523,6 +646,27 @@
                 ]
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "启动时刻"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "提权进程名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "父进程名"
+            },
+            "properties": []
           }
         ]
       },
@@ -533,9 +677,11 @@
         "y": 3
       },
       "id": 3,
-      "options": {},
-      "title": "🔑 提权进程审计表 (is_elevated=1)",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -548,7 +694,9 @@
           "rawSql": "SELECT \n  e.event_timestamp AS \"启动时刻\",\n  r.process_name AS \"提权进程名\",\n  r.parent_process AS \"父进程名\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    WHEN r.signature_status = 0 THEN '❌ 无签名'\n    ELSE '⚠️ 签名异常'\n  END AS \"数字签名\",\n  r.executable_path AS \"可执行文件路径\",\n  r.command_line AS \"提权命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND r.is_elevated = 1\n  AND $__timeFilter(e.event_timestamp)\nORDER BY e.event_timestamp DESC\nLIMIT 50;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🔑 提权进程审计表 (is_elevated=1)",
+      "type": "table"
     },
     {
       "datasource": {
@@ -562,7 +710,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -577,22 +744,86 @@
                 "value": [
                   {
                     "options": {
-                      "🔥 严重仿冒系统文件！": {
-                        "color": "red",
-                        "index": 0
+                      "ℹ️ 可疑运行特征": {
+                        "color": "blue",
+                        "index": 2
                       },
                       "⚠️ 用户目录无签名运行": {
                         "color": "orange",
                         "index": 1
                       },
-                      "ℹ️ 可疑运行特征": {
-                        "color": "blue",
-                        "index": 2
+                      "🔥 严重仿冒系统文件！": {
+                        "color": "red",
+                        "index": 0
                       }
                     },
                     "type": "value"
                   }
                 ]
+              },
+              {
+                "id": "custom.width",
+                "value": 127
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "首次发现时间"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 156
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "可疑进程"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 157
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数字签名"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 78
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "执行命令行"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 335
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "可执行文件路径"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 251
               }
             ]
           }
@@ -605,9 +836,11 @@
         "y": 9
       },
       "id": 4,
-      "options": {},
-      "title": "🎭 系统核心进程仿冒与路径异常审计",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -620,7 +853,9 @@
           "rawSql": "SELECT \n  r.created_at AS \"首次发现时间\",\n  r.process_name AS \"可疑进程\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    WHEN r.signature_status = 0 THEN '❌ 无签名'\n    ELSE '⚠️ 签名校验异常'\n  END AS \"数字签名\",\n  CASE \n    WHEN LOWER(r.process_name) IN ('svchost.exe', 'lsass.exe', 'services.exe', 'wininit.exe', 'smss.exe', 'csrss.exe', 'explorer.exe')\n         AND LOWER(r.executable_path) NOT LIKE 'c:\\windows\\system32%' \n         AND LOWER(r.executable_path) NOT LIKE 'c:\\windows\\syswow64%'\n         AND LOWER(r.executable_path) NOT LIKE 'c:\\windows' THEN '🔥 严重仿冒系统文件！'\n    WHEN r.signature_status = 0 \n         AND (LOWER(r.executable_path) LIKE 'c:\\users\\%' \n              OR LOWER(r.executable_path) LIKE 'c:\\programdata\\%' \n              OR LOWER(r.executable_path) LIKE '%\\temp\\%') THEN '⚠️ 用户目录无签名运行'\n    ELSE 'ℹ️ 可疑运行特征'\n  END AS \"风险判定\",\n  r.executable_path AS \"可执行文件路径\",\n  r.command_line AS \"执行命令行\",\n  COALESCE(r.parent_process, '未知') AS \"父进程\"\nFROM public.dim_process_registry r\nWHERE (r.signature_status <= 0 \n       OR (LOWER(r.process_name) IN ('svchost.exe', 'lsass.exe', 'services.exe', 'explorer.exe')\n           AND LOWER(r.executable_path) NOT LIKE 'c:\\windows%'))\nORDER BY r.created_at DESC\nLIMIT 100;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🎭 系统核心进程仿冒与路径异常审计",
+      "type": "table"
     },
     {
       "datasource": {
@@ -634,7 +869,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -649,17 +903,21 @@
                 "value": [
                   {
                     "options": {
+                      "💤 用户按 Ctrl+C 强行终止": {
+                        "color": "blue",
+                        "index": 5
+                      },
                       "🔥 内存越界访问 (Access Violation)": {
                         "color": "red",
                         "index": 0
                       },
-                      "🔥 栈溢出错误 (Stack Overflow)": {
-                        "color": "red",
-                        "index": 1
-                      },
                       "🔥 堆内存损坏 (Heap Corrupt)": {
                         "color": "red",
                         "index": 2
+                      },
+                      "🔥 栈溢出错误 (Stack Overflow)": {
+                        "color": "red",
+                        "index": 1
                       },
                       "🛑 整数除以零错误 (Divide by Zero)": {
                         "color": "orange",
@@ -668,15 +926,15 @@
                       "🛠️ DLL 库初始化失败": {
                         "color": "orange",
                         "index": 4
-                      },
-                      "💤 用户按 Ctrl+C 强行终止": {
-                        "color": "blue",
-                        "index": 5
                       }
                     },
                     "type": "value"
                   }
                 ]
+              },
+              {
+                "id": "custom.width",
+                "value": 314
               }
             ]
           },
@@ -689,6 +947,46 @@
               {
                 "id": "unit",
                 "value": "s"
+              },
+              {
+                "id": "custom.width",
+                "value": 117
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "崩溃时刻"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 166
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "崩溃程序"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 142
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "原始退出码"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 96
               }
             ]
           }
@@ -701,9 +999,17 @@
         "y": 9
       },
       "id": 5,
-      "options": {},
-      "title": "👿 崩溃进程审计表 (退出码翻译解码)",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "存活寿命 (秒)"
+          }
+        ]
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -716,7 +1022,9 @@
           "rawSql": "SELECT \n  e.event_timestamp AS \"崩溃时刻\",\n  r.process_name AS \"崩溃程序\",\n  e.exit_code AS \"原始退出码\",\n  CASE \n    WHEN e.exit_code = '0xC0000005' THEN '🔥 内存越界访问 (Access Violation)'\n    WHEN e.exit_code = '0xC00000FD' THEN '🔥 栈溢出错误 (Stack Overflow)'\n    WHEN e.exit_code = '0xC0000094' THEN '🛑 整数除以零错误 (Divide by Zero)'\n    WHEN e.exit_code = '0xC000013A' THEN '💤 用户按 Ctrl+C 强行终止'\n    WHEN e.exit_code = '0xC0000142' THEN '🛠️ DLL 库初始化失败'\n    WHEN e.exit_code = '0xC0000374' THEN '🔥 堆内存损坏 (Heap Corrupt)'\n    ELSE '⚠️ 其他非正常退出码 (' || e.exit_code || ')'\n  END AS \"崩溃原因翻译\",\n  e.process_lifetime AS \"存活寿命 (秒)\",\n  r.executable_path AS \"程序路径\",\n  r.command_line AS \"命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'EXIT' \n  AND e.exit_code IS NOT NULL \n  AND e.exit_code <> '0x00000000'\n  AND $__timeFilter(e.event_timestamp)\nORDER BY e.event_timestamp DESC\nLIMIT 100;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "👿 崩溃进程审计表 (退出码翻译解码)",
+      "type": "table"
     },
     {
       "datasource": {
@@ -730,7 +1038,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -745,22 +1072,74 @@
                 "value": [
                   {
                     "options": {
-                      "🔴 触发远程下载": {
-                        "color": "red",
-                        "index": 0
+                      "ℹ️ 可疑脚本运行": {
+                        "color": "blue",
+                        "index": 2
                       },
                       "⚠️ 影子目录装载": {
                         "color": "orange",
                         "index": 1
                       },
-                      "ℹ️ 可疑脚本运行": {
-                        "color": "blue",
-                        "index": 2
+                      "🔴 触发远程下载": {
+                        "color": "red",
+                        "index": 0
                       }
                     },
                     "type": "value"
                   }
                 ]
+              },
+              {
+                "id": "custom.width",
+                "value": 150
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "执行时刻"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 179
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "LOLBin 进程"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 134
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "父进程"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 167
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "执行命令行"
+            },
+            "properties": [
+              {
+                "id": "custom.width",
+                "value": 1046
               }
             ]
           }
@@ -768,14 +1147,22 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 17
       },
       "id": 14,
-      "options": {},
-      "title": "🛡️ LOLBins 滥用与高危脚本审计",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true,
+        "sortBy": [
+          {
+            "desc": false,
+            "displayName": "程序路径"
+          }
+        ]
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -788,7 +1175,9 @@
           "rawSql": "SELECT \n  e.event_timestamp AS \"执行时刻\",\n  r.process_name AS \"LOLBin 进程\",\n  r.parent_process AS \"父进程\",\n  r.command_line AS \"执行命令行\",\n  CASE \n    WHEN LOWER(r.command_line) LIKE '%http://%' OR LOWER(r.command_line) LIKE '%https://%' THEN '🔴 触发远程下载'\n    WHEN LOWER(r.executable_path) LIKE '%users%' AND LOWER(r.process_name) IN ('regsvr32.exe', 'rundll32.exe', 'mshta.exe') THEN '⚠️ 影子目录装载'\n    ELSE 'ℹ️ 可疑脚本运行'\n  END AS \"威胁类别\",\n  r.executable_path AS \"程序路径\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND (\n    LOWER(r.process_name) IN ('certutil.exe', 'bitsadmin.exe', 'mshta.exe', 'regsvr32.exe', 'rundll32.exe', 'curl.exe', 'wscript.exe', 'cscript.exe', 'powershell.exe')\n    AND (\n      LOWER(r.command_line) LIKE '%http%'\n      OR LOWER(r.command_line) LIKE '%-nop%'\n      OR LOWER(r.command_line) LIKE '%-w hidden%'\n      OR LOWER(r.command_line) LIKE '%-enc%'\n      OR LOWER(r.command_line) LIKE '%javascript:%'\n      OR LOWER(r.command_line) LIKE '%vbscript:%'\n      OR LOWER(r.command_line) LIKE '%/i:http%'\n    )\n  )\n  AND $__timeFilter(e.event_timestamp)\nORDER BY e.event_timestamp DESC\nLIMIT 50;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🛡️ LOLBins 滥用与高危脚本审计",
+      "type": "table"
     },
     {
       "datasource": {
@@ -802,75 +1191,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "特权级别"
+            "cellOptions": {
+              "type": "auto"
             },
-            "properties": [
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
               {
-                "id": "mappings",
-                "value": [
-                  {
-                    "options": {
-                      "普通权限": {
-                        "color": "green",
-                        "index": 0
-                      },
-                      "⚡ 提权运行": {
-                        "color": "red",
-                        "index": 1
-                      }
-                    },
-                    "type": "value"
-                  }
-                ]
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
               }
             ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 17
-      },
-      "id": 15,
-      "options": {},
-      "title": "🕸️ 逆向进程链与 WebShell/Office 宏执行监控表",
-      "type": "table",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "bfoc1vymtgni8a"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT \n  e.event_timestamp AS \"触发时刻\",\n  r.parent_process AS \"异常父进程\",\n  r.process_name AS \"子进程 (Shell)\",\n  r.command_line AS \"子进程命令行\",\n  CASE \n    WHEN r.is_elevated = 1 THEN '⚡ 提权运行'\n    ELSE '普通权限'\n  END AS \"特权级别\",\n  r.executable_path AS \"子进程路径\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND r.parent_process IS NOT NULL\n  AND (\n    LOWER(r.parent_process) IN (\n      'w3wp.exe', 'nginx.exe', 'httpd.exe', 'tomcat.exe', 'mysqld.exe', \n      'sqlservr.exe', 'postgres.exe', 'oracle.exe', 'winword.exe', \n      'excel.exe', 'powerpnt.exe', 'outlook.exe', 'acrord32.exe', \n      'acrobat.exe'\n    )\n    AND LOWER(r.process_name) IN (\n      'cmd.exe', 'powershell.exe', 'powershell_ise.exe', 'bash.exe', \n      'sh.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'scrcons.exe'\n    )\n  )\n  AND $__timeFilter(e.event_timestamp)\nORDER BY e.event_timestamp DESC\nLIMIT 50;",
-          "refId": "A"
-        }
-      ]
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "bfoc1vymtgni8a"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "align": "auto",
-            "displayMode": "auto"
           }
         },
         "overrides": [
@@ -909,6 +1249,27 @@
                 "value": "binBps"
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "审计时刻"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "后台进程名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "前台聚焦敏感窗口"
+            },
+            "properties": []
           }
         ]
       },
@@ -919,9 +1280,11 @@
         "y": 25
       },
       "id": 16,
-      "options": {},
-      "title": "💀 敏感凭据/密码窗口聚焦期后台活动进程审计舱",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -931,10 +1294,12 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH sensitive_focus AS (\n  SELECT \n    timestamp AS start_time,\n    COALESCE(end_timestamp, timestamp + interval '3 seconds') AS end_time,\n    window_title\n  FROM public.fact_process_context\n  WHERE (\n    LOWER(window_title) LIKE '%keepass%'\n    OR LOWER(window_title) LIKE '%password%'\n    OR LOWER(window_title) LIKE '%bitwarden%'\n    OR LOWER(window_title) LIKE '%terminal%'\n    OR LOWER(window_title) LIKE '%powershell%'\n    OR LOWER(window_title) LIKE '%mxtoolbox%'\n    OR LOWER(window_title) LIKE '%xshell%'\n    OR LOWER(window_title) LIKE '%putty%'\n    OR LOWER(window_title) LIKE '%mstsc%'\n  )\n  AND $__timeFilter(timestamp)\n),\nactive_bg AS (\n  SELECT \n    act.timestamp,\n    act.process_key,\n    act.os_pid,\n    act.proc_cpu_usage,\n    (act.proc_disk_read_rate_mb + act.proc_disk_write_rate_mb) * 1048576 AS disk_io_bytes,\n    (act.proc_network_send_kb + act.proc_network_recv_kb) * 1024 AS network_bytes,\n    sf.window_title AS focus_title\n  FROM public.fact_process_activity act\n  JOIN sensitive_focus sf ON act.timestamp >= sf.start_time AND act.timestamp <= sf.end_time\n  WHERE $__timeFilter(act.timestamp)\n    AND (act.proc_cpu_usage > 5 OR act.proc_disk_read_rate_mb + act.proc_disk_write_rate_mb > 1 OR act.proc_network_send_kb + act.proc_network_recv_kb > 10)\n)\nSELECT \n  ab.timestamp AS \"审计时刻\",\n  r.process_name AS \"后台进程名\",\n  ab.focus_title AS \"前台聚焦敏感窗口\",\n  ab.proc_cpu_usage AS \"后台CPU (%)\",\n  ab.disk_io_bytes AS \"后台磁盘 I/O\",\n  ab.network_bytes AS \"后台网络流量\",\n  r.command_line AS \"可疑进程命令行\",\n  r.executable_path AS \"可疑程序路径\"\nFROM active_bg ab\nJOIN public.dim_process_registry r ON ab.process_key = r.process_key\nWHERE r.signature_status = 0\nORDER BY ab.timestamp DESC\nLIMIT 50;",
+          "rawSql": "WITH sensitive_focus AS (\n  SELECT \n    timestamp,\n    window_title\n  FROM public.fact_process_context\n  WHERE (\n    LOWER(window_title) LIKE '%keepass%'\n    OR LOWER(window_title) LIKE '%password%'\n    OR LOWER(window_title) LIKE '%bitwarden%'\n    OR LOWER(window_title) LIKE '%terminal%'\n    OR LOWER(window_title) LIKE '%powershell%'\n    OR LOWER(window_title) LIKE '%mxtoolbox%'\n    OR LOWER(window_title) LIKE '%xshell%'\n    OR LOWER(window_title) LIKE '%putty%'\n    OR LOWER(window_title) LIKE '%mstsc%'\n  )\n  AND $__timeFilter(timestamp)\n),\nactive_bg AS (\n  SELECT \n    act.timestamp,\n    act.process_key,\n    act.os_pid,\n    act.proc_cpu_usage,\n    (act.proc_disk_read_rate_mb + act.proc_disk_write_rate_mb) * 1048576 AS disk_io_bytes,\n    (act.proc_network_send_kb + act.proc_network_recv_kb) * 1024 AS network_bytes,\n    sf.window_title AS focus_title\n  FROM public.fact_process_activity act\n  JOIN sensitive_focus sf ON act.timestamp = sf.timestamp\n  WHERE $__timeFilter(act.timestamp)\n    AND (act.proc_cpu_usage > 5 OR act.proc_disk_read_rate_mb + act.proc_disk_write_rate_mb > 1 OR act.proc_network_send_kb + act.proc_network_recv_kb > 10)\n)\nSELECT \n  ab.timestamp AS \"审计时刻\",\n  r.process_name AS \"后台进程名\",\n  ab.focus_title AS \"前台聚焦敏感窗口\",\n  ab.proc_cpu_usage AS \"后台CPU (%)\",\n  ab.disk_io_bytes AS \"后台磁盘 I/O\",\n  ab.network_bytes AS \"后台网络流量\",\n  r.command_line AS \"可疑进程命令行\",\n  r.executable_path AS \"可疑程序路径\"\nFROM active_bg ab\nJOIN public.dim_process_registry r ON ab.process_key = r.process_key\nWHERE r.signature_status = 0\nORDER BY ab.timestamp DESC\nLIMIT 50;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "💀 敏感凭据/密码窗口聚焦期后台活动进程审计舱",
+      "type": "table"
     },
     {
       "datasource": {
@@ -948,14 +1313,33 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "累计流量 (MB)"
+              "options": "累计流量"
             },
             "properties": [
               {
@@ -985,6 +1369,34 @@
                 ]
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "进程名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PID"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "并发TCP连接数"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "远程连接目标 (IP:Port)"
+            },
+            "properties": []
           }
         ]
       },
@@ -995,9 +1407,11 @@
         "y": 33
       },
       "id": 6,
-      "options": {},
-      "title": "🌐 静默网络外联与高危端口侦测舱",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1007,10 +1421,12 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH network_active AS (\n  SELECT \n    act.process_key,\n    act.os_pid,\n    SUM(act.proc_network_send_kb + act.proc_network_recv_kb) AS total_traffic_kb,\n    MAX(act.proc_active_connections) AS max_conns,\n    MAX(act.proc_remote_ip_port) AS remote_addresses\n  FROM public.fact_process_activity act\n  JOIN public.dim_process_registry r ON act.process_key = r.process_key\n  WHERE $__timeFilter(act.timestamp)\n    AND (act.proc_network_send_kb > 0 OR act.proc_network_recv_kb > 0 OR act.proc_active_connections > 0)\n    AND LOWER(r.process_name) NOT IN ('chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'opera.exe', 'safari.exe', 'wechat.exe', 'feishu.exe', 'dingtalk.exe', 'claude.exe')\n  GROUP BY 1, 2\n),\nforeground_windows AS (\n  SELECT DISTINCT ON (process_key) \n    process_key,\n    window_title\n  FROM public.fact_process_context\n  WHERE $__timeFilter(timestamp) \n    AND window_title IS NOT NULL AND window_title <> ''\n)\nSELECT \n  r.process_name AS \"进程名\",\n  n.os_pid AS \"PID\",\n  ROUND((n.total_traffic_kb / 1024.0)::numeric, 2) AS \"累计流量 (MB)\",\n  n.max_conns AS \"并发TCP连接数\",\n  n.remote_addresses AS \"远程连接目标 (IP:Port)\",\n  COALESCE(f.window_title, '🚫 无前台窗口 (静默后台)') AS \"聚焦窗口标题\",\n  r.command_line AS \"执行命令行\",\n  r.executable_path AS \"程序路径\"\nFROM network_active n\nJOIN public.dim_process_registry r ON n.process_key = r.process_key\nLEFT JOIN foreground_windows f ON n.process_key = f.process_key\nWHERE r.signature_status = 0 OR f.window_title IS NULL\nORDER BY n.total_traffic_kb DESC\nLIMIT 50;",
+          "rawSql": "WITH network_active AS (\n  SELECT \n    act.process_key,\n    act.os_pid,\n    SUM(act.proc_network_send_kb + act.proc_network_recv_kb) AS total_traffic_kb,\n    MAX(act.proc_active_connections) AS max_conns,\n    MAX(act.proc_remote_ip_port) AS remote_addresses\n  FROM public.fact_process_activity act\n  WHERE $__timeFilter(act.timestamp)\n    AND (act.proc_network_send_kb > 0 OR act.proc_network_recv_kb > 0 OR act.proc_active_connections > 0)\n    AND act.process_key NOT IN (\n      SELECT process_key FROM public.dim_process_registry\n      WHERE LOWER(process_name) IN ('chrome.exe', 'msedge.exe', 'firefox.exe', 'brave.exe', 'opera.exe', 'safari.exe', 'wechat.exe', 'feishu.exe', 'dingtalk.exe', 'claude.exe')\n    )\n  GROUP BY 1, 2\n),\nforeground_windows AS (\n  SELECT DISTINCT ON (process_key) \n    process_key,\n    window_title\n  FROM public.fact_process_context\n  WHERE $__timeFilter(timestamp) \n    AND window_title IS NOT NULL AND window_title <> ''\n)\nSELECT \n  r.process_name AS \"进程名\",\n  n.os_pid AS \"PID\",\n  (n.total_traffic_kb * 1024.0)::bigint AS \"累计流量\",\n  n.max_conns AS \"并发TCP连接数\",\n  n.remote_addresses AS \"远程连接目标 (IP:Port)\",\n  COALESCE(f.window_title, '🚫 无前台窗口 (静默后台)') AS \"聚焦窗口标题\",\n  r.command_line AS \"执行命令行\",\n  r.executable_path AS \"程序路径\"\nFROM network_active n\nJOIN public.dim_process_registry r ON n.process_key = r.process_key\nLEFT JOIN foreground_windows f ON n.process_key = f.process_key\nWHERE r.signature_status = 0 OR f.window_title IS NULL\nORDER BY n.total_traffic_kb DESC\nLIMIT 50;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🌐 静默网络外联与高危端口侦测舱",
+      "type": "table"
     },
     {
       "datasource": {
@@ -1024,7 +1440,26 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
         "overrides": [
@@ -1039,6 +1474,10 @@
                 "value": [
                   {
                     "options": {
+                      "⚠️ 签名异常": {
+                        "color": "orange",
+                        "index": 2
+                      },
                       "✅ 已签名": {
                         "color": "green",
                         "index": 0
@@ -1046,10 +1485,6 @@
                       "❌ 无签名": {
                         "color": "red",
                         "index": 1
-                      },
-                      "⚠️ 签名异常": {
-                        "color": "orange",
-                        "index": 2
                       }
                     },
                     "type": "value"
@@ -1057,6 +1492,41 @@
                 ]
               }
             ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "连接时间"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "进程名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "PID"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "远程 IP:Port"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "活跃连接数"
+            },
+            "properties": []
           }
         ]
       },
@@ -1067,9 +1537,11 @@
         "y": 33
       },
       "id": 17,
-      "options": {},
-      "title": "🌐 高危外联端口与外部连接目的地聚类分析表",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1079,10 +1551,12 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT \n  act.timestamp AS \"连接时间\",\n  r.process_name AS \"进程名\",\n  act.os_pid AS \"PID\",\n  act.proc_remote_ip_port AS \"远程 IP:Port\",\n  act.proc_active_connections AS \"活跃连接数\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    WHEN r.signature_status = 0 THEN '❌ 无签名'\n    ELSE '⚠️ 签名异常'\n  END AS \"数字签名\",\n  r.command_line AS \"命令行参数\",\n  r.executable_path AS \"物理路径\"\nFROM public.fact_process_activity act\nJOIN public.dim_process_registry r ON act.process_key = r.process_key\nWHERE $__timeFilter(act.timestamp)\n  AND act.proc_remote_ip_port IS NOT NULL\n  AND act.proc_remote_ip_port <> ''\n  AND act.proc_remote_ip_port ~ ':(22|3389|445|1433|3306|5432|5900|4444|5555)(,|$)'\nORDER BY act.timestamp DESC\nLIMIT 50;",
+          "rawSql": "SELECT \n  act.timestamp AS \"连接时间\",\n  r.process_name AS \"进程名\",\n  act.os_pid AS \"PID\",\n  act.proc_remote_ip_port AS \"远程 IP:Port\",\n  act.proc_active_connections AS \"活跃连接数\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    WHEN r.signature_status = 0 THEN '❌ 无签名'\n    ELSE '⚠️ 签名异常'\n  END AS \"数字签名\",\n  r.command_line AS \"命令行参数\",\n  r.executable_path AS \"物理路径\"\nFROM public.fact_process_activity act\nJOIN public.dim_process_registry r ON act.process_key = r.process_key\nWHERE $__timeFilter(act.timestamp)\n  AND act.proc_remote_ip_port IS NOT NULL\n  AND act.proc_remote_ip_port <> ''\n  AND (\n    act.proc_remote_ip_port LIKE '%:22,%' OR act.proc_remote_ip_port LIKE '%:22' OR\n    act.proc_remote_ip_port LIKE '%:3389,%' OR act.proc_remote_ip_port LIKE '%:3389' OR\n    act.proc_remote_ip_port LIKE '%:445,%' OR act.proc_remote_ip_port LIKE '%:445' OR\n    act.proc_remote_ip_port LIKE '%:1433,%' OR act.proc_remote_ip_port LIKE '%:1433' OR\n    act.proc_remote_ip_port LIKE '%:3306,%' OR act.proc_remote_ip_port LIKE '%:3306' OR\n    act.proc_remote_ip_port LIKE '%:5432,%' OR act.proc_remote_ip_port LIKE '%:5432' OR\n    act.proc_remote_ip_port LIKE '%:5900,%' OR act.proc_remote_ip_port LIKE '%:5900' OR\n    act.proc_remote_ip_port LIKE '%:4444,%' OR act.proc_remote_ip_port LIKE '%:4444' OR\n    act.proc_remote_ip_port LIKE '%:5555,%' OR act.proc_remote_ip_port LIKE '%:5555'\n  )\nORDER BY act.timestamp DESC\nLIMIT 50;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🌐 高危外联端口与外部连接目的地聚类分析表",
+      "type": "table"
     },
     {
       "datasource": {
@@ -1096,10 +1570,58 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "首次发现服务时间"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "绑定服务名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "映像名"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数字签名"
+            },
+            "properties": []
+          }
+        ]
       },
       "gridPos": {
         "h": 7,
@@ -1108,9 +1630,11 @@
         "y": 41
       },
       "id": 7,
-      "options": {},
-      "title": "🧩 svchost 服务还原表",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1123,7 +1647,9 @@
           "rawSql": "SELECT \n  r.created_at AS \"首次发现服务时间\",\n  r.service_name AS \"绑定服务名\",\n  r.process_name AS \"映像名\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    ELSE '❌ 无签名'\n  END AS \"数字签名\",\n  r.command_line AS \"svchost 命令行\",\n  r.executable_path AS \"物理路径\"\nFROM public.dim_process_registry r\nWHERE LOWER(r.process_name) = 'svchost.exe'\n  AND r.service_name IS NOT NULL\n  AND r.service_name <> ''\nORDER BY r.created_at DESC\nLIMIT 100;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🧩 svchost 服务还原表",
+      "type": "table"
     },
     {
       "datasource": {
@@ -1137,10 +1663,51 @@
           },
           "custom": {
             "align": "auto",
-            "displayMode": "auto"
+            "cellOptions": {
+              "type": "auto"
+            },
+            "footer": {
+              "reducers": []
+            },
+            "inspect": false
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         },
-        "overrides": []
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "父进程"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "可疑子进程"
+            },
+            "properties": []
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "运行次数 (次)"
+            },
+            "properties": []
+          }
+        ]
       },
       "gridPos": {
         "h": 7,
@@ -1149,9 +1716,11 @@
         "y": 41
       },
       "id": 8,
-      "options": {},
-      "title": "🌳 进程家谱 (命令解释器孵化子进程树)",
-      "type": "table",
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1164,12 +1733,18 @@
           "rawSql": "SELECT \n  r.parent_process AS \"父进程\",\n  r.process_name AS \"可疑子进程\",\n  count(e.event_timestamp) AS \"运行次数 (次)\",\n  r.command_line AS \"子进程命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND r.parent_process IS NOT NULL\n  AND LOWER(r.parent_process) IN ('cmd.exe', 'powershell.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'bash.exe', 'schtasks.exe', 'regsvr32.exe')\n  AND $__timeFilter(e.event_timestamp)\nGROUP BY r.parent_process, r.process_name, r.command_line\nORDER BY 3 DESC\nLIMIT 50;",
           "refId": "A"
         }
-      ]
+      ],
+      "title": "🌳 进程家谱 (命令解释器孵化子进程树)",
+      "type": "table"
     }
   ],
-  "templating": {
-    "list": []
-  },
+  "preload": false,
+  "refresh": "",
+  "schemaVersion": 42,
+  "tags": [
+    "安全审计",
+    "系统监控"
+  ],
   "time": {
     "from": "now-7d",
     "to": "now"
@@ -1188,12 +1763,8 @@
       "1d"
     ]
   },
-  "tags": [
-    "安全审计",
-    "系统监控"
-  ],
   "timezone": "browser",
   "title": "🔍 进程取证与安全审计舱",
   "uid": "addforex",
-  "version": 2
+  "version": 9
 }

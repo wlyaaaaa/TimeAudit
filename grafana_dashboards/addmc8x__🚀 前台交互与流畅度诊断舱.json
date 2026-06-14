@@ -18,7 +18,6 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
-  "id": 1769700336418816,
   "liveNow": false,
   "panels": [
     {
@@ -700,8 +699,7 @@
           },
           "editorMode": "code",
           "format": "time_series",
-          "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.t_to - b.t_from)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\ntime_grid AS (\n  SELECT g.grid_time\n  FROM time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(grid_time)\n),\nctx_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    ctx.process_key,\n    ctx.os_pid\n  FROM public.fact_process_context ctx\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from ctx.timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from COALESCE(ctx.end_timestamp, now())) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE ctx.is_foreground = 1\n    AND ctx.timestamp <= b.t_to\n    AND COALESCE(ctx.end_timestamp, now()) >= b.t_from\n  ORDER BY g.bucket_time, ctx.timestamp DESC\n),\nact_aligned AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from act.timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    act.process_key,\n    act.os_pid,\n    AVG(act.proc_cpu_usage) AS proc_cpu_usage,\n    AVG(act.proc_gpu_usage) AS proc_gpu_usage,\n    AVG(act.proc_ram_mb) AS proc_ram_mb,\n    AVG(act.proc_vram_used_gb) AS proc_vram_used_gb\n  FROM public.fact_process_activity act\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  WHERE act.timestamp >= b.t_from AND act.timestamp <= b.t_to\n  GROUP BY 1, 2, 3\n),\naway_aligned AS (\n  SELECT DISTINCT g.bucket_time\n  FROM public.app_usage_logs a\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from a.start_time + (a.duration_seconds || ' seconds')::interval) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','Idle','System_LockScreen','LockApp.exe')\n    AND a.start_time <= b.t_to\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n)\nSELECT \n  g.grid_time AS \"time\",\n  act.proc_cpu_usage AS \"前台 CPU 占用率 (%)\",\n  act.proc_gpu_usage AS \"前台 GPU 占用率 (%)\",\n  act.proc_ram_mb / 1024.0 AS \"前台 内存占用 (GB)\",\n  act.proc_vram_used_gb AS \"前台 显存占用 (GB)\"\nFROM time_grid g\nJOIN ctx_aligned ctx ON g.grid_time = ctx.bucket_time\nLEFT JOIN act_aligned act ON g.grid_time = act.bucket_time AND act.process_key = ctx.process_key AND act.os_pid = ctx.os_pid\nLEFT JOIN away_aligned aw ON g.grid_time = aw.bucket_time\nWHERE aw.bucket_time IS NULL\nORDER BY time ASC;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '3 seconds', ('$__interval')::interval) AS dt\n  FROM time_bounds\n),\nctx_filtered AS (\n  SELECT \n    ctx.process_key,\n    ctx.os_pid,\n    ctx.timestamp AS start_time,\n    COALESCE(ctx.end_timestamp, ctx.timestamp + interval '3 seconds') AS end_time\n  FROM public.fact_process_context ctx\n  CROSS JOIN time_bounds b\n  WHERE ctx.is_foreground = 1\n    AND ctx.timestamp >= b.t_from - interval '1 hour'\n    AND ctx.timestamp <= b.t_to\n),\nforeground_activity AS (\n  SELECT \n    act.timestamp,\n    act.proc_cpu_usage,\n    act.proc_gpu_usage,\n    act.proc_ram_mb,\n    act.proc_vram_used_gb\n  FROM ctx_filtered ctx\n  CROSS JOIN LATERAL (\n    SELECT \n      a.timestamp,\n      a.proc_cpu_usage,\n      a.proc_gpu_usage,\n      a.proc_ram_mb,\n      a.proc_vram_used_gb\n    FROM public.fact_process_activity a\n    WHERE a.process_key = ctx.process_key\n      AND a.os_pid = ctx.os_pid\n      AND a.timestamp >= ctx.start_time\n      AND a.timestamp <= ctx.end_time\n      AND a.timestamp >= $__timeFrom()::timestamptz\n      AND a.timestamp <= $__timeTo()::timestamptz\n  ) act\n),\naway_aligned AS (\n  SELECT DISTINCT g.bucket_time\n  FROM public.app_usage_logs a\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from a.start_time + (a.duration_seconds || ' seconds')::interval) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','Idle','System_LockScreen','LockApp.exe')\n    AND a.start_time <= b.t_to\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n)\nSELECT \n  to_timestamp(floor(extract(epoch from fa.timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS \"time\",\n  AVG(fa.proc_cpu_usage) AS \"前台 CPU 占用率 (%)\",\n  AVG(fa.proc_gpu_usage) AS \"前台 GPU 占用率 (%)\",\n  AVG(fa.proc_ram_mb) / 1024.0 AS \"前台 内存占用 (GB)\",\n  AVG(fa.proc_vram_used_gb) AS \"前台 显存占用 (GB)\"\nFROM foreground_activity fa\nCROSS JOIN interval_calc i\nLEFT JOIN away_aligned aw ON to_timestamp(floor(extract(epoch from fa.timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz = aw.bucket_time\nWHERE aw.bucket_time IS NULL\nGROUP BY 1\nORDER BY time ASC;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1287,6 +1285,11 @@
   "preload": false,
   "refresh": "10s",
   "schemaVersion": 42,
+  "tags": [
+    "流畅度",
+    "性能诊断",
+    "时间审计"
+  ],
   "time": {
     "from": "now-3h",
     "to": "now"
@@ -1308,10 +1311,5 @@
   "timezone": "browser",
   "title": "🚀 前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 48,
-  "tags": [
-    "流畅度",
-    "性能诊断",
-    "时间审计"
-  ]
+  "version": 51
 }
