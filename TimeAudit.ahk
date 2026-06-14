@@ -1,4 +1,7 @@
 ﻿#Requires AutoHotkey v2.0
+; 【全自动化修复】新实例静默替换旧实例，杜绝 start_all.bat 重复运行时弹出"已在运行?"确认框。
+; 旧实例退出时会触发 SafeExitHandler 提交挂起数据，无丢失。
+#SingleInstance Force
 Persistent
 
 ; === 🛡️ 工业级单流状态机配置 ===
