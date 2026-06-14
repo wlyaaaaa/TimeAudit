@@ -93,7 +93,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(cpu_package_temp) AS \"CPU 封装温度\",\n  AVG(cpu_package_power) AS \"CPU 封装功率\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.cpu_package_temp) AS \"CPU 封装温度\",\n  AVG(hw.cpu_package_power) AS \"CPU 封装功率\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -243,7 +243,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(cpu_ccd0_usage) AS \"CCD0 负载 (大缓存)\",\n  AVG(cpu_ccd1_usage) AS \"CCD1 负载 (高频)\",\n  AVG(cpu_total_usage) AS \"CPU 总负载\",\n  AVG(cpu_clock_mhz) AS \"CPU 频率 (MHz)\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.cpu_ccd0_usage) AS \"CCD0 负载 (大缓存)\",\n  AVG(hw.cpu_ccd1_usage) AS \"CCD1 负载 (高频)\",\n  AVG(hw.cpu_total_usage) AS \"CPU 总负载\",\n  AVG(hw.cpu_clock_mhz) AS \"CPU 频率 (MHz)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -362,7 +362,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(gpu_core_temp) AS \"GPU 核心温度\",\n  AVG(gpu_hotspot_temp) AS \"GPU 热点温度\",\n  AVG(gpu_board_power) AS \"GPU 板卡功率\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.gpu_core_temp) AS \"GPU 核心温度\",\n  AVG(hw.gpu_hotspot_temp) AS \"GPU 热点温度\",\n  AVG(hw.gpu_board_power) AS \"GPU 板卡功率\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -516,7 +516,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(gpu_usage) AS \"GPU 利用率\",\n  AVG(pcie_bus_utilization) AS \"PCIe 带宽利用率\",\n  AVG(gpu_core_clock) AS \"GPU 核心频率 (MHz)\",\n  AVG(gpu_mem_clock) AS \"GPU 显存频率 (MHz)\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.gpu_usage) AS \"GPU 利用率\",\n  AVG(hw.pcie_bus_utilization) AS \"PCIe 带宽利用率\",\n  AVG(hw.gpu_core_clock) AS \"GPU 核心频率 (MHz)\",\n  AVG(hw.gpu_mem_clock) AS \"GPU 显存频率 (MHz)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -608,7 +608,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(cpu_vcore_voltage) AS \"CPU 核心电压\",\n  AVG(gpu_core_voltage) AS \"GPU 核心电压\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.cpu_vcore_voltage) AS \"CPU 核心电压\",\n  AVG(hw.gpu_core_voltage) AS \"GPU 核心电压\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -832,7 +832,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  CASE\n    WHEN bool_or((gpu_throttling_reasons & 96) > 0) THEN '🔥 温度墙'\n    WHEN bool_or((gpu_throttling_reasons & 132) > 0) THEN '⚡ 功耗墙'\n    WHEN bool_or((gpu_throttling_reasons & 8) > 0) THEN '🛑 硬件降速'\n    WHEN bool_or((gpu_throttling_reasons & 1) > 0) THEN '💤 空闲降频'\n    ELSE '✅ 满血运行'\n  END AS \"GPU 降频状态\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  CASE\n    WHEN bool_or((hw.gpu_throttling_reasons & 96) > 0) THEN '🔥 温度墙'\n    WHEN bool_or((hw.gpu_throttling_reasons & 132) > 0) THEN '⚡ 功耗墙'\n    WHEN bool_or((hw.gpu_throttling_reasons & 8) > 0) THEN '🛑 硬件降速'\n    WHEN bool_or((hw.gpu_throttling_reasons & 1) > 0) THEN '💤 空闲降频'\n    WHEN count(hw.timestamp) = 0 THEN NULL\n    ELSE '✅ 满血运行'\n  END AS \"GPU 降频状态\" \nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -934,7 +934,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  AVG(system_dpc_latency) AS \"系统 DPC 延迟 (μs)\",\n  AVG(system_context_switches) AS \"系统上下文切换次数/秒\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.system_dpc_latency) AS \"系统 DPC 延迟 (μs)\",\n  AVG(hw.system_context_switches) AS \"系统上下文切换次数/秒\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -955,5 +955,5 @@
   "timezone": "browser",
   "title": "🌡️ 硬件温控与能效大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 4
+  "version": 5
 }
