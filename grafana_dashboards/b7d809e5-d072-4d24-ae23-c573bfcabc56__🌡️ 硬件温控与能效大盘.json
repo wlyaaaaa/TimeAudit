@@ -625,81 +625,6 @@
           "color": {
             "mode": "thresholds"
           },
-          "custom": {
-            "fillOpacity": 85,
-            "lineWidth": 0
-          },
-          "mappings": [
-            {
-              "options": {
-                "⚡ 功耗墙": {
-                  "color": "orange",
-                  "index": 2
-                },
-                "✅ 满血运行": {
-                  "color": "green",
-                  "index": 0
-                },
-                "💤 空闲降频": {
-                  "color": "blue",
-                  "index": 1
-                },
-                "🔥 温度墙": {
-                  "color": "red",
-                  "index": 3
-                },
-                "🛑 硬件降速": {
-                  "color": "dark-red",
-                  "index": 4
-                }
-              },
-              "type": "value"
-            }
-          ]
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 6,
-        "w": 24,
-        "x": 0,
-        "y": 21
-      },
-      "id": 7,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "mergeValues": true,
-        "rowHeight": 0.9,
-        "showValue": "auto"
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  CASE\n    WHEN bool_or((gpu_throttling_reasons & 96) > 0) THEN '🔥 温度墙'\n    WHEN bool_or((gpu_throttling_reasons & 132) > 0) THEN '⚡ 功耗墙'\n    WHEN bool_or((gpu_throttling_reasons & 8) > 0) THEN '🛑 硬件降速'\n    WHEN bool_or((gpu_throttling_reasons & 1) > 0) THEN '💤 空闲降频'\n    ELSE '✅ 满血运行'\n  END AS \"GPU 降频状态\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "GPU 降频原因解码时间线 (撞了哪堵墙)",
-      "type": "state-timeline"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
           "mappings": [],
           "max": 100,
           "min": 20,
@@ -812,9 +737,7 @@
       },
       "id": 6,
       "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
+        "displayMode": "gradient",
         "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
@@ -823,6 +746,7 @@
           "fields": "",
           "values": false
         },
+        "showUnfilled": true,
         "textMode": "value_and_name"
       },
       "pluginVersion": "13.0.2",
@@ -837,8 +761,83 @@
           "refId": "A"
         }
       ],
-      "title": "当前温控指标",
-      "type": "stat"
+      "title": "当前温控仪表",
+      "type": "bargauge"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "fillOpacity": 85,
+            "lineWidth": 0
+          },
+          "mappings": [
+            {
+              "options": {
+                "⚡ 功耗墙": {
+                  "color": "orange",
+                  "index": 2
+                },
+                "✅ 满血运行": {
+                  "color": "green",
+                  "index": 0
+                },
+                "💤 空闲降频": {
+                  "color": "blue",
+                  "index": 1
+                },
+                "🔥 温度墙": {
+                  "color": "red",
+                  "index": 3
+                },
+                "🛑 硬件降速": {
+                  "color": "dark-red",
+                  "index": 4
+                }
+              },
+              "type": "value"
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "id": 7,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "SELECT $__timeGroupAlias(\"timestamp\", $__interval),\n  CASE\n    WHEN bool_or((gpu_throttling_reasons & 96) > 0) THEN '🔥 温度墙'\n    WHEN bool_or((gpu_throttling_reasons & 132) > 0) THEN '⚡ 功耗墙'\n    WHEN bool_or((gpu_throttling_reasons & 8) > 0) THEN '🛑 硬件降速'\n    WHEN bool_or((gpu_throttling_reasons & 1) > 0) THEN '💤 空闲降频'\n    ELSE '✅ 满血运行'\n  END AS \"GPU 降频状态\"\nFROM public.fact_system_hardware WHERE $__timeFilter(\"timestamp\") GROUP BY 1 ORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "GPU 降频原因解码时间线 (撞了哪堵墙)",
+      "type": "state-timeline"
     },
     {
       "datasource": {
@@ -956,5 +955,5 @@
   "timezone": "browser",
   "title": "🌡️ 硬件温控与能效大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 3
+  "version": 4
 }
