@@ -1179,8 +1179,8 @@
           "calcs": [
             "lastNotNull"
           ],
-          "fields": "",
-          "values": false
+          "fields": "/^(累计时长)$/",
+          "values": true
         },
         "tooltip": {
           "mode": "single",
@@ -1251,7 +1251,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  date_trunc('hour', start_time) as time,\n  EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') as \"小时\",\n  ROUND(SUM(CASE WHEN process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"活跃时间(分钟)\"\nFROM app_usage_logs\nWHERE $__timeFilter(start_time)\nGROUP BY 1, 2\nORDER BY time ASC;",
+          "rawSql": "SELECT\n  date_trunc('hour', start_time) as time,\n  EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') as \"小时\",\n  ROUND(SUM(CASE WHEN process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"活跃时间(分钟)\"\nFROM app_usage_logs\nWHERE start_time >= CASE \n    WHEN ($__timeTo()::timestamptz - $__timeFrom()::timestamptz) < interval '24 hours' \n    THEN $__timeTo()::timestamptz - interval '7 days' \n    ELSE $__timeFrom()::timestamptz \n  END\n  AND start_time <= $__timeTo()::timestamptz\nGROUP BY 1, 2\nORDER BY time ASC;",
           "refId": "A"
         }
       ],
@@ -1293,7 +1293,7 @@
       },
       "gridPos": {
         "h": 8,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 39
       },
@@ -1334,179 +1334,15 @@
           "refId": "A"
         }
       ],
-      "title": "周度活跃工时对比 (本周 vs 上周日均)",
+      "title": "周度活跃工时对比 (本周 vs 上周同期)",
       "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "bfoc1vymtgni8a"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "center",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "专注时间(分钟)",
-              "scope": "series"
-            },
-            "properties": [
-              {
-                "id": "custom.cellOptions",
-                "value": {
-                  "type": "gauge",
-                  "valueDisplayMode": "color"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "进入心流时刻"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 160
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "跳出时刻"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 160
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "核心应用"
-            },
-            "properties": [
-              {
-                "id": "custom.width",
-                "value": 180
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 12,
-        "x": 12,
-        "y": 39
-      },
-      "id": 104,
-      "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "bfoc1vymtgni8a"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH active_logs AS (\n  SELECT\n    start_time,\n    duration_seconds,\n    process_name,\n    window_title,\n    CASE\n      WHEN LAG(start_time + (duration_seconds || ' seconds')::interval) OVER (ORDER BY start_time) IS NULL THEN 1\n      WHEN start_time - LAG(start_time + (duration_seconds || ' seconds')::interval) OVER (ORDER BY start_time) > '10 seconds'::interval THEN 1\n      ELSE 0\n    END as is_new_block\n  FROM app_usage_logs\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\n    AND $__timeFilter(start_time)\n),\nsession_groups AS (\n  SELECT\n    start_time,\n    duration_seconds,\n    process_name,\n    window_title,\n    SUM(is_new_block) OVER (ORDER BY start_time) as grp\n  FROM active_logs\n),\npacked_sessions AS (\n  SELECT\n    grp,\n    MIN(start_time) as session_start,\n    MAX(start_time + (duration_seconds || ' seconds')::interval) as session_end,\n    SUM(duration_seconds) as total_seconds,\n    string_agg(DISTINCT process_name, ', ') as apps_involved\n  FROM session_groups\n  GROUP BY grp\n),\nprimary_apps AS (\n  SELECT DISTINCT ON (grp)\n    grp,\n    process_name as primary_app\n  FROM (\n    SELECT \n      grp, \n      process_name, \n      SUM(duration_seconds) as app_dur\n    FROM session_groups\n    GROUP BY grp, process_name\n  ) sub\n  ORDER BY grp, app_dur DESC\n)\nSELECT\n  (ps.session_start AT TIME ZONE 'Asia/Shanghai') as \"进入心流时刻\",\n  (ps.session_end AT TIME ZONE 'Asia/Shanghai') as \"跳出时刻\",\n  ROUND(ps.total_seconds / 60.0, 1) as \"专注时间(分钟)\",\n  CASE \n    WHEN pa.primary_app = 'chrome.exe' THEN '🌐 浏览器 (Chrome)'\n    WHEN pa.primary_app = 'Code.exe' THEN '💻 编译器 (VS Code)'\n    WHEN pa.primary_app = 'idea64.exe' THEN '☕ 编译器 (IntelliJ IDEA)'\n    WHEN pa.primary_app = 'datagrip64.exe' THEN '🗄️ 数仓工具 (DataGrip)'\n    WHEN pa.primary_app = 'weixin.exe' OR pa.primary_app = 'Weixin.exe' THEN '💬 社交 (微信)'\n    ELSE '🚀 ' || pa.primary_app\n  END as \"核心应用\",\n  ps.apps_involved as \"涉及应用列表\"\nFROM packed_sessions ps\nJOIN primary_apps pa ON ps.grp = pa.grp\nWHERE ps.total_seconds >= ${focus_threshold_minutes:raw} * 60\nORDER BY ps.session_start DESC;",
-          "refId": "A"
-        }
-      ],
-      "title": "深度心流专注会话列表",
-      "type": "table"
     }
   ],
   "preload": false,
   "refresh": "10s",
   "schemaVersion": 42,
   "templating": {
-    "list": [
-      {
-        "current": {
-          "selected": true,
-          "text": "10 分钟",
-          "value": "10"
-        },
-        "description": "判定为一次深度专注会话的连续分钟数阈值",
-        "hide": 0,
-        "label": "专注判定门槛",
-        "name": "focus_threshold_minutes",
-        "options": [
-          {
-            "selected": false,
-            "text": "5 分钟",
-            "value": "5"
-          },
-          {
-            "selected": true,
-            "text": "10 分钟",
-            "value": "10"
-          },
-          {
-            "selected": false,
-            "text": "15 分钟",
-            "value": "15"
-          },
-          {
-            "selected": false,
-            "text": "20 分钟",
-            "value": "20"
-          },
-          {
-            "selected": false,
-            "text": "30 分钟",
-            "value": "30"
-          },
-          {
-            "selected": false,
-            "text": "45 分钟",
-            "value": "45"
-          },
-          {
-            "selected": false,
-            "text": "60 分钟",
-            "value": "60"
-          }
-        ],
-        "query": "5,10,15,20,30,45,60",
-        "type": "custom"
-      }
-    ]
+    "list": []
   },
   "time": {
     "from": "now-7d",
@@ -1529,5 +1365,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 46
+  "version": 47
 }
