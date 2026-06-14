@@ -1,4 +1,25 @@
 {
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": 3245631545470976,
+  "liveNow": false,
   "panels": [
     {
       "datasource": {
@@ -7,15 +28,55 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "celsius"
         },
@@ -76,16 +137,23 @@
       },
       "id": 1,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -107,15 +175,55 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "percent"
         },
@@ -226,16 +334,23 @@
       },
       "id": 2,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -257,15 +372,55 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "celsius"
         },
@@ -345,16 +500,23 @@
       },
       "id": 3,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -376,15 +538,55 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "percent"
         },
@@ -499,16 +701,23 @@
       },
       "id": 4,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -530,15 +739,55 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "volt"
         },
@@ -591,16 +840,23 @@
       },
       "id": 5,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -625,9 +881,21 @@
           "color": {
             "mode": "thresholds"
           },
-          "mappings": [],
           "max": 100,
           "min": 20,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
           "unit": "celsius"
         },
         "overrides": [
@@ -644,7 +912,7 @@
                   "steps": [
                     {
                       "color": "green",
-                      "value": null
+                      "value": 0
                     },
                     {
                       "color": "yellow",
@@ -676,7 +944,7 @@
                   "steps": [
                     {
                       "color": "green",
-                      "value": null
+                      "value": 0
                     },
                     {
                       "color": "yellow",
@@ -708,7 +976,7 @@
                   "steps": [
                     {
                       "color": "green",
-                      "value": null
+                      "value": 0
                     },
                     {
                       "color": "yellow",
@@ -738,6 +1006,16 @@
       "id": 6,
       "options": {
         "displayMode": "gradient",
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": false
+        },
+        "maxVizHeight": 300,
+        "minVizHeight": 16,
+        "minVizWidth": 8,
+        "namePlacement": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
           "calcs": [
@@ -747,7 +1025,9 @@
           "values": false
         },
         "showUnfilled": true,
-        "textMode": "value_and_name"
+        "sizing": "auto",
+        "textMode": "value_and_name",
+        "valueMode": "color"
       },
       "pluginVersion": "13.0.2",
       "targets": [
@@ -772,11 +1052,19 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
           "custom": {
+            "axisPlacement": "auto",
             "fillOpacity": 85,
-            "lineWidth": 0
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
           },
           "mappings": [
             {
@@ -804,9 +1092,17 @@
               },
               "type": "value"
             }
-          ]
-        },
-        "overrides": []
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
       },
       "gridPos": {
         "h": 6,
@@ -816,6 +1112,11 @@
       },
       "id": 7,
       "options": {
+        "alignValue": "left",
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
           "displayMode": "list",
           "placement": "bottom",
@@ -823,8 +1124,14 @@
         },
         "mergeValues": true,
         "rowHeight": 0.9,
-        "showValue": "auto"
+        "showValue": "auto",
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "single",
+          "sort": "none"
+        }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -851,7 +1158,13 @@
             "mode": "fixed"
           },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
@@ -860,10 +1173,36 @@
               "tooltip": false,
               "viz": false
             },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "µs"
         },
@@ -917,16 +1256,23 @@
       },
       "id": 8,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -948,23 +1294,63 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
-          "unit": "celsius"
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "percent"
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "CPU 负载温度"
+              "options": "物理内存占用率 (%)"
             },
             "properties": [
               {
@@ -972,9 +1358,13 @@
                 "value": 0
               },
               {
+                "id": "max",
+                "value": 100
+              },
+              {
                 "id": "color",
                 "value": {
-                  "fixedColor": "#EF4444",
+                  "fixedColor": "#10B981",
                   "mode": "fixed"
                 }
               }
@@ -983,12 +1373,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "CPU 负载功率"
+              "options": "系统提交大小 (GB)"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "watt"
+                "value": "decbytes/gbytes"
               },
               {
                 "id": "min",
@@ -1010,12 +1400,12 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "CPU 负载主频"
+              "options": "每秒硬缺页次数"
             },
             "properties": [
               {
                 "id": "unit",
-                "value": "mhz"
+                "value": "short"
               },
               {
                 "id": "min",
@@ -1024,6 +1414,922 @@
               {
                 "id": "custom.axisPlacement",
                 "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 34
+      },
+      "id": 11,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.system_ram_usage_pct) AS \"物理内存占用率 (%)\",\n  AVG(hw.system_commit_size_gb) AS \"系统提交大小 (GB)\",\n  AVG(hw.system_hard_page_faults) AS \"每秒硬缺页次数\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "内存压力与换页压力",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "磁盘最大延迟 (ms)"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F97316",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 34
+      },
+      "id": 12,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  MAX(hw.disk_max_latency_ms) AS \"磁盘最大延迟 (ms)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "磁盘最高响应延迟",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "ms"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Ping 延迟 (ms)"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "网络抖动 Jitter (ms)"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#A855F7",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "实时丢包率 (%)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 100
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EF4444",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 34
+      },
+      "id": 13,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.network_ping_ms) AS \"网络延迟 (ms)\",\n  AVG(hw.network_jitter) AS \"网络抖动 (ms)\",\n  AVG(hw.is_packet_loss * 100.0) AS \"实时丢包率 (%)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "网络质量心电图",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "description": "基于每进程活动数据积分估算的整机累计数据交换总量。采样校准因子 3.1 秒。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计磁盘读取"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计磁盘写入"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计网络上传"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计网络下载"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 3,
+        "x": 0,
+        "y": 41
+      },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "percentChangeColorMode": "standard",
+        "reduceOptions": {
+          "calcs": [],
+          "fields": "/^value$/",
+          "values": true
+        },
+        "showPercentChange": false,
+        "textMode": "value_and_name",
+        "wideLayout": true
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "WITH agg AS (\n  SELECT \n    SUM(proc_disk_read_rate_mb * 1048576.0 * 3.1) AS r,\n    SUM(proc_disk_write_rate_mb * 1048576.0 * 3.1) AS w,\n    SUM(proc_network_send_kb * 1024.0 * 3.1) AS s,\n    SUM(proc_network_recv_kb * 1024.0 * 3.1) AS recv\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n)\nSELECT '累计磁盘读取' AS metric, r AS value FROM agg\nUNION ALL\nSELECT '累计磁盘写入' AS metric, w AS value FROM agg\nUNION ALL\nSELECT '累计网络上传' AS metric, s AS value FROM agg\nUNION ALL\nSELECT '累计网络下载' AS metric, recv AS value FROM agg;",
+          "refId": "A"
+        }
+      ],
+      "title": "今日 / 所选期间累计存储与网络流量",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "活跃 TCP 连接数"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 5,
+        "x": 3,
+        "y": 41
+      },
+      "id": 18,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_active_connections) AS tcp_conns\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.tcp_conns) AS \"活跃 TCP 连接数\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "整机活跃 TCP 连接数",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "磁盘 IOPS"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 41
+      },
+      "id": 15,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_disk_iops) AS disk_iops\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.disk_iops) AS \"磁盘 IOPS\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "系统磁盘 IOPS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "活跃进程数"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "线程总数"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 41
+      },
+      "id": 16,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    COUNT(DISTINCT process_key) AS active_procs,\n    SUM(proc_thread_count) AS thread_count\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.active_procs) AS \"活跃进程数\",\n  AVG(aa.thread_count) AS \"线程总数\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "整机活跃进程数 / 线程总数",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "binBps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "磁盘读取速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
               },
               {
                 "id": "color",
@@ -1037,25 +2343,17 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "CPU 负载电压"
+              "options": "磁盘写入速度"
             },
             "properties": [
-              {
-                "id": "unit",
-                "value": "volt"
-              },
               {
                 "id": "min",
                 "value": 0
               },
               {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
                 "id": "color",
                 "value": {
-                  "fixedColor": "#10B981",
+                  "fixedColor": "#EC4899",
                   "mode": "fixed"
                 }
               }
@@ -1064,23 +2362,30 @@
         ]
       },
       "gridPos": {
-        "h": 8,
-        "w": 12,
+        "h": 7,
+        "w": 8,
         "x": 0,
-        "y": 59
+        "y": 48
       },
-      "id": 9,
+      "id": 14,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1088,13 +2393,12 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('$aging_step', timestamp) AS period,\n    cpu_package_power,\n    cpu_package_temp,\n    cpu_clock_mhz,\n    cpu_vcore_voltage,\n    MAX(cpu_package_power) OVER(PARTITION BY date_trunc('$aging_step', timestamp)) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  period AS \"time\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_temp ELSE NULL END) AS \"CPU 负载温度\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_power ELSE NULL END) AS \"CPU 负载功率\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_clock_mhz ELSE NULL END) AS \"CPU 负载主频\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_vcore_voltage ELSE NULL END) AS \"CPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_disk_read_rate_mb) AS disk_read,\n    SUM(proc_disk_write_rate_mb) AS disk_write\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.disk_read) * 1048576.0 AS \"磁盘读取速度\",\n  AVG(aa.disk_write) * 1048576.0 AS \"磁盘写入速度\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
-      "title": "CPU 散热老化与能效衰减趋势 (负载均值)",
-      "type": "timeseries",
-      "timeFrom": "now-$aging_window"
+      "title": "系统磁盘读写速度 (MB/s)",
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1103,15 +2407,314 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "显存总占用"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EC4899",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 48
+      },
+      "id": 19,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_vram_used_gb) AS vram_gb\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.vram_gb) * 1073741824.0 AS \"显存总占用\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "整机显存总占用 (RTX5080)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "binBps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "网络发送速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "网络接收速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 48
+      },
+      "id": 17,
+      "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_network_send_kb) AS net_send,\n    SUM(proc_network_recv_kb) AS net_recv\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.net_send) * 1024.0 AS \"网络发送速度\",\n  AVG(aa.net_recv) * 1024.0 AS \"网络接收速度\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "系统网络收发速度",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           },
           "unit": "celsius"
         },
@@ -1240,21 +2843,28 @@
       "gridPos": {
         "h": 8,
         "w": 12,
-        "x": 12,
-        "y": 59
+        "x": 0,
+        "y": 55
       },
       "id": 10,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "legend": {
+          "calcs": [],
           "displayMode": "list",
           "placement": "bottom",
           "showLegend": true
         },
         "tooltip": {
+          "hideZeros": false,
           "mode": "multi",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1266,139 +2876,8 @@
           "refId": "A"
         }
       ],
+      "timeFrom": "now-$aging_window",
       "title": "GPU 散热老化与能效衰减趋势 (负载均值)",
-      "type": "timeseries",
-      "timeFrom": "now-$aging_window"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "percent"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "物理内存占用率 (%)"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "max",
-                "value": 100
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#10B981",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "系统提交大小 (GB)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "decbytes/gbytes"
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#F59E0B",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "每秒硬缺页次数"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "short"
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#8B5CF6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 34
-      },
-      "id": 11,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.system_ram_usage_pct) AS \"物理内存占用率 (%)\",\n  AVG(hw.system_commit_size_gb) AS \"系统提交大小 (GB)\",\n  AVG(hw.system_hard_page_faults) AS \"每秒硬缺页次数\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "内存压力与换页压力",
       "type": "timeseries"
     },
     {
@@ -1408,151 +2887,68 @@
       },
       "fieldConfig": {
         "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
           "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "",
             "axisPlacement": "auto",
+            "barAlignment": 0,
+            "barWidthFactor": 0.6,
             "drawStyle": "line",
             "fillOpacity": 8,
             "gradientMode": "opacity",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "insertNulls": false,
             "lineInterpolation": "smooth",
             "lineWidth": 2,
+            "pointSize": 5,
+            "scaleDistribution": {
+              "type": "linear"
+            },
             "showPoints": "never",
-            "spanNulls": false
+            "showValues": false,
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            },
+            "thresholdsStyle": {
+              "mode": "off"
+            }
           },
-          "unit": "ms"
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "celsius"
         },
         "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "磁盘最大延迟 (ms)"
+              "options": "CPU 负载温度"
             },
             "properties": [
               {
                 "id": "min",
                 "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#F97316",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 8,
-        "y": 34
-      },
-      "id": 12,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  MAX(hw.disk_max_latency_ms) AS \"磁盘最大延迟 (ms)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "磁盘最高响应延迟",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "ms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "Ping 延迟 (ms)"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#06B6D4",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "网络抖动 Jitter (ms)"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#A855F7",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "实时丢包率 (%)"
-            },
-            "properties": [
-              {
-                "id": "unit",
-                "value": "percent"
-              },
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "max",
-                "value": 100
-              },
-              {
-                "id": "custom.axisPlacement",
-                "value": "right"
               },
               {
                 "id": "color",
@@ -1562,251 +2958,17 @@
                 }
               }
             ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 34
-      },
-      "id": 13,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
           },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.network_ping_ms) AS \"网络延迟 (ms)\",\n  AVG(hw.network_jitter) AS \"网络抖动 (ms)\",\n  AVG(hw.is_packet_loss * 100.0) AS \"实时丢包率 (%)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "网络质量心电图",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "binBps"
-        },
-        "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "磁盘读取速度"
+              "options": "CPU 负载功率"
             },
             "properties": [
               {
-                "id": "min",
-                "value": 0
+                "id": "unit",
+                "value": "watt"
               },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#3B82F6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "磁盘写入速度"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#EC4899",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 45
-      },
-      "id": 14,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_disk_read_rate_mb) AS disk_read,\n    SUM(proc_disk_write_rate_mb) AS disk_write\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.disk_read) * 1048576.0 AS \"磁盘读取速度\",\n  AVG(aa.disk_write) * 1048576.0 AS \"磁盘写入速度\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "系统磁盘读写速度 (MB/s)",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "磁盘 IOPS"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#F59E0B",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 8,
-        "y": 45
-      },
-      "id": 15,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_disk_iops) AS disk_iops\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.disk_iops) AS \"磁盘 IOPS\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "系统磁盘 IOPS",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "活跃进程数"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#10B981",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "线程总数"
-            },
-            "properties": [
               {
                 "id": "min",
                 "value": 0
@@ -1818,315 +2980,30 @@
               {
                 "id": "color",
                 "value": {
-                  "fixedColor": "#8B5CF6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 45
-      },
-      "id": 16,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    COUNT(DISTINCT process_key) AS active_procs,\n    SUM(proc_thread_count) AS thread_count\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.active_procs) AS \"活跃进程数\",\n  AVG(aa.thread_count) AS \"线程总数\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "整机活跃进程数 / 线程总数",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "binBps"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "网络发送速度"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#06B6D4",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "网络接收速度"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#3B82F6",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 0,
-        "y": 52
-      },
-      "id": 17,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_network_send_kb) AS net_send,\n    SUM(proc_network_recv_kb) AS net_recv\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.net_send) * 1024.0 AS \"网络发送速度\",\n  AVG(aa.net_recv) * 1024.0 AS \"网络接收速度\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "系统网络收发速度",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "short"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "活跃 TCP 连接数"
-            },
-            "properties": [
-              {
-                "id": "min",
-                "value": 0
-              },
-              {
-                "id": "color",
-                "value": {
                   "fixedColor": "#F59E0B",
                   "mode": "fixed"
                 }
               }
             ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 8,
-        "y": 52
-      },
-      "id": 18,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
           },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_active_connections) AS tcp_conns\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.tcp_conns) AS \"活跃 TCP 连接数\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "整机活跃 TCP 连接数",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "axisPlacement": "auto",
-            "drawStyle": "line",
-            "fillOpacity": 8,
-            "gradientMode": "opacity",
-            "lineInterpolation": "smooth",
-            "lineWidth": 2,
-            "showPoints": "never",
-            "spanNulls": false
-          },
-          "unit": "bytes"
-        },
-        "overrides": [
           {
             "matcher": {
               "id": "byName",
-              "options": "显存总占用"
+              "options": "CPU 负载主频"
             },
             "properties": [
+              {
+                "id": "unit",
+                "value": "mhz"
+              },
               {
                 "id": "min",
                 "value": 0
               },
               {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#EC4899",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 8,
-        "x": 16,
-        "y": 52
-      },
-      "id": 19,
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "none"
-        }
-      },
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_vram_used_gb) AS vram_gb\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.vram_gb) * 1073741824.0 AS \"显存总占用\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
-          "refId": "A"
-        }
-      ],
-      "title": "整机显存总占用 (RTX5080)",
-      "type": "timeseries"
-    },
-    {
-      "collapsed": false,
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "description": "基于每进程活动数据积分估算的整机累计数据交换总量。采样校准因子 3.1 秒。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "fixed"
-          },
-          "mappings": [],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": null
-              }
-            ]
-          },
-          "unit": "bytes"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计磁盘读取"
-            },
-            "properties": [
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
               {
                 "id": "color",
                 "value": {
@@ -2139,39 +3016,21 @@
           {
             "matcher": {
               "id": "byName",
-              "options": "累计磁盘写入"
+              "options": "CPU 负载电压"
             },
             "properties": [
               {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#F59E0B",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计网络上传"
-            },
-            "properties": [
+                "id": "unit",
+                "value": "volt"
+              },
               {
-                "id": "color",
-                "value": {
-                  "fixedColor": "#06B6D4",
-                  "mode": "fixed"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计网络下载"
-            },
-            "properties": [
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
               {
                 "id": "color",
                 "value": {
@@ -2184,257 +3043,162 @@
         ]
       },
       "gridPos": {
-        "h": 4,
-        "w": 24,
-        "x": 0,
-        "y": 41
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 55
       },
-      "id": 20,
+      "id": 9,
       "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "auto",
-        "orientation": "horizontal",
-        "reduceOptions": {
-          "calcs": [],
-          "fields": "/^value$/",
-          "values": true
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
         },
-        "textMode": "value_and_name"
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "hideZeros": false,
+          "mode": "multi",
+          "sort": "none"
+        }
       },
-      "pluginVersion": "10.0.3",
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
             "type": "grafana-postgresql-datasource",
             "uid": "P7A9DAD60F8AB4C18"
           },
-          "editorMode": "code",
-          "format": "table",
-          "rawSql": "WITH agg AS (\n  SELECT \n    SUM(proc_disk_read_rate_mb * 1048576.0 * 3.1) AS r,\n    SUM(proc_disk_write_rate_mb * 1048576.0 * 3.1) AS w,\n    SUM(proc_network_send_kb * 1024.0 * 3.1) AS s,\n    SUM(proc_network_recv_kb * 1024.0 * 3.1) AS recv\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n)\nSELECT '累计磁盘读取' AS metric, r AS value FROM agg\nUNION ALL\nSELECT '累计磁盘写入' AS metric, w AS value FROM agg\nUNION ALL\nSELECT '累计网络上传' AS metric, s AS value FROM agg\nUNION ALL\nSELECT '累计网络下载' AS metric, recv AS value FROM agg;",
+          "format": "time_series",
+          "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('$aging_step', timestamp) AS period,\n    cpu_package_power,\n    cpu_package_temp,\n    cpu_clock_mhz,\n    cpu_vcore_voltage,\n    MAX(cpu_package_power) OVER(PARTITION BY date_trunc('$aging_step', timestamp)) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  period AS \"time\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_temp ELSE NULL END) AS \"CPU 负载温度\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_power ELSE NULL END) AS \"CPU 负载功率\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_clock_mhz ELSE NULL END) AS \"CPU 负载主频\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_vcore_voltage ELSE NULL END) AS \"CPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
-      "title": "今日 / 所选期间累计存储与网络流量",
-      "type": "stat"
+      "timeFrom": "now-$aging_window",
+      "title": "CPU 散热老化与能效衰减趋势 (负载均值)",
+      "type": "timeseries"
     }
   ],
-  "refresh": "5s",
-  "schemaVersion": 39,
+  "preload": false,
+  "refresh": "30s",
+  "schemaVersion": 42,
   "tags": [
     "hardware",
     "thermal"
   ],
+  "templating": {
+    "list": [
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "365d",
+          "value": "365d"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "🍂 散热老化观测窗口",
+        "multi": false,
+        "name": "aging_window",
+        "options": [],
+        "query": "30d,90d,180d,365d",
+        "skipUrlSync": false,
+        "type": "custom",
+        "valuesFormat": "csv"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "day",
+          "value": "day"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "📅 趋势统计步长",
+        "multi": false,
+        "name": "aging_step",
+        "options": [],
+        "query": "day,week,month",
+        "skipUrlSync": false,
+        "type": "custom",
+        "valuesFormat": "csv"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "0.7",
+          "value": "0.7"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "⚙️ 负载判定比例 (Ratio)",
+        "multi": false,
+        "name": "aging_load_ratio",
+        "options": [],
+        "query": "0.5,0.6,0.7,0.8,0.9",
+        "skipUrlSync": false,
+        "type": "custom",
+        "valuesFormat": "csv"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "60",
+          "value": "60"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "⚙️ CPU 最低功耗 (W)",
+        "multi": false,
+        "name": "cpu_min_watt",
+        "options": [],
+        "query": "20,30,40,60,80,100",
+        "skipUrlSync": false,
+        "type": "custom",
+        "valuesFormat": "csv"
+      },
+      {
+        "allowCustomValue": true,
+        "current": {
+          "text": "80",
+          "value": "80"
+        },
+        "hide": 0,
+        "includeAll": false,
+        "label": "⚙️ GPU 最低功耗 (W)",
+        "multi": false,
+        "name": "gpu_min_watt",
+        "options": [],
+        "query": "50,80,100,150,200,300",
+        "skipUrlSync": false,
+        "type": "custom",
+        "valuesFormat": "csv"
+      }
+    ]
+  },
   "time": {
-    "from": "now-6h",
+    "from": "now-2d",
     "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
   },
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 19,
-  "templating": {
-    "list": [
-      {
-        "current": {
-          "selected": true,
-          "value": "180d",
-          "text": "最近半年 (180天)"
-        },
-        "hide": 0,
-        "label": "🍂 散热老化观测窗口",
-        "name": "aging_window",
-        "options": [
-          {
-            "selected": false,
-            "value": "30d",
-            "text": "最近30天"
-          },
-          {
-            "selected": false,
-            "value": "90d",
-            "text": "最近3个月"
-          },
-          {
-            "selected": true,
-            "value": "180d",
-            "text": "最近半年 (180天)"
-          },
-          {
-            "selected": false,
-            "value": "365d",
-            "text": "最近1年"
-          }
-        ],
-        "query": "30d,90d,180d,365d",
-        "queryValue": "",
-        "skipUrlSync": false,
-        "type": "custom"
-      },
-      {
-        "current": {
-          "selected": true,
-          "value": "day",
-          "text": "按天聚合 (精细)"
-        },
-        "hide": 0,
-        "label": "📅 趋势统计步长",
-        "name": "aging_step",
-        "options": [
-          {
-            "selected": true,
-            "value": "day",
-            "text": "按天聚合 (精细)"
-          },
-          {
-            "selected": false,
-            "value": "week",
-            "text": "按周聚合 (平滑)"
-          },
-          {
-            "selected": false,
-            "value": "month",
-            "text": "按月聚合 (长期)"
-          }
-        ],
-        "query": "day,week,month",
-        "queryValue": "",
-        "skipUrlSync": false,
-        "type": "custom"
-      },
-      {
-        "current": {
-          "selected": true,
-          "value": "0.7",
-          "text": "70% 负载 (默认)"
-        },
-        "hide": 0,
-        "label": "⚙️ 负载判定比例 (Ratio)",
-        "name": "aging_load_ratio",
-        "options": [
-          {
-            "selected": false,
-            "value": "0.5",
-            "text": "50% 负载"
-          },
-          {
-            "selected": false,
-            "value": "0.6",
-            "text": "60% 负载"
-          },
-          {
-            "selected": true,
-            "value": "0.7",
-            "text": "70% 负载 (默认)"
-          },
-          {
-            "selected": false,
-            "value": "0.8",
-            "text": "80% 负载"
-          },
-          {
-            "selected": false,
-            "value": "0.9",
-            "text": "90% 负载"
-          }
-        ],
-        "query": "0.5,0.6,0.7,0.8,0.9",
-        "queryValue": "",
-        "skipUrlSync": false,
-        "type": "custom"
-      },
-      {
-        "current": {
-          "selected": true,
-          "value": "40",
-          "text": "40W (默认)"
-        },
-        "hide": 0,
-        "label": "⚙️ CPU 最低功耗 (W)",
-        "name": "cpu_min_watt",
-        "options": [
-          {
-            "selected": false,
-            "value": "20",
-            "text": "20W"
-          },
-          {
-            "selected": false,
-            "value": "30",
-            "text": "30W"
-          },
-          {
-            "selected": true,
-            "value": "40",
-            "text": "40W (默认)"
-          },
-          {
-            "selected": false,
-            "value": "60",
-            "text": "60W"
-          },
-          {
-            "selected": false,
-            "value": "80",
-            "text": "80W"
-          },
-          {
-            "selected": false,
-            "value": "100",
-            "text": "100W"
-          }
-        ],
-        "query": "20,30,40,60,80,100",
-        "queryValue": "",
-        "skipUrlSync": false,
-        "type": "custom"
-      },
-      {
-        "current": {
-          "selected": true,
-          "value": "80",
-          "text": "80W (默认)"
-        },
-        "hide": 0,
-        "label": "⚙️ GPU 最低功耗 (W)",
-        "name": "gpu_min_watt",
-        "options": [
-          {
-            "selected": false,
-            "value": "50",
-            "text": "50W"
-          },
-          {
-            "selected": true,
-            "value": "80",
-            "text": "80W (默认)"
-          },
-          {
-            "selected": false,
-            "value": "100",
-            "text": "100W"
-          },
-          {
-            "selected": false,
-            "value": "150",
-            "text": "150W"
-          },
-          {
-            "selected": false,
-            "value": "200",
-            "text": "200W"
-          },
-          {
-            "selected": false,
-            "value": "300",
-            "text": "300W"
-          }
-        ],
-        "query": "50,80,100,150,200,300",
-        "queryValue": "",
-        "skipUrlSync": false,
-        "type": "custom"
-      }
-    ]
-  }
+  "version": 22
 }
