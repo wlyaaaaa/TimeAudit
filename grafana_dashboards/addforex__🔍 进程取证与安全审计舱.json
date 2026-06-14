@@ -1,0 +1,588 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "smooth",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineWidth": 2
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "进程生成速率 (次)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "进程销毁速率 (次)"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": [
+            "sum",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "title": "📈 进程生灭速率时间线",
+      "type": "timeseries",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz,\n    GREATEST(interval '10 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\nstarts AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz AS bucket_time,\n    count(*) AS count_start\n  FROM public.fact_process_lifecycle_events, time_bounds b\n  WHERE event_type = 'START'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n),\nexits AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '10 seconds', ('$__interval')::interval)))::timestamptz AS bucket_time,\n    count(*) AS count_exit\n  FROM public.fact_process_lifecycle_events, time_bounds b\n  WHERE event_type = 'EXIT'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS time,\n  COALESCE(s.count_start, 0) AS \"进程生成速率 (次)\",\n  COALESCE(e.count_exit, 0) AS \"进程销毁速率 (次)\"\nFROM time_grid g\nLEFT JOIN starts s ON s.bucket_time = g.grid_time\nLEFT JOIN exits e ON e.bucket_time = g.grid_time\nORDER BY 1;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "平均存活时间 (秒)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "options": {
+        "showUnfilled": true
+      },
+      "title": "🌀 短命进程风暴 (运行寿命 < 5s 高频)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  r.process_name AS \"进程名\",\n  count(*) AS \"发生频次 (次)\",\n  ROUND(AVG(e.process_lifetime)::numeric, 2) AS \"平均存活时间 (秒)\",\n  r.executable_path AS \"程序路径\",\n  r.command_line AS \"命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'EXIT' \n  AND e.process_lifetime < 5\n  AND $__timeFilter(e.event_timestamp)\nGROUP BY r.process_name, r.executable_path, r.command_line\nORDER BY 2 DESC\nLIMIT 100;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "数字签名"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "✅ 已签名": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "❌ 无签名": {
+                        "color": "red",
+                        "index": 1
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 3,
+      "options": {},
+      "title": "🔑 提权进程审计表 (is_elevated=1)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  e.event_timestamp AS \"启动时刻\",\n  r.process_name AS \"提权进程名\",\n  r.parent_process AS \"父进程名\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    WHEN r.signature_status = 0 THEN '❌ 无签名'\n    ELSE '⚠️ 签名异常'\n  END AS \"数字签名\",\n  r.executable_path AS \"可执行文件路径\",\n  r.command_line AS \"提权命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND r.is_elevated = 1\n  AND $__timeFilter(e.event_timestamp)\nORDER BY e.event_timestamp DESC\nLIMIT 50;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "风险判定"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "🔥 严重仿冒系统文件！": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "⚠️ 用户目录无签名运行": {
+                        "color": "orange",
+                        "index": 1
+                      },
+                      "ℹ️ 可疑运行特征": {
+                        "color": "blue",
+                        "index": 2
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 6
+      },
+      "id": 4,
+      "options": {},
+      "title": "🎭 系统核心进程仿冒与路径异常审计",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  r.created_at AS \"首次发现时间\",\n  r.process_name AS \"可疑进程\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    WHEN r.signature_status = 0 THEN '❌ 无签名'\n    ELSE '⚠️ 签名校验异常'\n  END AS \"数字签名\",\n  CASE \n    WHEN LOWER(r.process_name) IN ('svchost.exe', 'lsass.exe', 'services.exe', 'wininit.exe', 'smss.exe', 'csrss.exe', 'explorer.exe')\n         AND LOWER(r.executable_path) NOT LIKE 'c:\\windows\\system32%' \n         AND LOWER(r.executable_path) NOT LIKE 'c:\\windows\\syswow64%'\n         AND LOWER(r.executable_path) NOT LIKE 'c:\\windows' THEN '🔥 严重仿冒系统文件！'\n    WHEN r.signature_status = 0 \n         AND (LOWER(r.executable_path) LIKE 'c:\\users\\%' \n              OR LOWER(r.executable_path) LIKE 'c:\\programdata\\%' \n              OR LOWER(r.executable_path) LIKE '%\\temp\\%') THEN '⚠️ 用户目录无签名运行'\n    ELSE 'ℹ️ 可疑运行特征'\n  END AS \"风险判定\",\n  r.executable_path AS \"可执行文件路径\",\n  r.command_line AS \"执行命令行\",\n  COALESCE(r.parent_process, '未知') AS \"父进程\"\nFROM public.dim_process_registry r\nWHERE (r.signature_status <= 0 \n       OR (LOWER(r.process_name) IN ('svchost.exe', 'lsass.exe', 'services.exe', 'explorer.exe')\n           AND LOWER(r.executable_path) NOT LIKE 'c:\\windows%'))\nORDER BY r.created_at DESC\nLIMIT 100;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "崩溃原因翻译"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "🔥 内存越界访问 (Access Violation)": {
+                        "color": "red",
+                        "index": 0
+                      },
+                      "🔥 栈溢出错误 (Stack Overflow)": {
+                        "color": "red",
+                        "index": 1
+                      },
+                      "🔥 堆内存损坏 (Heap Corrupt)": {
+                        "color": "red",
+                        "index": 2
+                      },
+                      "🛑 整数除以零错误 (Divide by Zero)": {
+                        "color": "orange",
+                        "index": 3
+                      },
+                      "🛠️ DLL 库初始化失败": {
+                        "color": "orange",
+                        "index": 4
+                      },
+                      "💤 用户按 Ctrl+C 强行终止": {
+                        "color": "blue",
+                        "index": 5
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "存活寿命 (秒)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "s"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 6
+      },
+      "id": 5,
+      "options": {},
+      "title": "👿 崩溃进程审计表 (退出码翻译解码)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  e.event_timestamp AS \"崩溃时刻\",\n  r.process_name AS \"崩溃程序\",\n  e.exit_code AS \"原始退出码\",\n  CASE \n    WHEN e.exit_code = '0xC0000005' THEN '🔥 内存越界访问 (Access Violation)'\n    WHEN e.exit_code = '0xC00000FD' THEN '🔥 栈溢出错误 (Stack Overflow)'\n    WHEN e.exit_code = '0xC0000094' THEN '🛑 整数除以零错误 (Divide by Zero)'\n    WHEN e.exit_code = '0xC000013A' THEN '💤 用户按 Ctrl+C 强行终止'\n    WHEN e.exit_code = '0xC0000142' THEN '🛠️ DLL 库初始化失败'\n    WHEN e.exit_code = '0xC0000374' THEN '🔥 堆内存损坏 (Heap Corrupt)'\n    ELSE '⚠️ 其他非正常退出码 (' || e.exit_code || ')'\n  END AS \"崩溃原因翻译\",\n  e.process_lifetime AS \"存活寿命 (秒)\",\n  r.executable_path AS \"程序路径\",\n  r.command_line AS \"命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'EXIT' \n  AND e.exit_code IS NOT NULL \n  AND e.exit_code <> '0x00000000'\n  AND $__timeFilter(e.event_timestamp)\nORDER BY e.event_timestamp DESC\nLIMIT 100;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计流量 (MB)"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "decbytes"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "聚焦窗口标题"
+            },
+            "properties": [
+              {
+                "id": "mappings",
+                "value": [
+                  {
+                    "options": {
+                      "🚫 无前台窗口 (静默后台)": {
+                        "color": "orange",
+                        "index": 0
+                      }
+                    },
+                    "type": "value"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "id": 6,
+      "options": {},
+      "title": "🌐 静默网络外联与高危端口侦测舱",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH network_active AS (\n  SELECT \n    act.process_key,\n    act.os_pid,\n    SUM(act.proc_network_send_kb + act.proc_network_recv_kb) AS total_traffic_kb,\n    MAX(act.proc_active_connections) AS max_conns,\n    string_agg(DISTINCT act.proc_remote_ip_port, ', ') FILTER (WHERE act.proc_remote_ip_port <> '') AS remote_addresses\n  FROM public.fact_process_activity act\n  WHERE $__timeFilter(act.timestamp)\n    AND (act.proc_network_send_kb > 0 OR act.proc_network_recv_kb > 0 OR act.proc_active_connections > 0)\n  GROUP BY 1, 2\n),\nforeground_windows AS (\n  SELECT DISTINCT ON (process_key) \n    process_key,\n    window_title\n  FROM public.fact_process_context\n  WHERE $__timeFilter(timestamp) \n    AND window_title IS NOT NULL AND window_title <> ''\n)\nSELECT \n  r.process_name AS \"进程名\",\n  n.os_pid AS \"PID\",\n  ROUND((n.total_traffic_kb / 1024.0)::numeric, 2) AS \"累计流量 (MB)\",\n  n.max_conns AS \"并发TCP连接数\",\n  n.remote_addresses AS \"远程连接目标 (IP:Port)\",\n  COALESCE(f.window_title, '🚫 无前台窗口 (静默后台)') AS \"聚焦窗口标题\",\n  r.command_line AS \"执行命令行\",\n  r.executable_path AS \"程序路径\"\nFROM network_active n\nJOIN public.dim_process_registry r ON n.process_key = r.process_key\nLEFT JOIN foreground_windows f ON n.process_key = f.process_key\nWHERE r.signature_status = 0 OR f.window_title IS NULL\nORDER BY n.total_traffic_kb DESC\nLIMIT 50;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 12,
+        "y": 14
+      },
+      "id": 7,
+      "options": {},
+      "title": "🧩 svchost 服务还原表",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  r.created_at AS \"首次发现服务时间\",\n  r.service_name AS \"绑定服务名\",\n  r.process_name AS \"映像名\",\n  CASE \n    WHEN r.signature_status = 1 THEN '✅ 已签名'\n    ELSE '❌ 无签名'\n  END AS \"数字签名\",\n  r.command_line AS \"svchost 命令行\",\n  r.executable_path AS \"物理路径\"\nFROM public.dim_process_registry r\nWHERE LOWER(r.process_name) = 'svchost.exe'\n  AND r.service_name IS NOT NULL\n  AND r.service_name <> ''\nORDER BY r.created_at DESC\nLIMIT 100;",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "bfoc1vymtgni8a"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 6,
+        "x": 18,
+        "y": 14
+      },
+      "id": 8,
+      "options": {},
+      "title": "🌳 进程家谱 (命令解释器孵化子进程树)",
+      "type": "table",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "bfoc1vymtgni8a"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT \n  r.parent_process AS \"父进程 (Parent)\",\n  r.process_name AS \"可疑子进程 (Child)\",\n  count(e.event_timestamp) AS \"运行次数 (次)\",\n  r.command_line AS \"子进程命令行\"\nFROM public.fact_process_lifecycle_events e\nJOIN public.dim_process_registry r ON e.process_key = r.process_key\nWHERE e.event_type = 'START'\n  AND r.parent_process IS NOT NULL\n  AND LOWER(r.parent_process) IN ('cmd.exe', 'powershell.exe', 'wscript.exe', 'cscript.exe', 'mshta.exe', 'bash.exe', 'schtasks.exe', 'regsvr32.exe')\n  AND $__timeFilter(e.event_timestamp)\nGROUP BY r.parent_process, r.process_name, r.command_line\nORDER BY 3 DESC\nLIMIT 50;",
+          "refId": "A"
+        }
+      ]
+    }
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {
+    "refresh_intervals": [
+      "5s",
+      "10s",
+      "30s",
+      "1m",
+      "5m",
+      "15m",
+      "30m",
+      "1h",
+      "2h",
+      "1d"
+    ]
+  },
+  "timezone": "browser",
+  "title": "🔍 进程取证与安全审计舱",
+  "uid": "addforex",
+  "version": 1
+}
