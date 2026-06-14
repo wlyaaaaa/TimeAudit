@@ -733,7 +733,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
           "custom": {
             "fillOpacity": 100,
@@ -757,7 +757,16 @@
               },
               "type": "value"
             }
-          ]
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         }
       },
       "gridPos": {
@@ -843,7 +852,7 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "thresholds"
+            "mode": "palette-classic"
           },
           "custom": {
             "fillOpacity": 100,
@@ -872,7 +881,16 @@
               },
               "type": "value"
             }
-          ]
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
         }
       },
       "gridPos": {
@@ -940,5 +958,5 @@
   "timezone": "browser",
   "title": "前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 38
+  "version": 39
 }
