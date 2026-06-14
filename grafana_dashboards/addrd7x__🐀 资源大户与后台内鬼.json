@@ -321,11 +321,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nSELECT\n  r.process_name AS \"进程名\",\n  ROUND(AVG(a.proc_disk_read_rate_mb)::numeric, 3) AS \"平均读速 (MB/s)\",\n  ROUND(MAX(a.proc_disk_read_rate_mb)::numeric, 2) AS \"峰值读速 (MB/s)\",\n  ROUND(AVG(a.proc_disk_write_rate_mb)::numeric, 3) AS \"平均写速 (MB/s)\",\n  ROUND(MAX(a.proc_disk_write_rate_mb)::numeric, 2) AS \"峰值写速 (MB/s)\",\n  ROUND(AVG(a.proc_disk_iops)::numeric, 0) AS \"平均 IOPS\",\n  MAX(a.proc_disk_iops) AS \"峰值 IOPS\",\n  ROUND(SUM((a.proc_disk_read_rate_mb + a.proc_disk_write_rate_mb) * 3.1)::numeric, 1) AS \"累计读写 (MB)\",\n  COUNT(*) AS \"采样数\"\nFROM public.fact_process_activity a\nJOIN public.dim_process_registry r ON a.process_key = r.process_key\nWHERE $__timeFilter(a.\"timestamp\")\n  AND (a.proc_disk_read_rate_mb > 0.001 OR a.proc_disk_write_rate_mb > 0.001 OR a.proc_disk_iops > 0)\nGROUP BY r.process_name\nHAVING COUNT(*) >= 2\nORDER BY AVG(a.proc_disk_read_rate_mb + a.proc_disk_write_rate_mb) DESC\nLIMIT 20;\n",
+          "rawSql": "\nSELECT\n  r.process_name AS \"进程名\",\n  ROUND(AVG(a.proc_disk_read_rate_mb)::numeric, 3) AS \"平均读速 (MB/s)\",\n  ROUND(MAX(a.proc_disk_read_rate_mb)::numeric, 2) AS \"峰值读速 (MB/s)\",\n  ROUND(AVG(a.proc_disk_write_rate_mb)::numeric, 3) AS \"平均写速 (MB/s)\",\n  ROUND(MAX(a.proc_disk_write_rate_mb)::numeric, 2) AS \"峰值写速 (MB/s)\",\n  ROUND(AVG(a.proc_disk_iops)::numeric, 0) AS \"平均 IOPS\",\n  ROUND(SUM(a.proc_disk_write_rate_mb * 3.1 / 1024.0)::numeric, 3) AS \"累计写入 (GB)\",\n  ROUND(SUM(a.proc_disk_read_rate_mb * 3.1 / 1024.0)::numeric, 3) AS \"累计读取 (GB)\",\n  COUNT(*) AS \"采样数\"\nFROM public.fact_process_activity a\nJOIN public.dim_process_registry r ON a.process_key = r.process_key\nWHERE $__timeFilter(a.\"timestamp\")\n  AND (a.proc_disk_read_rate_mb > 0.001 OR a.proc_disk_write_rate_mb > 0.001 OR a.proc_disk_iops > 0)\nGROUP BY r.process_name\nHAVING COUNT(*) >= 2\nORDER BY SUM(a.proc_disk_write_rate_mb + a.proc_disk_read_rate_mb) DESC\nLIMIT 20;\n",
           "refId": "A"
         }
       ],
-      "title": "💾 磁盘 I/O 大户 (读写速度 + IOPS)",
+      "title": "💾 磁盘 I/O 与 SSD 写入损耗大户",
       "type": "table"
     },
     {
@@ -523,13 +523,23 @@
         },
         "mergeValues": true,
         "rowHeight": 0.8,
-        "showValue": "auto",
+        "showValue": "never",
         "tooltip": {
           "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
+      "transformations": [
+        {
+          "id": "partitionByValues",
+          "options": {
+            "fields": [
+              "metric"
+            ]
+          }
+        }
+      ],
       "pluginVersion": "13.0.2",
       "targets": [
         {
@@ -540,7 +550,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nstuck_processes AS (\n  SELECT DISTINCT a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n),\nnr_events AS (\n  SELECT\n    a.\"timestamp\" AS time,\n    r.process_name AS metric,\n    a.is_not_responding AS value\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  JOIN stuck_processes sp ON a.process_key = sp.process_key\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n)\nSELECT\n  time,\n  metric,\n  CASE WHEN value = 1 THEN '🔴 无响应' ELSE '🟢 正常' END AS value\nFROM nr_events\nORDER BY time ASC;\n",
+          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nstuck_processes AS (\n  SELECT DISTINCT a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n    -- 排除系统睡眠、屏幕关闭、锁屏和暂离等非工作时段\n    AND NOT EXISTS (\n      SELECT 1 FROM public.app_usage_logs l\n      WHERE l.process_name IN ('System_Sleep', 'System_DisplayOff', 'LockApp.exe', 'System_Idle', 'Idle')\n        AND a.\"timestamp\" >= l.start_time\n        AND a.\"timestamp\" <= l.start_time + (l.duration_seconds || ' seconds')::interval\n        AND l.start_time <= b.t_to\n        AND l.start_time + (l.duration_seconds || ' seconds')::interval >= b.t_from\n    )\n),\nnr_events AS (\n  SELECT\n    a.\"timestamp\" AS time,\n    r.process_name AS metric,\n    a.is_not_responding AS value\n  FROM public.fact_process_activity a\n  JOIN public.dim_process_registry r ON a.process_key = r.process_key\n  JOIN stuck_processes sp ON a.process_key = sp.process_key\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    -- 同样排除非工作时段\n    AND NOT EXISTS (\n      SELECT 1 FROM public.app_usage_logs l\n      WHERE l.process_name IN ('System_Sleep', 'System_DisplayOff', 'LockApp.exe', 'System_Idle', 'Idle')\n        AND a.\"timestamp\" >= l.start_time\n        AND a.\"timestamp\" <= l.start_time + (l.duration_seconds || ' seconds')::interval\n        AND l.start_time <= b.t_to\n        AND l.start_time + (l.duration_seconds || ' seconds')::interval >= b.t_from\n    )\n)\nSELECT\n  time,\n  metric,\n  CASE WHEN value = 1 THEN '🔴 无响应' ELSE '🟢 正常' END AS value\nFROM nr_events\nORDER BY time ASC;\n",
           "refId": "A"
         }
       ],
@@ -857,7 +867,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nfg_intervals AS (\n  SELECT\n    process_key,\n    os_pid,\n    timestamp AS t_start,\n    COALESCE(end_timestamp, (SELECT t_to FROM time_bounds)) AS t_end\n  FROM public.fact_process_context\n  CROSS JOIN time_bounds b\n  WHERE timestamp BETWEEN b.t_from - interval '2 hours' AND b.t_to\n    AND is_foreground = 1\n),\nraw_activity AS (\n  SELECT\n    date_trunc('second', a.\"timestamp\") AS time_sec,\n    a.proc_cpu_usage,\n    a.proc_gpu_usage,\n    CASE WHEN f.process_key IS NOT NULL THEN 1 ELSE 0 END AS is_fg\n  FROM public.fact_process_activity a\n  LEFT JOIN fg_intervals f\n    ON a.process_key = f.process_key\n    AND a.os_pid = f.os_pid\n    AND a.\"timestamp\" >= f.t_start\n    AND a.\"timestamp\" < f.t_end\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n),\nbucketed AS (\n  SELECT\n    time_sec,\n    SUM(CASE WHEN is_fg = 1 THEN proc_cpu_usage ELSE 0 END) AS fg_cpu,\n    SUM(CASE WHEN is_fg = 0 THEN proc_cpu_usage ELSE 0 END) AS bg_cpu,\n    SUM(CASE WHEN is_fg = 1 THEN proc_gpu_usage ELSE 0 END) AS fg_gpu,\n    SUM(CASE WHEN is_fg = 0 THEN proc_gpu_usage ELSE 0 END) AS bg_gpu\n  FROM raw_activity\n  GROUP BY time_sec\n)\nSELECT\n  $__timeGroupAlias(time_sec, $__interval) AS \"time\",\n  ROUND(AVG(fg_cpu)::numeric, 2) AS \"前台进程 CPU (%)\",\n  ROUND(AVG(bg_cpu)::numeric, 2) AS \"后台总 CPU (%)\",\n  ROUND(AVG(fg_gpu)::numeric, 2) AS \"前台进程 GPU (%)\",\n  ROUND(AVG(bg_gpu)::numeric, 2) AS \"后台总 GPU (%)\"\nFROM bucketed\nGROUP BY 1\nORDER BY 1 ASC;\n",
+          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nfg_intervals AS (\n  SELECT\n    process_key,\n    os_pid,\n    timestamp AS t_start,\n    COALESCE(end_timestamp, (SELECT t_to FROM time_bounds)) AS t_end\n  FROM public.fact_process_context\n  CROSS JOIN time_bounds b\n  WHERE timestamp BETWEEN b.t_from - interval '2 hours' AND b.t_to\n    AND is_foreground = 1\n),\nraw_activity AS (\n  SELECT\n    date_trunc('second', a.\"timestamp\") AS time_sec,\n    a.proc_cpu_usage,\n    a.proc_gpu_usage,\n    CASE WHEN f.process_key IS NOT NULL THEN 1 ELSE 0 END AS is_fg\n  FROM public.fact_process_activity a\n  LEFT JOIN fg_intervals f\n    ON a.process_key = f.process_key\n    AND a.os_pid = f.os_pid\n    AND a.\"timestamp\" >= f.t_start\n    AND a.\"timestamp\" < f.t_end\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n),\nbucketed AS (\n  SELECT\n    time_sec,\n    SUM(CASE WHEN is_fg = 1 THEN proc_cpu_usage ELSE 0 END) AS fg_cpu,\n    SUM(CASE WHEN is_fg = 0 THEN proc_cpu_usage ELSE 0 END) AS bg_cpu,\n    SUM(CASE WHEN is_fg = 1 THEN proc_gpu_usage ELSE 0 END) AS fg_gpu,\n    SUM(CASE WHEN is_fg = 0 THEN proc_gpu_usage ELSE 0 END) AS bg_gpu\n  FROM raw_activity\n  GROUP BY time_sec\n)\nSELECT\n  $__timeGroupAlias(time_sec, $__interval),\n  ROUND(AVG(fg_cpu)::numeric, 2) AS \"前台进程 CPU (%)\",\n  ROUND(AVG(bg_cpu)::numeric, 2) AS \"后台总 CPU (%)\",\n  ROUND(AVG(fg_gpu)::numeric, 2) AS \"前台进程 GPU (%)\",\n  ROUND(AVG(bg_gpu)::numeric, 2) AS \"后台总 GPU (%)\"\nFROM bucketed\nGROUP BY 1\nORDER BY 1 ASC;\n",
           "refId": "A"
         }
       ],
