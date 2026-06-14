@@ -1251,10 +1251,12 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\n  date_trunc('hour', start_time) as time,\n  EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') as \"小时\",\n  ROUND(SUM(CASE WHEN process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"活跃时间(分钟)\"\nFROM app_usage_logs\nWHERE start_time >= CASE \n    WHEN ($__timeTo()::timestamptz - $__timeFrom()::timestamptz) < interval '24 hours' \n    THEN $__timeTo()::timestamptz - interval '7 days' \n    ELSE $__timeFrom()::timestamptz \n  END\n  AND start_time <= $__timeTo()::timestamptz\nGROUP BY 1, 2\nORDER BY time ASC;",
+          "rawSql": "SELECT\n  date_trunc('hour', start_time) as time,\n  EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') as \"小时\",\n  ROUND(SUM(CASE WHEN process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"活跃时间(分钟)\"\nFROM app_usage_logs\nWHERE $__timeFilter(start_time)\nGROUP BY 1, 2\nORDER BY time ASC;",
           "refId": "A"
         }
       ],
+      "timeFrom": "7d",
+      "timeShift": null,
       "title": "每日活跃时段分布热力图 (小时×天)",
       "type": "heatmap"
     },
@@ -1365,5 +1367,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 47
+  "version": 48
 }
