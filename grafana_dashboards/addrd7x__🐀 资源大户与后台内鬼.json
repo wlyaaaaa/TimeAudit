@@ -589,9 +589,14 @@
           "mappings": [
             {
               "options": {
+                "0": {
+                  "color": "green",
+                  "index": 0,
+                  "text": "🟢 正常"
+                },
                 "1": {
                   "color": "red",
-                  "index": 0,
+                  "index": 1,
                   "text": "🔴 无响应"
                 }
               },
@@ -604,6 +609,10 @@
               {
                 "color": "green",
                 "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
               }
             ]
           }
@@ -648,7 +657,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nraw_events AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n  GROUP BY 1, 2\n),\nfiltered_events AS (\n  SELECT\n    re.time_min AS time,\n    re.process_key\n  FROM raw_events re\n  CROSS JOIN time_bounds b\n  WHERE NOT EXISTS (\n    SELECT 1 FROM public.app_usage_logs l\n    WHERE l.process_name IN ('System_Sleep', 'System_DisplayOff', 'LockApp.exe', 'System_Idle', 'Idle')\n      AND re.time_min >= l.start_time - interval '1 minute'\n      AND re.time_min <= l.start_time + (l.duration_seconds || ' seconds')::interval + interval '1 minute'\n      AND l.start_time <= b.t_to\n      AND l.start_time + (l.duration_seconds || ' seconds')::interval >= b.t_from\n  )\n)\nSELECT\n  fe.time,\n  r.process_name AS metric,\n  1::int AS value\nFROM filtered_events fe\nJOIN public.dim_process_registry r ON fe.process_key = r.process_key\nORDER BY fe.time ASC;\n",
+          "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\nraw_events AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n  GROUP BY 1, 2\n),\nfiltered_events AS (\n  SELECT\n    re.time_min AS time,\n    re.process_key\n  FROM raw_events re\n  CROSS JOIN time_bounds b\n  WHERE NOT EXISTS (\n    SELECT 1 FROM public.app_usage_logs l\n    WHERE l.process_name IN ('System_Sleep', 'System_DisplayOff', 'LockApp.exe', 'System_Idle', 'Idle')\n      AND re.time_min >= l.start_time - interval '1 minute'\n      AND re.time_min <= l.start_time + (l.duration_seconds || ' seconds')::interval + interval '1 minute'\n      AND l.start_time <= b.t_to\n      AND l.start_time + (l.duration_seconds || ' seconds')::interval >= b.t_from\n  )\n)\n),\nstuck_and_normal AS (\n  SELECT time, process_key, 1::int AS value FROM filtered_events\n  UNION ALL\n  SELECT time + interval '1 minute', process_key, 0::int AS value FROM filtered_events\n),\nmerged_events AS (\n  SELECT time, process_key, MAX(value) AS value\n  FROM stuck_and_normal\n  GROUP BY time, process_key\n)\nSELECT\n  me.time,\n  r.process_name AS metric,\n  me.value\nFROM merged_events me\nJOIN public.dim_process_registry r ON me.process_key = r.process_key\nORDER BY me.time ASC;\n",
           "refId": "A"
         }
       ],
