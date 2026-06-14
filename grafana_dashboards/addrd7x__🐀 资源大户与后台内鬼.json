@@ -633,9 +633,9 @@
           "multiLane": false
         },
         "legend": {
-          "displayMode": "list",
+          "displayMode": "hidden",
           "placement": "bottom",
-          "showLegend": true
+          "showLegend": false
         },
         "mergeValues": true,
         "rowHeight": 0.8,
@@ -661,7 +661,7 @@
           "refId": "A"
         }
       ],
-      "title": "🔴 无响应卡死进程时间线",
+      "title": "🔴 无响应卡死进程时间线 (红色:卡死 | 绿色:正常)",
       "type": "state-timeline"
     },
     {
