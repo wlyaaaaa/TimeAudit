@@ -376,7 +376,8 @@ class ProcessActivityWorker:
             base.Close()
         return prefixes
 
-    def _scan_hung_pids(self):
+    @staticmethod
+    def _scan_hung_pids():
         """枚举所有可见顶层窗口，用 IsHungAppWindow(任务管理器“未响应”判定同源 API：窗口消息泵 >5 秒
         无回应即视为卡死)标记其属主进程。返回卡死进程的 PID 集合；无窗口的服务/后台进程自然不在其中(=正常)。
         旧实现用 psutil.STATUS_STOPPED(Unix 概念，Windows 上几乎永不为真)，致 is_not_responding 形同虚设。"""

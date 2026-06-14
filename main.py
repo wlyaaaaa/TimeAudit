@@ -329,10 +329,16 @@ async def main():
             except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as db_err:
                 print(f"[{datetime.datetime.now().strftime('%X')} 🚨 连接断开] 检测到连接异常: {db_err}")
                 if pool:
+                    # 【重连健壮性修复】PG 重启/掉线时连接已死，await pool.close() 会等待“未释放连接”
+                    # 长达 60s+(实测刷屏 "Pool.close() is taking over 60 seconds")，把整个采集主循环卡死、
+                    # 停止写库。改为 5s 超时优雅关闭，超时即 terminate() 强制拔线，确保秒级重连自愈。
                     try:
-                        await pool.close()
+                        await asyncio.wait_for(pool.close(), timeout=5.0)
                     except Exception:
-                        pass
+                        try:
+                            pool.terminate()
+                        except Exception:
+                            pass
                     pool = None
                     if hasattr(lifecycle_worker, 'update_pool'):
                         lifecycle_worker.update_pool(None)
@@ -349,7 +355,13 @@ async def main():
         lifecycle_worker.terminate()
         hardware_worker.terminate()
         if pool:
-            await pool.close()
+            try:
+                await asyncio.wait_for(pool.close(), timeout=5.0)
+            except Exception:
+                try:
+                    pool.terminate()
+                except Exception:
+                    pass
         print("[主控] 遥测管线释放，闭舱。")
 
 if __name__ == "__main__":

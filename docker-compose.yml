@@ -1,11 +1,29 @@
-version: '3.8'
-
 services:
   # 🗄️ 核心持久层：选用对时间窗口查询、长周期聚合最优雅的 PostgreSQL
   audit-db:
     image: postgres:15-alpine
     container_name: audit-postgres
     restart: always
+    # 🚀 PostgreSQL 性能调优：默认 shared_buffers=128MB / work_mem=4MB 在 64GB+NVMe 机器上把性能锁死了。
+    # 面向“单用户工作站、读多、大量对 fact_process_activity(~1.8GB/周分区)的聚合扫描”优化，既显著提速、
+    # 又留足内存给游戏/应用(shared_buffers=2GB 仅占 64GB 的 3%)。random_page_cost/effective_io_concurrency
+    # 按 NVMe Gen5 调小/调高，让规划器更敢走索引并预取。并行度保持 2，配 512MB shm 仍有充足余量。
+    command:
+      - "postgres"
+      - "-c"
+      - "shared_buffers=2GB"
+      - "-c"
+      - "effective_cache_size=8GB"
+      - "-c"
+      - "work_mem=16MB"
+      - "-c"
+      - "maintenance_work_mem=512MB"
+      - "-c"
+      - "random_page_cost=1.1"
+      - "-c"
+      - "effective_io_concurrency=200"
+      - "-c"
+      - "max_parallel_workers_per_gather=2"
     environment:
       POSTGRES_USER: 'leyang'
       POSTGRES_PASSWORD: 'SecurePassword123'
@@ -16,7 +34,7 @@ services:
       - ./postgres_data:/var/lib/postgresql/data
     # /dev/shm 上限：并行查询(posix DSM)扫描大分区(fact_process_activity 周分区已达 ~1.8GB)时在此申请共享内存，
     # Docker 默认 64MB 过小会触发 "could not resize shared memory segment ... No space left on device"。
-    # 512MB 已远超实际所需——DSM 用量受 work_mem(4MB) × 并行度(max_parallel_workers_per_gather=2) 约束，
+    # 512MB 仍充足——DSM 用量受 work_mem(16MB) × 并行度(max_parallel_workers_per_gather=2) 约束，
     # 与物理内存无关，切勿按 64GB 内存比例放大(那只会让失控查询经 tmpfs 吃光内存)。tmpfs 惰性分配，闲时实占≈0。
     shm_size: '512mb'
 
