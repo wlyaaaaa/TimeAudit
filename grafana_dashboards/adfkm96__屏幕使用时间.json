@@ -1223,7 +1223,7 @@
         "color": {
           "mode": "scheme",
           "scale": "linear",
-          "scheme": "YlGnBu"
+          "scheme": "Blues"
         },
         "rowsFrame": {
           "layout": "sparse"
@@ -1362,5 +1362,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 56
+  "version": 58
 }
