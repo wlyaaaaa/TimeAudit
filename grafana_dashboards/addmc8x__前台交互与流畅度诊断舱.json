@@ -938,8 +938,255 @@
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "displayMode": "auto"
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "平均帧率 (FPS)"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "basic-gauge"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "fps"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 200
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 30
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 60
+                    },
+                    {
+                      "color": "green",
+                      "value": 90
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "10% 低帧率"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "basic-gauge"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "fps"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 120
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "red",
+                      "value": null
+                    },
+                    {
+                      "color": "orange",
+                      "value": 20
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 45
+                    },
+                    {
+                      "color": "green",
+                      "value": 75
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "卡顿率 (FT >= 50ms)"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "basic-gauge"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 30
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 5
+                    },
+                    {
+                      "color": "orange",
+                      "value": 12
+                    },
+                    {
+                      "color": "red",
+                      "value": 20
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "严重卡顿率 (FT >= 100ms)"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "basic-gauge"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "percent"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "max",
+                "value": 15
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": null
+                    },
+                    {
+                      "color": "yellow",
+                      "value": 2
+                    },
+                    {
+                      "color": "orange",
+                      "value": 5
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计运行时长 (分钟)"
+            },
+            "properties": [
+              {
+                "id": "custom.cellOptions",
+                "value": {
+                  "type": "basic-gauge"
+                }
+              },
+              {
+                "id": "unit",
+                "value": "m"
+              },
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "thresholds",
+                "value": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "blue",
+                      "value": null
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        ]
+      },
       "gridPos": {
-        "h": 6,
+        "h": 5,
         "w": 24,
         "x": 0,
         "y": 73
@@ -961,7 +1208,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    -- 🎯 基础前台五大内鬼\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('applicationframehost.exe', '🪟 Win系统内置应用(照片/设置)'),\n    ('mmc.exe', '⚙️ Win微软管理控制台(磁盘/服务)'),\n    ('trafficmonitor.exe', '📊 TrafficMonitor 网速计'),\n    \n    -- ☕ 核心开发与数据库工具\n    ('idea64.exe', '☕ IntelliJ IDEA'),\n    ('datagrip64.exe', '🛢️ DataGrip 数据库'),\n    ('clion64.exe', '🇨 CLion 编辑器'),\n    ('code.exe', '📝 VS Code 编辑器'),\n    ('wechatappex.exe', '💬 微信小程序进程'),\n    ('wxminiprogram.exe', '💬 微信小程序'),\n    ('xmind.exe', '🧠 XMind 思维导图'),\n    ('apifox.exe', '🦊 Apifox 接口测试'),\n    ('anotherredisdesktopmanager.exe', '🗄️ Redis 管理器'),\n\n    -- 🌐 浏览器与日常办公\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('qq.exe', '🐧 QQ 电脑版'),\n    ('wxwork.exe', '💼 企业微信'),\n    ('notepad++.exe', '📝 Notepad++'),\n    ('notepad.exe', '📝 Windows 记事本'),\n    ('typora.exe', '✍️ Typora 笔记'),\n    ('winword.exe', '📝 Microsoft Word'),\n\n    -- 📱 远控与终端系列\n    ('pcbu_desktop.exe', '📱 华为妙享/电脑管家'),\n    ('miservice.exe', '📱 小米妙享服务'),\n    ('mintty.exe', '💻 Git Bash 终端'),\n    ('powershell_ise.exe', '💻 PowerShell ISE'),\n    ('windowsterminal.exe', '💻 Windows 终端'),\n    ('cmd.exe', '💻 命令提示符'),\n\n    -- 🐳 基建与 AI\n    ('docker desktop.exe', '🐳 Docker 桌面端'),\n    ('tailscale.exe', '🧅 Tailscale 组网'),\n    ('clash verge.exe', '✈️ Clash 代理'),\n    ('flyingbird.exe', '🚀 飞鸟加速器'),\n    ('bilibili.exe', '📺 哔哩哔哩'),\n    ('discord.exe', '💬 Discord 社区'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n\n    -- 🎮 核心游戏矩阵\n    ('blackmythwukong.exe', '🐒 黑神话：悟空'),\n    ('cyberpunk2077.exe', '🦾 赛博朋克 2077'),\n    ('league of legends.exe', '⚔️ 英雄联盟'),\n    ('cities2.exe', '🏗️ 城市：天际线 2'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2'),\n    ('frostpunk2.exe', '❄️ 冰汽时代 2'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师')\n),\nactive_frames AS (\n  SELECT \n    ctx_match.window_mode,\n    hw.current_fps,\n    hw.frametime_ms\n  FROM public.fact_system_hardware hw\n  LEFT JOIN LATERAL (\n    -- 查找当前前台上下文及窗口形态\n    SELECT ctx.window_mode, ctx.process_key, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= hw.timestamp\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= hw.timestamp\n      AND a.start_time >= hw.timestamp - interval '24 hours' -- 索引范围收敛\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > hw.timestamp\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','Idle','System_LockScreen','LockApp.exe')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND hw.timestamp >= $__timeFrom()::timestamptz\n    AND hw.timestamp <= $__timeTo()::timestamptz\n    AND (EXTRACT(EPOCH FROM hw.timestamp)::bigint % 30) < 3  -- 30秒稀疏降采样\n    AND (ctx_match.end_timestamp > hw.timestamp OR ctx_match.end_timestamp IS NULL)\n    AND LOWER(reg.process_name) NOT IN (\n      'searchhost.exe', 'startmenuexperiencehost.exe', 'openwith.exe',\n      'lockapp.exe', 'inno_updater.exe', 'steamwebhelper.exe',\n      'tagtunnel.exe', 'xlliveud.exe', 'gameinputsvc.exe'\n    )\n)\nSELECT \n  CASE \n    WHEN window_mode = 2 THEN '🖥️ 全屏 / 无边框全屏'\n    WHEN window_mode = 3 THEN '🪟 普通窗口形态'\n    ELSE '❓ 未知窗口形态 (' || COALESCE(window_mode::text, 'NULL') || ')'\n  END AS \"窗口形态\",\n  ROUND(AVG(current_fps)::numeric, 1) AS \"平均帧率 (FPS)\",\n  ROUND(PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY current_fps)::numeric, 1) AS \"10% 低帧率\",\n  ROUND((SUM(CASE WHEN frametime_ms >= 50.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*))::numeric, 2) || '%' AS \"卡顿率 (FT >= 50ms)\",\n  ROUND((SUM(CASE WHEN frametime_ms >= 100.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*))::numeric, 2) || '%' AS \"严重卡顿率 (FT >= 100ms)\",\n  ROUND((COUNT(*) * 30.0 / 60.0)::numeric, 1) AS \"累计运行时长 (分钟)\"\nFROM active_frames\nGROUP BY window_mode\nORDER BY window_mode ASC;",
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    -- 🎯 基础前台五大内鬼\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('applicationframehost.exe', '🪟 Win系统内置应用(照片/设置)'),\n    ('mmc.exe', '⚙️ Win微软管理控制台(磁盘/服务)'),\n    ('trafficmonitor.exe', '📊 TrafficMonitor 网速计'),\n    \n    -- ☕ 核心开发与数据库工具\n    ('idea64.exe', '☕ IntelliJ IDEA'),\n    ('datagrip64.exe', '🛢️ DataGrip 数据库'),\n    ('clion64.exe', '🇨 CLion 编辑器'),\n    ('code.exe', '📝 VS Code 编辑器'),\n    ('wechatappex.exe', '💬 微信小程序进程'),\n    ('wxminiprogram.exe', '💬 微信小程序'),\n    ('xmind.exe', '🧠 XMind 思维导图'),\n    ('apifox.exe', '🦊 Apifox 接口测试'),\n    ('anotherredisdesktopmanager.exe', '🗄️ Redis 管理器'),\n\n    -- 🌐 浏览器与日常办公\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('qq.exe', '🐧 QQ 电脑版'),\n    ('wxwork.exe', '💼 企业微信'),\n    ('notepad++.exe', '📝 Notepad++'),\n    ('notepad.exe', '📝 Windows 记事本'),\n    ('typora.exe', '✍️ Typora 笔记'),\n    ('winword.exe', '📝 Microsoft Word'),\n\n    -- 📱 远控与终端系列\n    ('pcbu_desktop.exe', '📱 华为妙享/电脑管家'),\n    ('miservice.exe', '📱 小米妙享服务'),\n    ('mintty.exe', '💻 Git Bash 终端'),\n    ('powershell_ise.exe', '💻 PowerShell ISE'),\n    ('windowsterminal.exe', '💻 Windows 终端'),\n    ('cmd.exe', '💻 命令提示符'),\n\n    -- 🐳 基建与 AI\n    ('docker desktop.exe', '🐳 Docker 桌面端'),\n    ('tailscale.exe', '🧅 Tailscale 组网'),\n    ('clash verge.exe', '✈️ Clash 代理'),\n    ('flyingbird.exe', '🚀 飞鸟加速器'),\n    ('bilibili.exe', '📺 哔哩哔哩'),\n    ('discord.exe', '💬 Discord 社区'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n\n    -- 🎮 核心游戏矩阵\n    ('blackmythwukong.exe', '🐒 黑神话：悟空'),\n    ('cyberpunk2077.exe', '🦾 赛博朋克 2077'),\n    ('league of legends.exe', '⚔️ 英雄联盟'),\n    ('cities2.exe', '🏗️ 城市：天际线 2'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2'),\n    ('frostpunk2.exe', '❄️ 冰汽时代 2'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师')\n),\nactive_frames AS (\n  SELECT \n    ctx_match.window_mode,\n    hw.current_fps,\n    hw.frametime_ms\n  FROM public.fact_system_hardware hw\n  LEFT JOIN LATERAL (\n    -- 查找当前前台上下文及窗口形态\n    SELECT ctx.window_mode, ctx.process_key, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= hw.timestamp\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= hw.timestamp\n      AND a.start_time >= hw.timestamp - interval '24 hours' -- 索引范围收敛\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > hw.timestamp\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','Idle','System_LockScreen','LockApp.exe')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND hw.timestamp >= $__timeFrom()::timestamptz\n    AND hw.timestamp <= $__timeTo()::timestamptz\n    AND (EXTRACT(EPOCH FROM hw.timestamp)::bigint % 30) < 3  -- 30秒稀疏降采样\n    AND (ctx_match.end_timestamp > hw.timestamp OR ctx_match.end_timestamp IS NULL)\n    AND LOWER(reg.process_name) NOT IN (\n      'searchhost.exe', 'startmenuexperiencehost.exe', 'openwith.exe',\n      'lockapp.exe', 'inno_updater.exe', 'steamwebhelper.exe',\n      'tagtunnel.exe', 'xlliveud.exe', 'gameinputsvc.exe'\n    )\n)\nSELECT \n  CASE \n    WHEN window_mode = 2 THEN '🖥️ 全屏 / 无边框全屏'\n    WHEN window_mode = 3 THEN '🪟 普通窗口形态'\n    ELSE '❓ 未知窗口形态 (' || COALESCE(window_mode::text, 'NULL') || ')'\n  END AS \"窗口形态\",\n  ROUND(AVG(current_fps)::numeric, 1) AS \"平均帧率 (FPS)\",\n  ROUND(PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY current_fps)::numeric, 1) AS \"10% 低帧率\",\n  ROUND((SUM(CASE WHEN frametime_ms >= 50.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*))::numeric, 2) AS \"卡顿率 (FT >= 50ms)\",\n  ROUND((SUM(CASE WHEN frametime_ms >= 100.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*))::numeric, 2) AS \"严重卡顿率 (FT >= 100ms)\",\n  ROUND((COUNT(*) * 30.0 / 60.0)::numeric, 1) AS \"累计运行时长 (分钟)\"\nFROM active_frames\nGROUP BY window_mode\nORDER BY window_mode ASC;",
           "refId": "A"
         }
       ],
@@ -993,5 +1240,5 @@
   "timezone": "browser",
   "title": "前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 45
+  "version": 46
 }
