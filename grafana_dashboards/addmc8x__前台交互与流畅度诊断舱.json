@@ -701,7 +701,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  -- 1.1 动态确定在当前过滤时间段内有实际数据的时间边界\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_context\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  -- 1.2 活体骨架层：在有数据的局部时间范围内自适应采样，上限 2000 点，大幅提升时序精度\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  act.proc_cpu_usage AS \"前台 CPU 占用率 (%)\",\n  act.proc_gpu_usage AS \"前台 GPU 占用率 (%)\",\n  act.proc_ram_mb / 1024.0 AS \"前台 内存占用 (GB)\",\n  act.proc_vram_used_gb AS \"前台 显存占用 (GB)\"\nFROM time_grid g\n-- 2. 局部快速寻址：利用索引定位前台聚焦上下文\nLEFT JOIN LATERAL (\n  SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n  FROM public.fact_process_context ctx\n  WHERE ctx.timestamp <= g.grid_time\n    AND ctx.is_foreground = 1\n  ORDER BY ctx.timestamp DESC\n  LIMIT 1\n) ctx_match ON true\n-- 3. 局部快速检索瞬时指标（利用索引定位最接近网格点且在 15 秒内的活动记录）\nLEFT JOIN LATERAL (\n  SELECT act.proc_cpu_usage, act.proc_gpu_usage, act.proc_ram_mb, act.proc_vram_used_gb\n  FROM public.fact_process_activity act\n  WHERE act.timestamp <= g.grid_time \n    AND act.timestamp >= g.grid_time - interval '15 seconds'\n    AND act.process_key = ctx_match.process_key \n    AND act.os_pid = ctx_match.os_pid\n  ORDER BY act.timestamp DESC\n  LIMIT 1\n) act ON true\n-- 4. 快速检查 Away 状态 (利用 AHK 日志 start_time 索引)\nLEFT JOIN LATERAL (\n  SELECT 1 AS is_away\n  FROM public.app_usage_logs a\n  WHERE a.start_time <= g.grid_time\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n    AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n  LIMIT 1\n) away ON true\nWHERE away.is_away IS NULL\n  AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\nORDER BY time ASC;",
+          "rawSql": "WITH time_bounds AS (\n  -- 1.1 动态确定在当前过滤时间段内有实际 data 的时间边界\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_context\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  -- 1.2 活体骨架层：在有数据的局部时间范围内自适应采样，上限 2000 点，大幅提升时序精度\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  act.proc_cpu_usage AS \"前台 CPU 占用率 (%)\",\n  act.proc_gpu_usage AS \"前台 GPU 占用率 (%)\",\n  act.proc_ram_mb / 1024.0 AS \"前台 内存占用 (GB)\",\n  act.proc_vram_used_gb AS \"前台 显存占用 (GB)\"\nFROM time_grid g\n-- 2. 局部快速寻址：利用索引定位前台聚焦上下文\nLEFT JOIN LATERAL (\n  SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n  FROM public.fact_process_context ctx\n  WHERE ctx.timestamp <= g.grid_time\n    AND ctx.is_foreground = 1\n  ORDER BY ctx.timestamp DESC\n  LIMIT 1\n) ctx_match ON true\n-- 3. 局部快速检索瞬时指标（利用索引定位最接近网格点且在 15 秒内的活动记录）\nLEFT JOIN LATERAL (\n  SELECT act.proc_cpu_usage, act.proc_gpu_usage, act.proc_ram_mb, act.proc_vram_used_gb\n  FROM public.fact_process_activity act\n  WHERE act.timestamp <= g.grid_time \n    AND act.timestamp >= g.grid_time - interval '15 seconds'\n    AND act.process_key = ctx_match.process_key \n    AND act.os_pid = ctx_match.os_pid\n  ORDER BY act.timestamp DESC\n  LIMIT 1\n) act ON true\n-- 4. 快速检查 Away 状态 (利用 AHK 日志 start_time 索引)\nLEFT JOIN LATERAL (\n  SELECT 1 AS is_away\n  FROM public.app_usage_logs a\n  WHERE a.start_time <= g.grid_time\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n    AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n  LIMIT 1\n) away ON true\nWHERE away.is_away IS NULL\n  AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\nORDER BY time ASC;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -724,6 +724,157 @@
       ],
       "title": "前台活动程序资源侵占画像",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 100,
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 57
+      },
+      "id": 6,
+      "options": {
+        "alignValue": "center",
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never"
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "dataset": "time_audit",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\ntime_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\ngrid_mapped AS (\n  SELECT\n    g.grid_time,\n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.frametime_ms\n  FROM time_grid g\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= g.grid_time\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT hw.frametime_ms\n    FROM public.fact_system_hardware hw\n    WHERE hw.timestamp <= g.grid_time \n      AND hw.timestamp >= g.grid_time - interval '15 seconds'\n    ORDER BY hw.timestamp DESC\n    LIMIT 1\n  ) hw ON true\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= g.grid_time\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\n    AND hw.frametime_ms >= 50.0  -- 仅保留卡顿点\n),\nprocess_analytics AS (\n  SELECT app_label, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, app_label) AS stutter_rank\n  FROM grid_mapped GROUP BY app_label\n)\nSELECT \n  gm.grid_time AS time,\n  lpad(pa.stutter_rank::text, 2, '0') || ' · ' || gm.app_label AS metric,\n  CASE \n    WHEN gm.frametime_ms >= 100 THEN '🛑 严重卡顿 (FT >= 100ms)'\n    ELSE '🔴 微卡顿 (FT >= 50ms)'\n  END AS value\nFROM grid_mapped gm\nJOIN process_analytics pa ON gm.app_label = pa.app_label\nORDER BY time ASC;",
+          "refId": "A"
+        }
+      ],
+      "title": "卡顿时刻标注 (FT >= 50ms)",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 65
+      },
+      "id": 7,
+      "options": {
+        "cellHeight": "sm",
+        "enablePagination": true,
+        "showHeader": true
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "dataset": "time_audit",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\nactive_frames AS (\n  SELECT \n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.current_fps,\n    hw.frametime_ms\n  FROM public.fact_system_hardware hw\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= hw.timestamp\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= hw.timestamp\n      AND a.start_time >= hw.timestamp - interval '24 hours'\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > hw.timestamp\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND hw.timestamp >= $__timeFrom()::timestamptz\n    AND hw.timestamp <= $__timeTo()::timestamptz\n    AND (EXTRACT(EPOCH FROM hw.timestamp)::bigint % 30) < 3  -- 30秒稀疏降采样\n    AND (ctx_match.end_timestamp > hw.timestamp OR ctx_match.end_timestamp IS NULL)\n    AND LOWER(reg.process_name) NOT IN (\n      'searchhost.exe', 'startmenuexperiencehost.exe', 'openwith.exe',\n      'lockapp.exe', 'inno_updater.exe', 'steamwebhelper.exe',\n      'tagtunnel.exe', 'xlliveud.exe', 'gameinputsvc.exe'\n    )\n)\nSELECT \n  app_label AS \"前台应用\",\n  ROUND(AVG(current_fps)::numeric, 1) AS \"平均帧率 (FPS)\",\n  ROUND(PERCENTILE_CONT(0.1) WITHIN GROUP (ORDER BY current_fps)::numeric, 1) AS \"10% 低帧率\",\n  ROUND((SUM(CASE WHEN frametime_ms >= 50.0 THEN 1 ELSE 0 END) * 100.0 / COUNT(*))::numeric, 2) || '%' AS \"卡顿率 (FT >= 50ms)\",\n  ROUND((COUNT(*) * 30.0 / 60.0)::numeric, 1) AS \"前台运行时长 (分钟)\"\nFROM active_frames\nGROUP BY 1\nORDER BY COUNT(*) DESC;",
+          "refId": "A"
+        }
+      ],
+      "title": "前台各应用 FPS 对比表",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 100,
+            "insertNulls": false,
+            "lineWidth": 0,
+            "spanNulls": false
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 65
+      },
+      "id": 8,
+      "options": {
+        "alignValue": "center",
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "mergeValues": true,
+        "rowHeight": 0.9,
+        "showValue": "never"
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "dataset": "time_audit",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\ntime_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\ngrid_mapped AS (\n  SELECT\n    g.grid_time,\n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.cpu_total_usage,\n    hw.gpu_usage\n  FROM time_grid g\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= g.grid_time\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT hw.cpu_total_usage, hw.gpu_usage\n    FROM public.fact_system_hardware hw\n    WHERE hw.timestamp <= g.grid_time \n      AND hw.timestamp >= g.grid_time - interval '15 seconds'\n    ORDER BY hw.timestamp DESC\n    LIMIT 1\n  ) hw ON true\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= g.grid_time\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\n    AND LOWER(reg.process_name) NOT IN (\n      'searchhost.exe', 'startmenuexperiencehost.exe', 'openwith.exe',\n      'lockapp.exe', 'inno_updater.exe', 'steamwebhelper.exe',\n      'tagtunnel.exe', 'xlliveud.exe', 'gameinputsvc.exe'\n    )\n),\nprocess_analytics AS (\n  -- Direct duration ranking\n  SELECT \n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    ROW_NUMBER() OVER (ORDER BY SUM(COALESCE(ctx.duration_ms, 0)) DESC, COALESCE(pm.alias_name, '⚙️ ' || reg.process_name)) AS usage_rank\n  FROM public.fact_process_context ctx\n  JOIN public.dim_process_registry reg ON ctx.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  WHERE ctx.timestamp >= $__timeFrom()::timestamptz\n    AND ctx.timestamp <= $__timeTo()::timestamptz\n    AND ctx.is_foreground = 1\n  GROUP BY 1\n  ORDER BY SUM(COALESCE(ctx.duration_ms, 0)) DESC\n  LIMIT 15\n)\nSELECT \n  gm.grid_time AS time,\n  lpad(pa.usage_rank::text, 2, '0') || ' · ' || gm.app_label AS metric,\n  CASE \n    WHEN gm.gpu_usage >= 90.0 THEN '⚡ GPU 满载瓶颈 (>=90%)'\n    WHEN gm.cpu_total_usage >= 80.0 AND gm.gpu_usage < 80.0 THEN '⚙️ CPU 忙碌瓶颈 (>=80%)'\n    ELSE '🟢 负载均衡/轻载'\n  END AS value\nFROM grid_mapped gm\nJOIN process_analytics pa ON gm.app_label = pa.app_label\nORDER BY time ASC;",
+          "refId": "A"
+        }
+      ],
+      "title": "前台 CPU/GPU 瓶颈指示",
+      "type": "state-timeline"
     }
   ],
   "preload": false,
@@ -750,5 +901,5 @@
   "timezone": "browser",
   "title": "前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 36
+  "version": 37
 }
