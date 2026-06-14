@@ -72,6 +72,12 @@ CREATE INDEX IF NOT EXISTS idx_process_activity_ts_key_covering
     ON public.fact_process_activity (timestamp, process_key, os_pid)
     INCLUDE (proc_cpu_usage, proc_gpu_usage);
 
+-- 局部索引：专门针对无响应进程状态进行索引，避免在数百万条活跃度记录中扫描
+CREATE INDEX IF NOT EXISTS idx_activity_is_not_responding
+    ON public.fact_process_activity ("timestamp")
+    WHERE is_not_responding = 1;
+
+
 -- ====================== 3. 前台上下文事实表（按周分区）====================
 -- 记录"哪个窗口在前台、标题是什么、聚焦了多久"。duration_ms 是该窗口连续聚焦的毫秒数。
 CREATE TABLE IF NOT EXISTS public.fact_process_context (
