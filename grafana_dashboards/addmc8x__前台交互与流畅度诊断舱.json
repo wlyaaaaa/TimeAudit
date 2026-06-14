@@ -733,14 +733,31 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "custom": {
             "fillOpacity": 100,
             "insertNulls": false,
             "lineWidth": 0,
             "spanNulls": false
-          }
+          },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "orange",
+                  "index": 1,
+                  "text": "🔴 微卡顿 (FT >= 50ms)"
+                },
+                "2": {
+                  "color": "red",
+                  "index": 2,
+                  "text": "🛑 严重卡顿 (FT >= 100ms)"
+                }
+              },
+              "type": "value"
+            }
+          ]
         }
       },
       "gridPos": {
@@ -776,7 +793,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\ntime_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\ngrid_mapped AS (\n  SELECT\n    g.grid_time,\n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.frametime_ms\n  FROM time_grid g\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= g.grid_time\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT hw.frametime_ms\n    FROM public.fact_system_hardware hw\n    WHERE hw.timestamp <= g.grid_time \n      AND hw.timestamp >= g.grid_time - interval '15 seconds'\n    ORDER BY hw.timestamp DESC\n    LIMIT 1\n  ) hw ON true\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= g.grid_time\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\n    AND hw.frametime_ms >= 50.0  -- 仅保留卡顿点\n),\nprocess_analytics AS (\n  SELECT app_label, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, app_label) AS stutter_rank\n  FROM grid_mapped GROUP BY app_label\n)\nSELECT \n  gm.grid_time AS time,\n  lpad(pa.stutter_rank::text, 2, '0') || ' · ' || gm.app_label AS metric,\n  CASE \n    WHEN gm.frametime_ms >= 100 THEN '🛑 严重卡顿 (FT >= 100ms)'\n    ELSE '🔴 微卡顿 (FT >= 50ms)'\n  END AS value\nFROM grid_mapped gm\nJOIN process_analytics pa ON gm.app_label = pa.app_label\nORDER BY time ASC;",
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\ntime_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\ngrid_mapped AS (\n  SELECT\n    g.grid_time,\n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.frametime_ms\n  FROM time_grid g\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= g.grid_time\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT hw.frametime_ms\n    FROM public.fact_system_hardware hw\n    WHERE hw.timestamp <= g.grid_time \n      AND hw.timestamp >= g.grid_time - interval '15 seconds'\n    ORDER BY hw.timestamp DESC\n    LIMIT 1\n  ) hw ON true\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= g.grid_time\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\n    AND hw.frametime_ms >= 50.0  -- 仅保留卡顿点\n),\nprocess_analytics AS (\n  SELECT app_label, ROW_NUMBER() OVER (ORDER BY COUNT(*) DESC, app_label) AS stutter_rank\n  FROM grid_mapped GROUP BY app_label\n)\nSELECT \n  gm.grid_time AS time,\n  lpad(pa.stutter_rank::text, 2, '0') || ' · ' || gm.app_label AS metric,\n  CASE \n    WHEN gm.frametime_ms >= 100 THEN 2\n    ELSE 1\n  END AS value\nFROM grid_mapped gm\nJOIN process_analytics pa ON gm.app_label = pa.app_label\nORDER BY time ASC;",
           "refId": "A"
         }
       ],
@@ -826,14 +843,36 @@
       "fieldConfig": {
         "defaults": {
           "color": {
-            "mode": "palette-classic"
+            "mode": "thresholds"
           },
           "custom": {
             "fillOpacity": 100,
             "insertNulls": false,
             "lineWidth": 0,
             "spanNulls": false
-          }
+          },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "color": "green",
+                  "index": 1,
+                  "text": "🟢 负载均衡/轻载"
+                },
+                "2": {
+                  "color": "orange",
+                  "index": 2,
+                  "text": "⚡ GPU 满载瓶颈 (>=90%)"
+                },
+                "3": {
+                  "color": "blue",
+                  "index": 3,
+                  "text": "⚙️ CPU 忙碌瓶颈 (>=80%)"
+                }
+              },
+              "type": "value"
+            }
+          ]
         }
       },
       "gridPos": {
@@ -869,7 +908,7 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\ntime_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\ngrid_mapped AS (\n  SELECT\n    g.grid_time,\n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.cpu_total_usage,\n    hw.gpu_usage\n  FROM time_grid g\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= g.grid_time\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT hw.cpu_total_usage, hw.gpu_usage\n    FROM public.fact_system_hardware hw\n    WHERE hw.timestamp <= g.grid_time \n      AND hw.timestamp >= g.grid_time - interval '15 seconds'\n    ORDER BY hw.timestamp DESC\n    LIMIT 1\n  ) hw ON true\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= g.grid_time\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\n    AND LOWER(reg.process_name) NOT IN (\n      'searchhost.exe', 'startmenuexperiencehost.exe', 'openwith.exe',\n      'lockapp.exe', 'inno_updater.exe', 'steamwebhelper.exe',\n      'tagtunnel.exe', 'xlliveud.exe', 'gameinputsvc.exe'\n    )\n),\nprocess_analytics AS (\n  -- Direct duration ranking\n  SELECT \n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    ROW_NUMBER() OVER (ORDER BY SUM(COALESCE(ctx.duration_ms, 0)) DESC, COALESCE(pm.alias_name, '⚙️ ' || reg.process_name)) AS usage_rank\n  FROM public.fact_process_context ctx\n  JOIN public.dim_process_registry reg ON ctx.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  WHERE ctx.timestamp >= $__timeFrom()::timestamptz\n    AND ctx.timestamp <= $__timeTo()::timestamptz\n    AND ctx.is_foreground = 1\n  GROUP BY 1\n  ORDER BY SUM(COALESCE(ctx.duration_ms, 0)) DESC\n  LIMIT 15\n)\nSELECT \n  gm.grid_time AS time,\n  lpad(pa.usage_rank::text, 2, '0') || ' · ' || gm.app_label AS metric,\n  CASE \n    WHEN gm.gpu_usage >= 90.0 THEN '⚡ GPU 满载瓶颈 (>=90%)'\n    WHEN gm.cpu_total_usage >= 80.0 AND gm.gpu_usage < 80.0 THEN '⚙️ CPU 忙碌瓶颈 (>=80%)'\n    ELSE '🟢 负载均衡/轻载'\n  END AS value\nFROM grid_mapped gm\nJOIN process_analytics pa ON gm.app_label = pa.app_label\nORDER BY time ASC;",
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('masterduel.exe', '🃏 游戏王：决斗大师'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2')\n),\ntime_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', make_interval(secs => ceil(extract(epoch from (b.range_end - b.range_start)) / 2000)::int))\n  ) AS grid_time\n  FROM time_bounds b\n),\ngrid_mapped AS (\n  SELECT\n    g.grid_time,\n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    hw.cpu_total_usage,\n    hw.gpu_usage\n  FROM time_grid g\n  LEFT JOIN LATERAL (\n    SELECT ctx.process_key, ctx.os_pid, ctx.end_timestamp\n    FROM public.fact_process_context ctx\n    WHERE ctx.timestamp <= g.grid_time\n      AND ctx.is_foreground = 1\n    ORDER BY ctx.timestamp DESC\n    LIMIT 1\n  ) ctx_match ON true\n  JOIN public.dim_process_registry reg ON ctx_match.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  LEFT JOIN LATERAL (\n    SELECT hw.cpu_total_usage, hw.gpu_usage\n    FROM public.fact_system_hardware hw\n    WHERE hw.timestamp <= g.grid_time \n      AND hw.timestamp >= g.grid_time - interval '15 seconds'\n    ORDER BY hw.timestamp DESC\n    LIMIT 1\n  ) hw ON true\n  LEFT JOIN LATERAL (\n    SELECT 1 AS is_away\n    FROM public.app_usage_logs a\n    WHERE a.start_time <= g.grid_time\n      AND a.start_time + (a.duration_seconds || ' seconds')::interval > g.grid_time\n      AND a.process_name IN ('System_Sleep','System_DisplayOff','System_Idle','System_LockScreen')\n    LIMIT 1\n  ) away ON true\n  WHERE away.is_away IS NULL\n    AND (ctx_match.end_timestamp > g.grid_time OR ctx_match.end_timestamp IS NULL)\n    AND LOWER(reg.process_name) NOT IN (\n      'searchhost.exe', 'startmenuexperiencehost.exe', 'openwith.exe',\n      'lockapp.exe', 'inno_updater.exe', 'steamwebhelper.exe',\n      'tagtunnel.exe', 'xlliveud.exe', 'gameinputsvc.exe'\n    )\n),\nprocess_analytics AS (\n  -- Direct duration ranking\n  SELECT \n    COALESCE(pm.alias_name, '⚙️ ' || reg.process_name) AS app_label,\n    ROW_NUMBER() OVER (ORDER BY SUM(COALESCE(ctx.duration_ms, 0)) DESC, COALESCE(pm.alias_name, '⚙️ ' || reg.process_name)) AS usage_rank\n  FROM public.fact_process_context ctx\n  JOIN public.dim_process_registry reg ON ctx.process_key = reg.process_key\n  LEFT JOIN process_map pm ON LOWER(reg.process_name) = pm.proc_name\n  WHERE ctx.timestamp >= $__timeFrom()::timestamptz\n    AND ctx.timestamp <= $__timeTo()::timestamptz\n    AND ctx.is_foreground = 1\n  GROUP BY 1\n  ORDER BY SUM(COALESCE(ctx.duration_ms, 0)) DESC\n  LIMIT 15\n)\nSELECT \n  gm.grid_time AS time,\n  lpad(pa.usage_rank::text, 2, '0') || ' · ' || gm.app_label AS metric,\n  CASE \n    WHEN gm.gpu_usage >= 90.0 THEN 2\n    WHEN gm.cpu_total_usage >= 80.0 AND gm.gpu_usage < 80.0 THEN 3\n    ELSE 1\n  END AS value\nFROM grid_mapped gm\nJOIN process_analytics pa ON gm.app_label = pa.app_label\nORDER BY time ASC;",
           "refId": "A"
         }
       ],
@@ -901,5 +940,5 @@
   "timezone": "browser",
   "title": "前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 37
+  "version": 38
 }
