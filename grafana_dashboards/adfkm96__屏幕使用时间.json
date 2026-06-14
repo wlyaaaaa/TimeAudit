@@ -1178,11 +1178,14 @@
           "fields": "/^(累计时长)$/",
           "values": true
         },
+        "sort": "desc",
         "tooltip": {
+          "hideZeros": false,
           "mode": "single",
           "sort": "none"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1206,37 +1209,63 @@
       },
       "fieldConfig": {
         "defaults": {
-          "custom": {}
+          "custom": {
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "scaleDistribution": {
+              "type": "linear"
+            }
+          }
         }
       },
       "gridPos": {
-        "h": 8,
+        "h": 17,
         "w": 16,
         "x": 8,
         "y": 31
       },
       "id": 102,
       "options": {
+        "annotations": {
+          "clustering": -1,
+          "multiLane": false
+        },
         "calculate": false,
         "cellGap": 1,
         "cellRadius": 2,
         "color": {
           "mode": "scheme",
           "scale": "linear",
-          "scheme": "Blues"
+          "scheme": "Greens"
+        },
+        "exemplars": {
+          "color": "rgba(255,0,255,0.7)"
+        },
+        "filterValues": {
+          "le": 1e-09
+        },
+        "legend": {
+          "show": true
         },
         "rowsFrame": {
           "layout": "sparse"
         },
         "tooltip": {
-          "show": true
+          "mode": "single",
+          "showColorScale": false,
+          "yHistogram": false
         },
         "xField": "time",
         "yAxis": {
+          "axisPlacement": "left",
           "reverse": false,
           "unit": "short"
         }
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1251,7 +1280,6 @@
         }
       ],
       "timeFrom": "7d",
-      "timeShift": null,
       "title": "每日活跃时段分布热力图 (小时×天)",
       "type": "heatmap"
     },
@@ -1285,12 +1313,25 @@
             "thresholdsStyle": {
               "mode": "off"
             }
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": 0
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
           }
         }
       },
       "gridPos": {
-        "h": 8,
-        "w": 24,
+        "h": 9,
+        "w": 8,
         "x": 0,
         "y": 39
       },
@@ -1318,6 +1359,7 @@
         "xTickLabelRotation": 0,
         "xTickLabelSpacing": 0
       },
+      "pluginVersion": "13.0.2",
       "targets": [
         {
           "datasource": {
@@ -1338,11 +1380,8 @@
   "preload": false,
   "refresh": "10s",
   "schemaVersion": 42,
-  "templating": {
-    "list": []
-  },
   "time": {
-    "from": "now-7d",
+    "from": "now/y",
     "to": "now"
   },
   "timepicker": {
@@ -1362,5 +1401,5 @@
   "timezone": "browser",
   "title": "屏幕使用时间",
   "uid": "adfkm96",
-  "version": 58
+  "version": 60
 }
