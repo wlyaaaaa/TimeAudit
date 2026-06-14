@@ -215,8 +215,9 @@ class ProcessActivityWorker:
         self.pid_key_cache = {}
         
         self.cache_lock = threading.Lock()
-        self.net_conn_cache = {}      
-        self.shared_vram_cache = {}    
+        self.net_conn_cache = {}
+        self.shared_vram_cache = {}
+        self.hung_pids_cache = set()   # 后台线程每拍刷新的“无响应/卡死”进程 PID 集合(IsHungAppWindow 同源)
         
         self.vram_map_cache = {}
         self.gpu_util_map_cache = {}
@@ -374,6 +375,37 @@ class ProcessActivityWorker:
         finally:
             base.Close()
         return prefixes
+
+    def _scan_hung_pids(self):
+        """枚举所有可见顶层窗口，用 IsHungAppWindow(任务管理器“未响应”判定同源 API：窗口消息泵 >5 秒
+        无回应即视为卡死)标记其属主进程。返回卡死进程的 PID 集合；无窗口的服务/后台进程自然不在其中(=正常)。
+        旧实现用 psutil.STATUS_STOPPED(Unix 概念，Windows 上几乎永不为真)，致 is_not_responding 形同虚设。"""
+        hung = set()
+        try:
+            user32 = ctypes.windll.user32
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+            user32.IsHungAppWindow.argtypes = [wintypes.HWND]
+            user32.IsHungAppWindow.restype = wintypes.BOOL
+            user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+            user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+            WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+            def _cb(hwnd, _lparam):
+                try:
+                    if user32.IsWindowVisible(hwnd) and user32.IsHungAppWindow(hwnd):
+                        pid = wintypes.DWORD(0)
+                        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                        if pid.value:
+                            hung.add(pid.value)
+                except Exception:
+                    pass
+                return True
+
+            user32.EnumWindows(WNDENUMPROC(_cb), 0)
+        except Exception:
+            pass
+        return hung
 
     def _background_telemetry_loop(self):
         pdh = None
@@ -557,11 +589,14 @@ class ProcessActivityWorker:
             temp_vram_map.update(temp_pdh_dedicated_gb)
             temp_gpu_util_map.update(temp_pdh_gpu_util)
 
+            temp_hung_pids = self._scan_hung_pids()
+
             with self.cache_lock:
                 self.net_conn_cache = temp_net_conn
                 self.shared_vram_cache = temp_shared_vram
                 self.vram_map_cache = temp_vram_map
                 self.gpu_util_map_cache = temp_gpu_util_map
+                self.hung_pids_cache = temp_hung_pids
 
             time.sleep(2.0)
 
@@ -632,6 +667,7 @@ class ProcessActivityWorker:
             local_vram_cache = dict(self.shared_vram_cache)
             local_vram_map = dict(self.vram_map_cache)
             local_gpu_util_map = dict(self.gpu_util_map_cache)
+            local_hung_pids = set(self.hung_pids_cache)
             system_send_rate = self.system_net_send_rate
             system_recv_rate = self.system_net_recv_rate
 
@@ -791,11 +827,10 @@ class ProcessActivityWorker:
             p_gpu_util = float(local_gpu_util_map.get(pid, 0.0))
             shared_vram_mb = int(local_vram_cache.get(pid, 0))
 
-            is_dead = False
-            try:
-                proc = psutil.Process(pid)
-                is_dead = True if proc.status() == psutil.STATUS_STOPPED else False
-            except: pass
+            # 【无响应检测修复】改用与任务管理器同源的 IsHungAppWindow：后台线程每拍枚举可见顶层窗口、
+            # 标记消息泵卡死(>5s)的属主 PID，此处仅 O(1) 集合查表。旧的 psutil.STATUS_STOPPED 是 Unix 概念，
+            # Windows 上几乎永不为真，导致该字段与 addrd7x「卡死进程时间线」面板形同虚设。
+            is_dead = pid in local_hung_pids
 
             net_conn_count, net_remote = local_net_cache.get(pid, (0, None))
             if net_conn_count > 0 and total_active_connections > 0:
