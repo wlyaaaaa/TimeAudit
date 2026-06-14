@@ -1067,7 +1067,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 41
+        "y": 55
       },
       "id": 9,
       "options": {
@@ -1093,7 +1093,8 @@
         }
       ],
       "title": "CPU 散热老化与能效衰减趋势 (负载均值)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "timeFrom": "$aging_window"
     },
     {
       "datasource": {
@@ -1240,7 +1241,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 41
+        "y": 55
       },
       "id": 10,
       "options": {
@@ -1266,7 +1267,8 @@
         }
       ],
       "title": "GPU 散热老化与能效衰减趋势 (负载均值)",
-      "type": "timeseries"
+      "type": "timeseries",
+      "timeFrom": "$aging_window"
     },
     {
       "datasource": {
@@ -1594,6 +1596,505 @@
       ],
       "title": "网络质量心电图",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "binbytes/s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "磁盘读取速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "磁盘写入速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EC4899",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 41
+      },
+      "id": 14,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_disk_read_rate_mb) AS disk_read,\n    SUM(proc_disk_write_rate_mb) AS disk_write\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.disk_read) * 1048576.0 AS \"磁盘读取速度\",\n  AVG(aa.disk_write) * 1048576.0 AS \"磁盘写入速度\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "系统磁盘读写速度 (MB/s)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "磁盘 IOPS"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 41
+      },
+      "id": 15,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_disk_iops) AS disk_iops\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.disk_iops) AS \"磁盘 IOPS\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "系统磁盘 IOPS",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "活跃进程数"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "线程总数"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#8B5CF6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 41
+      },
+      "id": 16,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    COUNT(DISTINCT process_key) AS active_procs,\n    SUM(proc_thread_count) AS thread_count\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.active_procs) AS \"活跃进程数\",\n  AVG(aa.thread_count) AS \"线程总数\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "整机活跃进程数 / 线程总数",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "binbytes/s"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "网络发送速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "网络接收速度"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 48
+      },
+      "id": 17,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_network_send_kb) AS net_send,\n    SUM(proc_network_recv_kb) AS net_recv\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.net_send) * 1024.0 AS \"网络发送速度\",\n  AVG(aa.net_recv) * 1024.0 AS \"网络接收速度\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "系统网络收发速度",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "short"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "活跃 TCP 连接数"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 48
+      },
+      "id": 18,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_active_connections) AS tcp_conns\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.tcp_conns) AS \"活跃 TCP 连接数\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "整机活跃 TCP 连接数",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "opacity",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "showPoints": "never",
+            "spanNulls": false
+          },
+          "unit": "bytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "显存总占用"
+            },
+            "properties": [
+              {
+                "id": "min",
+                "value": 0
+              },
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#EC4899",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 48
+      },
+      "id": 19,
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\naggregated_activity AS (\n  SELECT \n    timestamp,\n    SUM(proc_vram_used_gb) AS vram_gb\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(aa.vram_gb) * 1073741824.0 AS \"显存总占用\"\nFROM time_grid g\nLEFT JOIN aggregated_activity aa ON aa.timestamp >= g.grid_time \n  AND aa.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "整机显存总占用 (RTX5080)",
+      "type": "timeseries"
     }
   ],
   "refresh": "5s",
@@ -1609,5 +2110,45 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 13
+  "version": 14,
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": true,
+          "value": "180d",
+          "text": "最近半年 (180天)"
+        },
+        "hide": 0,
+        "label": "🍂 散热老化观测窗口",
+        "name": "aging_window",
+        "options": [
+          {
+            "selected": false,
+            "value": "30d",
+            "text": "最近30天"
+          },
+          {
+            "selected": false,
+            "value": "90d",
+            "text": "最近3个月"
+          },
+          {
+            "selected": true,
+            "value": "180d",
+            "text": "最近半年 (180天)"
+          },
+          {
+            "selected": false,
+            "value": "365d",
+            "text": "最近1年"
+          }
+        ],
+        "query": "30d,90d,180d,365d",
+        "queryValue": "",
+        "skipUrlSync": false,
+        "type": "custom"
+      }
+    ]
+  }
 }
