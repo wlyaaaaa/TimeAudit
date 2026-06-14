@@ -1067,7 +1067,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 55
+        "y": 59
       },
       "id": 9,
       "options": {
@@ -1241,7 +1241,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 55
+        "y": 59
       },
       "id": 10,
       "options": {
@@ -1661,7 +1661,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 41
+        "y": 45
       },
       "id": 14,
       "options": {
@@ -1734,7 +1734,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 41
+        "y": 45
       },
       "id": 15,
       "options": {
@@ -1830,7 +1830,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 41
+        "y": 45
       },
       "id": 16,
       "options": {
@@ -1922,7 +1922,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 52
       },
       "id": 17,
       "options": {
@@ -1995,7 +1995,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 52
       },
       "id": 18,
       "options": {
@@ -2040,7 +2040,7 @@
             "showPoints": "never",
             "spanNulls": false
           },
-          "unit": "bytes"
+          "unit": "binbytes"
         },
         "overrides": [
           {
@@ -2068,7 +2068,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 52
       },
       "id": 19,
       "options": {
@@ -2095,6 +2095,130 @@
       ],
       "title": "整机显存总占用 (RTX5080)",
       "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "description": "基于每进程活动数据积分估算的整机累计数据交换总量。采样校准因子 3.1 秒。",
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "fixed"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "binbytes"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计磁盘读取"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#3B82F6",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计磁盘写入"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#F59E0B",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计网络上传"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#06B6D4",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "累计网络下载"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "#10B981",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 41
+      },
+      "id": 20,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "value_and_name"
+      },
+      "pluginVersion": "10.0.3",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "table",
+          "rawSql": "SELECT \n  SUM(proc_disk_read_rate_mb * 1048576.0 * 3.1) AS \"累计磁盘读取\",\n  SUM(proc_disk_write_rate_mb * 1048576.0 * 3.1) AS \"累计磁盘写入\",\n  SUM(proc_network_send_kb * 1024.0 * 3.1) AS \"累计网络上传\",\n  SUM(proc_network_recv_kb * 1024.0 * 3.1) AS \"累计网络下载\"\nFROM public.fact_process_activity\nWHERE timestamp >= $__timeFrom()::timestamptz\n  AND timestamp <= $__timeTo()::timestamptz;",
+          "refId": "A"
+        }
+      ],
+      "title": "今日 / 所选期间累计存储与网络流量",
+      "type": "stat"
     }
   ],
   "refresh": "5s",
@@ -2110,7 +2234,7 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 17,
+  "version": 18,
   "templating": {
     "list": [
       {
