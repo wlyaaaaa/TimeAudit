@@ -2040,7 +2040,7 @@
             "showPoints": "never",
             "spanNulls": false
           },
-          "unit": "binbytes"
+          "unit": "bytes"
         },
         "overrides": [
           {
@@ -2118,7 +2118,7 @@
               }
             ]
           },
-          "unit": "binbytes"
+          "unit": "bytes"
         },
         "overrides": [
           {
@@ -2196,11 +2196,9 @@
         "justifyMode": "auto",
         "orientation": "horizontal",
         "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
+          "calcs": [],
+          "fields": "/^value$/",
+          "values": true
         },
         "textMode": "value_and_name"
       },
@@ -2213,7 +2211,7 @@
           },
           "editorMode": "code",
           "format": "table",
-          "rawSql": "SELECT \n  SUM(proc_disk_read_rate_mb * 1048576.0 * 3.1) AS \"累计磁盘读取\",\n  SUM(proc_disk_write_rate_mb * 1048576.0 * 3.1) AS \"累计磁盘写入\",\n  SUM(proc_network_send_kb * 1024.0 * 3.1) AS \"累计网络上传\",\n  SUM(proc_network_recv_kb * 1024.0 * 3.1) AS \"累计网络下载\"\nFROM public.fact_process_activity\nWHERE timestamp >= $__timeFrom()::timestamptz\n  AND timestamp <= $__timeTo()::timestamptz;",
+          "rawSql": "WITH agg AS (\n  SELECT \n    SUM(proc_disk_read_rate_mb * 1048576.0 * 3.1) AS r,\n    SUM(proc_disk_write_rate_mb * 1048576.0 * 3.1) AS w,\n    SUM(proc_network_send_kb * 1024.0 * 3.1) AS s,\n    SUM(proc_network_recv_kb * 1024.0 * 3.1) AS recv\n  FROM public.fact_process_activity\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n)\nSELECT '累计磁盘读取' AS metric, r AS value FROM agg\nUNION ALL\nSELECT '累计磁盘写入' AS metric, w AS value FROM agg\nUNION ALL\nSELECT '累计网络上传' AS metric, s AS value FROM agg\nUNION ALL\nSELECT '累计网络下载' AS metric, recv AS value FROM agg;",
           "refId": "A"
         }
       ],
@@ -2234,7 +2232,7 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 18,
+  "version": 19,
   "templating": {
     "list": [
       {
