@@ -56,6 +56,14 @@ class DpcLatencyChecker:
                 elapsed_us = (t1 - t0) * 1000000.0
                 jitter_us = max(0.0, elapsed_us - 1000.0)
 
+                # 【数据质量修复】这是用户态 time.sleep 抖动(受 Python GIL 争用/系统睡眠/GC 停顿污染)，
+                # 并非真实内核 DPC 延迟。单次溢出 > 1 秒几乎必是系统睡眠/挂起的伪值(实测出现过 8.5 秒)，丢弃；
+                # 其余封顶 100ms，使其退化为有界的"用户态调度抖动"代理，杜绝垃圾尖刺污染稳定性大盘。
+                if jitter_us > 1000000.0:
+                    jitter_us = 0.0
+                elif jitter_us > 100000.0:
+                    jitter_us = 100000.0
+
                 if jitter_us > self.max_jitter_us:
                     self.max_jitter_us = jitter_us
 
@@ -74,7 +82,14 @@ class DpcLatencyChecker:
         self.stop_event.set()
 
 class HardwareTelemetryWorker:
+    # 【PresentMon 门控】只在"活跃渲染"(游戏/3D)时运行 PresentMon。GPU 占用超此阈值即判定在渲染；
+    # 渲染停止后再多保活 RENDER_HYSTERESIS_SEC 秒(滞回)避免抖动。这样桌面/窗口化轻载时 PresentMon 关闭，
+    # 既省资源、又规避其 24x7 系统级 ETW present 捕获对 DWM 合成(窗口化呈现)的潜在扰动(灰屏嫌疑)。
+    RENDER_GPU_THRESHOLD = 18.0
+    RENDER_HYSTERESIS_SEC = 75.0
+
     def __init__(self):
+        self._last_render_ts = 0.0   # 最近一次检测到活跃渲染的 monotonic 时刻
         self.nvml_initialized = False
         self.gpu_handle = None
         self.presentmon_process = None
@@ -275,6 +290,10 @@ class HardwareTelemetryWorker:
         t = threading.Thread(target=network_sensor_thread, daemon=True)
         t.start()
 
+    def _render_active(self):
+        """是否处于活跃渲染期(游戏/3D 在跑)。GPU 占用近期超阈值即为真，含 RENDER_HYSTERESIS_SEC 滞回。"""
+        return (time.monotonic() - self._last_render_ts) < self.RENDER_HYSTERESIS_SEC
+
     def _start_presentmon_listener(self):
         import queue
         import logging
@@ -293,6 +312,17 @@ class HardwareTelemetryWorker:
         def monitor_loop():
             pm_logger.info("=== PresentMon 守护线程已启动 ===")
             while not self.stop_event.is_set():
+                # 【门控】非活跃渲染期(桌面/窗口化轻载)不运行 PresentMon：确保其已被杀掉后等待重判。
+                if not self._render_active():
+                    for proc in psutil.process_iter(['name']):
+                        try:
+                            if proc.info['name'] and proc.info['name'].lower() in ['presentmonconsole.exe', 'presentmon.exe']:
+                                proc.kill()
+                        except Exception:
+                            pass
+                    self.presentmon_process = None
+                    time.sleep(3.0)
+                    continue
                 script_dir = os.path.dirname(os.path.abspath(__file__))
                 pm_path = os.path.join(script_dir, "PresentMonConsole.exe")
                 if not os.path.exists(pm_path):
@@ -397,8 +427,15 @@ class HardwareTelemetryWorker:
                         if process.poll() is not None:
                             # 🟢 核心修复：一旦 PresentMon 意外崩塌，强制冷冻 3 秒再重启，拒绝高频连击显卡驱动
                             time.sleep(3.0)
-                            break  
-                        continue  
+                            break
+                        if not self._render_active():
+                            # 【门控】渲染已停止(退出游戏/回到桌面) → 杀掉 PresentMon，回到外层门控等待。
+                            try:
+                                process.kill()
+                            except Exception:
+                                pass
+                            break
+                        continue
                     except Exception:
                         break
 
@@ -756,6 +793,10 @@ class HardwareTelemetryWorker:
                 gpu_throttling_reasons = 0
                 pcie_bus_utilization = 0.0
                 self._init_nvml()
+
+            # 【PresentMon 门控】GPU 占用高=有游戏/3D 在跑，记录时刻供 PresentMon 看门狗判断是否该运行。
+            if gpu_usage is not None and gpu_usage > self.RENDER_GPU_THRESHOLD:
+                self._last_render_ts = time.monotonic()
 
             with self.pdh_lock:
                 self.cached_pdh_data["cpu_mhz"] = cpu_mhz
