@@ -934,11 +934,11 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.system_dpc_latency) AS \"系统 DPC 延迟 (μs)\",\n  AVG(hw.system_context_switches) AS \"系统上下文切换次数/秒\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.system_dpc_latency) AS \"系统 调度抖动 (μs)\",\n  AVG(hw.system_context_switches) AS \"系统上下文切换次数/秒\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
-      "title": "系统延迟与系统调用压力 (DPC Latency & Context Switches)",
+      "title": "用户态调度抖动与上下文切换压力",
       "type": "timeseries"
     },
     {
@@ -1396,7 +1396,7 @@
           "refId": "A"
         }
       ],
-      "title": "内存压力与换页压力 (RAM & Commit & Page Faults)",
+      "title": "内存压力与换页压力",
       "type": "timeseries"
     },
     {
@@ -1469,7 +1469,7 @@
           "refId": "A"
         }
       ],
-      "title": "磁盘最高响应延迟 (Max Disk Latency)",
+      "title": "磁盘最高响应延迟",
       "type": "timeseries"
     },
     {
@@ -1588,11 +1588,11 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.network_ping_ms) AS \"Ping 延迟 (ms)\",\n  AVG(hw.network_jitter) AS \"网络抖动 Jitter (ms)\",\n  AVG(hw.is_packet_loss * 100.0) AS \"实时丢包率 (%)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    COALESCE(GREATEST($__timeFrom()::timestamptz, MIN(timestamp)), $__timeFrom()::timestamptz) AS range_start,\n    COALESCE(LEAST($__timeTo()::timestamptz, MAX(timestamp)), $__timeTo()::timestamptz) AS range_end\n  FROM public.fact_system_hardware\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n),\ntime_grid AS (\n  SELECT generate_series(\n    b.range_start,\n    b.range_end,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n)\nSELECT \n  g.grid_time AS \"time\",\n  AVG(hw.network_ping_ms) AS \"网络延迟 (ms)\",\n  AVG(hw.network_jitter) AS \"网络抖动 (ms)\",\n  AVG(hw.is_packet_loss * 100.0) AS \"实时丢包率 (%)\"\nFROM time_grid g\nLEFT JOIN public.fact_system_hardware hw ON hw.timestamp >= g.grid_time \n  AND hw.timestamp < g.grid_time + GREATEST(interval '3 seconds', ('$__interval')::interval)\nGROUP BY 1\nORDER BY 1;",
           "refId": "A"
         }
       ],
-      "title": "网络质量心电图 (Ping & Jitter & Packet Loss)",
+      "title": "网络质量心电图",
       "type": "timeseries"
     }
   ],
@@ -1609,5 +1609,5 @@
   "timezone": "browser",
   "title": "🌡️ 硬件温控与能效大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 9
+  "version": 12
 }
