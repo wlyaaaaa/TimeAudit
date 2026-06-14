@@ -3080,6 +3080,90 @@
       "timeFrom": "now-$aging_window",
       "title": "CPU 散热老化与能效衰减趋势 (负载均值)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "custom": {
+            "align": "auto",
+            "cellOptions": {
+              "type": "auto"
+            },
+            "filterable": true,
+            "inspect": true
+          },
+          "overrides": [
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "占用物理空间"
+              },
+              "properties": [
+                {
+                  "id": "custom.width",
+                  "value": 180
+                }
+              ]
+            },
+            {
+              "matcher": {
+                "id": "byName",
+                "options": "记录行数 (估算)"
+              },
+              "properties": [
+                {
+                  "id": "custom.cellOptions",
+                  "value": {
+                    "mode": "gradient",
+                    "type": "gauge"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 24,
+        "x": 0,
+        "y": 63
+      },
+      "id": 99,
+      "options": {
+        "cellHeight": "sm",
+        "footer": {
+          "countRows": false,
+          "fields": "",
+          "reducer": [
+            "sum"
+          ],
+          "show": false
+        },
+        "showHeader": true,
+        "sortBy": []
+      },
+      "pluginVersion": "13.0.2",
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "table",
+          "rawSql": "WITH partition_stats AS (\n  SELECT\n    'time_audit (当前数据库)' AS name,\n    pg_database_size('time_audit') AS size_bytes,\n    (SELECT SUM(reltuples)::bigint FROM pg_class WHERE relkind = 'r' AND (relname LIKE 'fact_%' OR relname = 'app_usage_logs')) AS est_rows,\n    '📁 数据库级' AS level_type\n  UNION ALL\n  SELECT\n    child.relname AS name,\n    pg_total_relation_size(child.oid) AS size_bytes,\n    child.reltuples::bigint AS est_rows,\n    CASE \n      WHEN parent.relname = 'fact_process_activity' THEN '⚡ 进程活跃度分表 (按周)'\n      WHEN parent.relname = 'fact_process_context' THEN '🪟 前台聚焦分表 (按周)'\n      WHEN parent.relname = 'fact_system_hardware' THEN '💻 整机硬件分表 (按月)'\n      ELSE '📦 其他子分区'\n    END AS level_type\n  FROM pg_inherits\n  JOIN pg_class parent ON pg_inherits.inhparent = parent.oid\n  JOIN pg_class child ON pg_inherits.inhrelid = child.oid\n  WHERE parent.relname IN ('fact_process_activity', 'fact_process_context', 'fact_system_hardware')\n)\nSELECT\n  name AS \"数据表/分区\",\n  pg_size_pretty(size_bytes) AS \"占用物理空间\",\n  CASE WHEN est_rows < 0 THEN 0 ELSE est_rows END AS \"记录行数 (估算)\",\n  level_type AS \"层级 / 类别\"\nFROM partition_stats\nORDER BY size_bytes DESC;",
+          "refId": "A"
+        }
+      ],
+      "title": "💾 TimeAudit 本地数据库存储与分区规模统计",
+      "type": "table"
     }
   ],
   "preload": false,
@@ -3200,5 +3284,5 @@
   "timezone": "browser",
   "title": "🖥️ 整机硬件能效与系统资源大盘",
   "uid": "b7d809e5-d072-4d24-ae23-c573bfcabc56",
-  "version": 32
+  "version": 33
 }
