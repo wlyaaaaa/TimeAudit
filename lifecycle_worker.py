@@ -406,7 +406,7 @@ class ProcessLifecycleWorker:
                         )
 
                     for pid, create_time in exited_keys:
-                        start_ts = self.pid_start_time.pop(pid, None)
+                        start_ts = self.pid_start_time.pop(pid, None) or create_time
                         lifetime_sec = int(time.time() - start_ts) if start_ts else None
 
                         exit_code_str = "0x00000000"
