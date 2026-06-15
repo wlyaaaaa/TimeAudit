@@ -6,7 +6,7 @@ tempFile = objShell.ExpandEnvironmentStrings("%TEMP%\time_audit_status.txt")
 errLog = objShell.ExpandEnvironmentStrings("%TEMP%\time_audit_powershell_error.log")
 
 ' 运行 powershell 并重定向 stderr 到 errLog，如果出错可以查看
-psCommand = "cmd /c powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File E:\TimeAudit\check_status_gui.ps1 2> \"" & errLog & "\""
+psCommand = "cmd /c powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File E:\TimeAudit\check_status_gui.ps1 2> """ & errLog & """""
 exitCode = objShell.Run(psCommand, 0, True)
 
 If objFSO.FileExists(tempFile) Then
