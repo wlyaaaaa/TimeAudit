@@ -353,7 +353,8 @@ class HardwareTelemetryWorker:
                     process = subprocess.Popen(
                         cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1,
                         startupinfo=startupinfo,            # 注入底层配置(SW_HIDE)
-                        creationflags=subprocess.CREATE_NO_WINDOW  # 彻底杜绝控制台窗体一闪而过抢焦点
+                        creationflags=subprocess.CREATE_NO_WINDOW,  # 彻底杜绝控制台窗体一闪而过抢焦点
+                        cwd=script_dir
                     )
                     self.presentmon_process = process
                 except Exception as e:
@@ -566,7 +567,8 @@ class HardwareTelemetryWorker:
                                 startupinfo.wShowWindow = 0
                                 lhm_process = subprocess.Popen(
                                     [lhm_path], startupinfo=startupinfo,
-                                    creationflags=subprocess.CREATE_NO_WINDOW
+                                    creationflags=subprocess.CREATE_NO_WINDOW,
+                                    cwd=os.path.dirname(lhm_path)
                                 )
                                 print("[🛸 硬件探针] 伴随驱动进程缺失，自动看门狗已隐藏复活 LibreHardwareMonitor。")
                             except Exception as e:
