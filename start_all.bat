@@ -1,29 +1,27 @@
 @echo off
 :: ==========================================
-:: ğŸš€ ä¸ªäººå·¥æ—¶æ•°ä»“ - å®¿ä¸»æœºå¼€æœºè‡ªå¯å®ˆæŠ¤è„šæœ¬
+:: ¸öÈË¹¤Ê±Êı²Ö - ËŞÖ÷»ú¿ª»ú×ÔÆôÊØ»¤½Å±¾
 :: ==========================================
-chcp 65001 >nul
 set PROJECT_DIR=E:\TimeAudit
 
-echo [*] æ­£åœ¨æ‹‰èµ· AHK çŠ¶æ€æœºå†…æ ¸...
+echo [*] ÕıÔÚÀ­Æğ AHK ×´Ì¬»úÄÚºË...
 start "" "%PROJECT_DIR%\TimeAudit.ahk"
 
-echo [*] æ­£åœ¨å¼•å¯¼æœ¬åœ° Docker å®¹å™¨ç¾¤...
+echo [*] ÕıÔÚÒıµ¼±¾µØ Docker ÈİÆ÷Èº...
 cd /d "%PROJECT_DIR%"
 docker compose up -d
 
-echo [*] æ­£åœ¨ç­‰å¾…æœ¬åœ°æ•°ä»“ç«¯å£ (55432) ç‰©ç†å°±ç»ª...
+echo [*] ÕıÔÚµÈ´ı±¾µØÊı²Ö¶Ë¿Ú (55432) ÎïÀí¾ÍĞ÷...
 :WAIT_DB
 timeout /t 1 >nul
 netstat -ano | findstr 55432 >nul
 if %errorlevel% neq 0 (
     goto WAIT_DB
 )
-echo [+] æ•°æ®åº“ç‰©ç†ç«¯å£å·²å°±ä½ã€‚
+echo [+] Êı¾İ¿âÎïÀí¶Ë¿ÚÒÑ¾ÍÎ»¡£
 
-echo [*] æ­£åœ¨ä»¥ã€å®Œå…¨éšå½¢å®ˆæŠ¤æ¨¡å¼ + ç®¡ç†å‘˜ç‰¹æƒã€‘æ‹‰èµ· Python é¥æµ‹æ ¸å¿ƒ...
-:: ğŸŸ¢ ä¿®å¤ï¼šä½¿ç”¨ç»å¯¹ç‰©ç†è·¯å¾„çš„ pythonw.exe é…åˆ -WorkingDirectoryï¼Œè§„é¿è®¡åˆ’ä»»åŠ¡ææƒè¿è¡Œæ—¶ç¯å¢ƒå˜é‡ç¼ºå¤±å¯¼è‡´çš„é—ªé€€ï¼Œå¹¶å½»åº•æ— çª—å£è¿è¡Œ
-powershell -WindowStyle Hidden -Command "Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs"
+echo [*] ÕıÔÚÒÔ¡¾ÍêÈ«ÒşĞÎÊØ»¤Ä£Ê½ + ¹ÜÀíÔ±ÌØÈ¨¡¿À­Æğ Python Ò£²âºËĞÄ...
+powershell -WindowStyle Hidden -Command "$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); if ($isAdmin) { Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden } else { Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs }"
 
-echo [+] å¼€æœºè‡ªå¯å®ˆæŠ¤ç®¡çº¿å¼•å¯¼å®Œæ¯•ã€‚
+echo [+] ¿ª»ú×ÔÆôÊØ»¤¹ÜÏßÒıµ¼Íê±Ï¡£
 exit

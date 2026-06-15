@@ -307,17 +307,13 @@ class TelemetryEngineTestSuite(unittest.TestCase):
     def test_04_rtx_5080_blackwell_gddr7_hotspot_safety_clamp(self):
         print("\n[TEST-04] 正确性验证：RTX 5080 显存颗粒温控与 Hotspot 合并限制测试...")
         
-        worker = HardwareTelemetryWorker()
-        worker.nvml_initialized = True
-        worker.gpu_handle = MagicMock()
-        
-        # 模拟 NVML 物理读取接口，将其进行全防御式 Monkey-Patch。
+        # 模拟 NVML 物理读取接口，将其进行全防御的 Monkey-Patch
         import pynvml
         orig_get_util = pynvml.nvmlDeviceGetUtilizationRates
         orig_get_temp = pynvml.nvmlDeviceGetTemperature
         orig_get_power = pynvml.nvmlDeviceGetPowerUsage
         orig_get_throttle = pynvml.nvmlDeviceGetCurrentClocksThrottleReasons
-        # 同 test_01：必须连同新名 EventReasons 一起 mock，否则真实函数收到 MagicMock 假句柄会 C 层硬崩。
+        # 与 test_01 一致：必须连同新增 EventReasons 一起 mock，否则真实函数收到 MagicMock 假句柄会 C 层硬崩溃
         orig_get_event = getattr(pynvml, "nvmlDeviceGetCurrentClocksEventReasons", None)
         orig_get_clock = pynvml.nvmlDeviceGetClockInfo
         orig_get_pcie = pynvml.nvmlDeviceGetPcieThroughput
@@ -341,7 +337,11 @@ class TelemetryEngineTestSuite(unittest.TestCase):
         pynvml.nvmlDeviceGetClockInfo = MagicMock(return_value=2500)
         pynvml.nvmlDeviceGetPcieThroughput = MagicMock(return_value=10000)
         
+        worker = None
         try:
+            worker = HardwareTelemetryWorker()
+            worker.nvml_initialized = True
+            worker.gpu_handle = MagicMock()
             # 直接调用确定性的纯采样方法，而非 collect_hardware_snapshot —— 后者返回的 GPU 字段由后台
             # pdh_thread 异步刷入 cached_pdh_data，测试 monkey-patch 与后台线程节拍存在竞态(旧版因此恒读到
             # 初值 0.0 而失败)，且 collect 还会用 LHM 真实热点覆盖。_sample_nvml_gpu_metrics 同步内联了
@@ -361,7 +361,8 @@ class TelemetryEngineTestSuite(unittest.TestCase):
                 pynvml.nvmlDeviceGetCurrentClocksEventReasons = orig_get_event
             pynvml.nvmlDeviceGetClockInfo = orig_get_clock
             pynvml.nvmlDeviceGetPcieThroughput = orig_get_pcie
-            worker.terminate()
+            if worker is not None:
+                worker.terminate()
 
         print(f" ✅  显存结温极限合并保护校验通过！Core: {metrics['gpu_core_temp']}°C | Hotspot: {metrics['gpu_hotspot_temp']}°C (已准确融合 GDDR7 高热红线)")
 

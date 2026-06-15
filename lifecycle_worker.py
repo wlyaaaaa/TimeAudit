@@ -68,6 +68,9 @@ WTD_CHOICE_FILE = 1
 WTD_STATEACTION_VERIFY = 1
 WTD_STATEACTION_CLOSE = 2
 
+wintrust_dll.WinVerifyTrust.argtypes = [wintypes.HWND, ctypes.c_void_p, ctypes.c_void_p]
+wintrust_dll.WinVerifyTrust.restype = wintypes.LONG
+
 wintrust_dll.CryptCATAdminAcquireContext.argtypes = [ctypes.POINTER(wintypes.HANDLE), ctypes.c_void_p, wintypes.DWORD]
 wintrust_dll.CryptCATAdminAcquireContext.restype = wintypes.BOOL
 

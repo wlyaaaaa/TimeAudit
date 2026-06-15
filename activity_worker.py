@@ -15,6 +15,7 @@ import threading
 import time
 
 from lifecycle_worker import check_process_elevation, check_file_signature
+from hardware_worker import NVML_LOCK
 
 class UNICODE_STRING(ctypes.Structure):
     _fields_ = [
@@ -262,18 +263,19 @@ class ProcessActivityWorker:
             pass
 
     def _init_nvml(self):
-        try:
-            pynvml.nvmlInit()
-            self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            self.nvml_initialized = True
+        with NVML_LOCK:
             try:
-                # 整卡显存容量，用作每进程专用显存的物理上限。WDDM 下 PDH 的 Dedicated Usage 对
-                # dwm 合成器等会聚合上报远超物理显存的虚高值(实测 dwm 达 68GB)，必须按此上限钳制。
-                self.gpu_total_vram_gb = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle).total / (1024 ** 3)
-            except Exception:
-                pass
-        except:
-            self.nvml_initialized = False
+                pynvml.nvmlInit()
+                self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                self.nvml_initialized = True
+                try:
+                    # 整卡显存容量，用作每进程专用显存的物理上限。WDDM 下 PDH 的 Dedicated Usage 对
+                    # dwm 合成器等会聚合上报远超物理显存的虚高值(实测 dwm 达 68GB)，必须按此上限钳制。
+                    self.gpu_total_vram_gb = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle).total / (1024 ** 3)
+                except Exception:
+                    pass
+            except:
+                self.nvml_initialized = False
 
     @staticmethod
     def _pdh_add_counter(pdh, query, path):
@@ -533,7 +535,8 @@ class ProcessActivityWorker:
                         cap_gb = self.gpu_total_vram_gb
                         try:
                             if self.nvml_initialized:
-                                used_gb = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle).used / (1024 ** 3)
+                                with NVML_LOCK:
+                                    used_gb = pynvml.nvmlDeviceGetMemoryInfo(self.gpu_handle).used / (1024 ** 3)
                                 if used_gb > 0:
                                     cap_gb = min(cap_gb, used_gb) if cap_gb > 0 else used_gb
                         except Exception:
@@ -569,20 +572,21 @@ class ProcessActivityWorker:
                 # 【核心修复】：WDDM 模式下 usedGpuMemory 恒为 None，原代码对 None 做除法
                 # 抛出 TypeError 后整轮采集被吞掉，导致显存/GPU 利用率永远为 0。
                 # 此处 NVML 仅作为兜底数据源（TCC/MIG 模式下才有值），并对两个接口分别做异常隔离。
-                try:
-                    for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
-                        if nv_proc.usedGpuMemory:
-                            temp_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
-                except Exception:
-                    pass
-                try:
-                    util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
-                    for sample in util_samples:
-                        util = getattr(sample, 'gpuUtil', None)
-                        if util is not None:
-                            temp_gpu_util_map[sample.pid] = float(util)
-                except Exception:
-                    pass
+                with NVML_LOCK:
+                    try:
+                        for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
+                            if nv_proc.usedGpuMemory:
+                                temp_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                    except Exception:
+                        pass
+                    try:
+                        util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
+                        for sample in util_samples:
+                            util = getattr(sample, 'gpuUtil', None)
+                            if util is not None:
+                                temp_gpu_util_map[sample.pid] = float(util)
+                    except Exception:
+                        pass
             else:
                 self._init_nvml()
 
@@ -673,20 +677,21 @@ class ProcessActivityWorker:
             system_recv_rate = self.system_net_recv_rate
 
         if not local_vram_map and self.nvml_initialized:
-            try:
-                for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
-                    if nv_proc.usedGpuMemory:
-                        local_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
-            except Exception:
-                pass
-            try:
-                util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
-                for sample in util_samples:
-                    util = getattr(sample, 'gpuUtil', None)
-                    if util is not None:
-                        local_gpu_util_map[sample.pid] = float(util)
-            except Exception:
-                pass
+            with NVML_LOCK:
+                try:
+                    for nv_proc in pynvml.nvmlDeviceGetGraphicsRunningProcesses(self.gpu_handle):
+                        if nv_proc.usedGpuMemory:
+                            local_vram_map[nv_proc.pid] = nv_proc.usedGpuMemory / (1024 ** 3)
+                except Exception:
+                    pass
+                try:
+                    util_samples = pynvml.nvmlDeviceGetProcessUtilization(self.gpu_handle, 0)
+                    for sample in util_samples:
+                        util = getattr(sample, 'gpuUtil', None)
+                        if util is not None:
+                            local_gpu_util_map[sample.pid] = float(util)
+                except Exception:
+                    pass
 
         proc_list = fetch_system_processes()
         

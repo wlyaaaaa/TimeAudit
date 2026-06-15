@@ -32,6 +32,11 @@ LIMIT_REASON_HW_THERMAL = 0x0000000000000040
 NVML_CLOCK_GRAPHICS = getattr(pynvml, 'NVML_CLOCK_GRAPHICS', 0)
 NVML_CLOCK_MEM = getattr(pynvml, 'NVML_CLOCK_MEM', 2)
 
+# ==========================================
+# 【新增】：全局 NVML 互斥锁，序列化所有 NVML 相关的 C 语言底层跨线程调用
+# ==========================================
+NVML_LOCK = threading.Lock()
+
 class DpcLatencyChecker:
     def __init__(self):
         self.max_jitter_us = 0.0
@@ -155,14 +160,15 @@ class HardwareTelemetryWorker:
         atexit.register(self.terminate)
 
     def _init_nvml(self):
-        try:
-            pynvml.nvmlInit()
-            self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
-            self.nvml_initialized = True
-            print("[🛸 硬件探针] NVIDIA NVML 驱动内核初始化成功。")
-        except Exception as e:
-            print(f"[⚠️ 硬件探针] 显卡驱动初始化暂歇性失败: {e}")
-            self.nvml_initialized = False
+        with NVML_LOCK:
+            try:
+                pynvml.nvmlInit()
+                self.gpu_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+                self.nvml_initialized = True
+                print("[🛸 硬件探针] NVIDIA NVML 驱动内核初始化成功。")
+            except Exception as e:
+                print(f"[⚠️ 硬件探针] 显卡驱动初始化暂歇性失败: {e}")
+                self.nvml_initialized = False
 
     def _init_pdh_cppc_engine(self):
         try:
@@ -671,38 +677,39 @@ class HardwareTelemetryWorker:
         }
         if not self.nvml_initialized:
             return res
-        try:
-            res["gpu_usage"] = float(pynvml.nvmlDeviceGetUtilizationRates(self.gpu_handle).gpu)
-            core_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 0))
-            res["gpu_core_temp"] = core_temp
-
-            mem_temp = None
+        with NVML_LOCK:
             try:
-                mem_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 1))
-            except Exception:
-                pass
-            hotspot = core_temp + 12.0
-            if mem_temp is not None:
-                hotspot = max(hotspot, mem_temp)
-            res["gpu_hotspot_temp"] = hotspot
+                res["gpu_usage"] = float(pynvml.nvmlDeviceGetUtilizationRates(self.gpu_handle).gpu)
+                core_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 0))
+                res["gpu_core_temp"] = core_temp
 
-            res["gpu_board_power"] = float(pynvml.nvmlDeviceGetPowerUsage(self.gpu_handle)) / 1000.0
-            res["gpu_core_clock"] = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS))
-            # 列类型为 integer，NVML 返回真实显存时钟(MHz)；去掉旧的 smallint(32767)截断 bug。
-            mem_clock = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM))
-            res["gpu_mem_clock"] = mem_clock if 0 <= mem_clock <= 100000 else 0
+                mem_temp = None
+                try:
+                    mem_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 1))
+                except Exception:
+                    pass
+                hotspot = core_temp + 12.0
+                if mem_temp is not None:
+                    hotspot = max(hotspot, mem_temp)
+                res["gpu_hotspot_temp"] = hotspot
 
-            # 占位：下游 collect_hardware_snapshot 用 LHM 真实核心电压覆盖(NVML 在 GeForce 无法提供)。
-            res["gpu_core_voltage"] = 0.0
-            # 易在特定驱动/版本上抛异常的非核心调用——各自隔离，绝不连累上面已取得的核心指标。
-            res["gpu_throttling_reasons"] = self._read_gpu_throttle_reasons()
-            res["pcie_bus_utilization"] = self._read_gpu_pcie_util()
-        except Exception:
-            try:
-                pynvml.nvmlShutdown()
+                res["gpu_board_power"] = float(pynvml.nvmlDeviceGetPowerUsage(self.gpu_handle)) / 1000.0
+                res["gpu_core_clock"] = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS))
+                # 列类型为 integer，NVML 返回真实显存时钟(MHz)；去掉旧的 smallint(32767)截断 bug。
+                mem_clock = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM))
+                res["gpu_mem_clock"] = mem_clock if 0 <= mem_clock <= 100000 else 0
+
+                # 占位：下游 collect_hardware_snapshot 用 LHM 真实核心电压覆盖(NVML 在 GeForce 无法提供)。
+                res["gpu_core_voltage"] = 0.0
+                # 易在特定驱动/版本上抛异常的非核心调用——各自隔离，绝不连累上面已取得的核心指标。
+                res["gpu_throttling_reasons"] = self._read_gpu_throttle_reasons()
+                res["pcie_bus_utilization"] = self._read_gpu_pcie_util()
             except Exception:
-                pass
-            self.nvml_initialized = False
+                try:
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    pass
+                self.nvml_initialized = False
         return res
 
     def _background_pdh_loop(self):
@@ -1027,8 +1034,9 @@ class HardwareTelemetryWorker:
             self.pdh_thread = None
 
         if self.nvml_initialized:
-            try:
-                pynvml.nvmlShutdown()
-            except Exception:
-                pass
-            self.nvml_initialized = False
+            with NVML_LOCK:
+                try:
+                    pynvml.nvmlShutdown()
+                except Exception:
+                    pass
+                self.nvml_initialized = False
