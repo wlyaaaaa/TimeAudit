@@ -225,6 +225,15 @@
 
 17. **`collect_active_processes()` 在主循环里用 `await asyncio.to_thread(...)` 调，别改回同步直调。** `psutil.cmdline()` 对启动中/受保护进程会触发 `ERROR_PARTIAL_COPY` 的内部重试 `sleep`（单拍累计可达 0.5–1 秒）。这是同步 `sleep`，若直接在事件循环线程里跑会**冻结整个引擎**（阻塞 lifecycle 事件处理与连接自愈）。放进工作线程后，这段 sleep 不再卡住 event loop。
 
+18. **`SafeStdoutWrapper` 独占锁定与多实例并发冷启动冲突。**
+    当有多个实例或后台进程（如手动启动的同时计划任务也在拉起实例）试图在非常短的时间内同时打开 `telemetry.log` 时，会导致文件写操作的独占锁争用，抛出 `PermissionError`（拒绝访问）。主程序的 `SafeStdoutWrapper` 在类初始化中对此进行了 `try/except` 自愈防护以规避因日志句柄初始化失败导致的进程崩溃，但最佳实践仍是依赖单例锁（`enforce_singleton`）踢掉旧实例，避免多个实例长期并发双写。
+
+19. **计划任务提权启动的 Python 解释器绝对路径与 `-WorkingDirectory` 强依赖。**
+    在 Windows 计划任务中以最高权限（Highest Privilege）拉起脚本时，由于运行环境不包含完整的用户 PATH 变量，如果使用普通 `python` 命令行，或者未显式设置 WorkingDirectory，经常会导致解释器闪退或因为相对路径偏移找不到外部依赖（如 `LibreHardwareMonitor.config`）。必须始终使用 Python 解释器的**绝对物理路径**（如 `C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe`），并且在计划任务中指定“起始于”（Start in）为项目根目录 `E:\TimeAudit`。
+
+20. **分区大表查询强制裁剪下推（Grafana SQL 核心调优）。**
+    数据库内 `fact_process_activity`（活跃进程表）是高频时序数据，运行三年后将积累数千万行数据。为避免全表扫描或全分区扫描拖垮数据库甚至导致 Grafana 面板超时卡死，在编写或修改任何针对该表（及其他分区表）的 SQL 查询时，**必须在 WHERE 子句中显式加上时间下界**（如 `timestamp >= $__timeFrom()` 或带有明确的时间间隔偏移）。若有 JOIN 查询，在 JOIN 条件中也必须将关联时间下界下推，确保 PostgreSQL 的优化器百分之百进行“分区剪裁”（Partition Pruning）。
+
 ---
 
 ## 8. 怎么跑起来 / 怎么看数据 / 怎么排查

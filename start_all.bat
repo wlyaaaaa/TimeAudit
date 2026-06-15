@@ -22,8 +22,8 @@ if %errorlevel% neq 0 (
 echo [+] 数据库物理端口已就位。
 
 echo [*] 正在以【完全隐形守护模式 + 管理员特权】拉起 Python 遥测核心...
-:: 🟢 修复：将 -Verb RunAs 正确收入双引号内，确保无窗拉起的同时触发 Windows 管理员权限
-powershell -WindowStyle Hidden -Command "Start-Process python -ArgumentList '%PROJECT_DIR%\main.py' -WindowStyle Hidden -Verb RunAs"
+:: 🟢 修复：使用绝对物理路径的 pythonw.exe 配合 -WorkingDirectory，规避计划任务提权运行时环境变量缺失导致的闪退，并彻底无窗口运行
+powershell -WindowStyle Hidden -Command "Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs"
 
 echo [+] 开机自启守护管线引导完毕。
 exit
