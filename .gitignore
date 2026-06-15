@@ -7,6 +7,13 @@ __pycache__/
 *.pyc
 time_audit_perfect_archive.sql
 
+# 采集进程 PID 文件：内容随每次重启变化，仅本地信息记录，不进版本库
+time_audit.pid
+
+# 本次维护的临时调试脚本/转储，不进版本库
+tmp_*.py
+tmp_*.txt
+
 # 数据库备份（本地/异地保存，不进版本库）
 backups/
 

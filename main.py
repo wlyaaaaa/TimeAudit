@@ -9,8 +9,9 @@ import os
 import time
 import asyncpg
 import psutil
-import ctypes  
+import ctypes
 import threading
+import re
 
 # ==========================================
 # 【保留】：全局日志路径定义
@@ -78,6 +79,11 @@ from lifecycle_worker import ProcessLifecycleWorker
 
 DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
 WARMUP_INTERVAL_SEC = 43200
+# 【数据保留 / 三年可行性】高频明细 fact_process_activity 约 2GB/周，三年约 312GB；E 盘 2.3TB 余量充足，
+# 故运行三年完全可行、且无需中途清理。RETENTION_DAYS 仅作超长期 7x24 运行的"防磁盘爆满"兜底底线：
+# 自动 DROP 分区上界早于该天数的周/月子分区，并清理两张非分区表(生命周期事件、AHK 工时)的超期行。
+# 默认 1200 天(≈3.3 年) > 3 年，故运行三年内绝不触发任何删除；置 0 可彻底禁用保留清理(永久保留全史)。
+RETENTION_DAYS = 1200
 # 墙钟跨度超过此值即判定刚从系统睡眠/休眠(S3/S4)唤醒。正常节拍约 3s，故 60s 阈值不会被 GC/DB 抖动误触，
 # 而真实睡眠必远超之。用墙钟(time.time())而非 asyncio 的 monotonic 时钟——后者在系统睡眠时会暂停，
 # 旧的 monotonic 跳变侦测因此是永不触发的死代码(Bug1)。
@@ -178,6 +184,43 @@ async def auto_warmup_partitions(pool):
             await conn.execute(query)
         print("[✅ 预热引擎] 当期及未来分区舱室绑定完毕！")
 
+async def auto_retention_cleanup(pool):
+    """【数据保留兜底】超长期 7x24 运行时自动清理超过 RETENTION_DAYS 的历史，防止磁盘被高频明细无限撑爆。
+    用分区的真实上界(绝对 timestamptz)与 cutoff 比较，只 DROP 整段早于保留期的旧周/月分区(元数据级瞬时操作、
+    不产生表膨胀)，绝不误删当期/未来分区；两张非分区表则按时间戳 DELETE 超期行。RETENTION_DAYS=1200(≈3.3 年)
+    时三年内绝不触发。任何异常都吞掉、绝不影响采集主循环。"""
+    if RETENTION_DAYS <= 0:
+        return
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=RETENTION_DAYS)
+    try:
+        async with pool.acquire() as conn:
+            rows = await conn.fetch("""
+                SELECT child.relname AS name, pg_get_expr(child.relpartbound, child.oid) AS bound
+                FROM pg_inherits i
+                JOIN pg_class child ON child.oid = i.inhrelid
+                JOIN pg_class parent ON parent.oid = i.inhparent
+                WHERE parent.relname IN ('fact_process_activity','fact_process_context','fact_system_hardware')
+            """)
+            dropped = 0
+            for r in rows:
+                m = re.search(r"TO \('([^']+)'\)", r["bound"] or "")
+                if not m:
+                    continue
+                try:
+                    upper = datetime.datetime.fromisoformat(m.group(1))
+                except ValueError:
+                    continue
+                if upper <= cutoff:
+                    await conn.execute(f'DROP TABLE IF EXISTS public."{r["name"]}"')
+                    dropped += 1
+                    print(f"[{datetime.datetime.now().strftime('%X')} 🗑️ 保留策略] 已删除超 {RETENTION_DAYS} 天保留期的旧分区 {r['name']} (上界 {upper})")
+            await conn.execute("DELETE FROM public.fact_process_lifecycle_events WHERE event_timestamp < $1", cutoff)
+            await conn.execute("DELETE FROM public.app_usage_logs WHERE start_time < $1", cutoff)
+            if dropped:
+                print(f"[✅ 保留策略] 本轮共回收 {dropped} 个超期分区。")
+    except Exception as e:
+        print(f"[保留策略] 清理跳过(非致命): {e}")
+
 async def cleanup_orphan_context_sessions(pool):
     """【Bug4 修复】启动时闭合上次"关机/崩溃被强杀"遗留的前台 slice：这些行 end_timestamp 永久为 NULL，
     在 Grafana 里会变成"永不结束"的幽灵会话并不断堆积(开机当下库内已实测有 5 条)。无从得知真实结束时刻，
@@ -202,6 +245,14 @@ async def cleanup_orphan_context_sessions(pool):
 
 async def main():
     _singleton_mutex = enforce_singleton()
+
+    # 写入自身真实 PID 到 time_audit.pid，供外部运维/状态检查脚本读取当前采集进程号(单例由内核互斥体
+    # 保证唯一，此文件仅作信息记录)。此前该文件无人维护、内容长期是过期 PID；写失败不影响采集。
+    try:
+        with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "time_audit.pid"), "w") as _pf:
+            _pf.write(str(os.getpid()))
+    except Exception:
+        pass
 
     print("====================================================")
     print(f"🚀 Windows 11 Native Telemetry Engine 正在拉起... [PID: {os.getpid()}]")
@@ -281,6 +332,9 @@ async def main():
                 except Exception as e:
                     print(f"❌ 警告: 自动分区预热失败, 详情: {e}")
 
+                # 与分区预热同周期(12h)执行数据保留兜底清理(三年内不触发，仅超长期防磁盘爆满)
+                await auto_retention_cleanup(pool)
+
                 try:
                     safe_logger.truncate_log(50)
                 except Exception:
@@ -319,7 +373,11 @@ async def main():
                 last_known_pid = None
 
             try:
-                active_procs = activity_worker.collect_active_processes()
+                # 【性能/实时性优化】collect_active_processes 内部 psutil.cmdline() 对启动中/受保护进程会触发
+                # ERROR_PARTIAL_COPY 内部重试 sleep(cProfile 实测单拍累计可达 ~0.5-1s)。放到工作线程执行，
+                # 避免这段同步 sleep 冻结整个 asyncio 事件循环(否则会阻塞 lifecycle 事件处理与连接自愈)。
+                # 其访问的跨线程缓存已由 cache_lock 保护；主线程独占缓存仍按 await 序列访问、无并发风险。
+                active_procs = await asyncio.to_thread(activity_worker.collect_active_processes)
                 hw_data = hardware_worker.collect_hardware_snapshot(fg_app_name)
                 
                 await asyncio.gather(

@@ -150,7 +150,9 @@
 - `gpu_throttling_reasons`：GPU 降频原因的二进制位（撞功耗墙/温度墙等）。
 - `duration_ms`：前台窗口连续聚焦的毫秒数。**注意**：跨睡眠/锁屏的会话会被引擎截断，不会把睡觉时间算成"在用"。
 
-> 完整建表语句见 **[schema.sql](schema.sql)**（全新装机时用它建表）。
+> 完整建表语句见 **[schema.sql](schema.sql)**（全新装机时用它建表；含 `pg_trgm` 扩展与全部覆盖/局部索引）。
+
+**数据保留 / 三年可行性**：`fact_process_activity` 约 2GB/周，跑满三年约 **330GB**，对 E 盘（数 TB）完全无压力，**三年内无需任何清理**。`main.py` 里有个 `RETENTION_DAYS`（默认 **1200 天 ≈ 3.3 年**）兜底：每 12 小时随分区预热顺手 `DROP` 掉上界早于保留期的旧周/月分区、并删两张非分区表的超期行——**默认值大于 3 年，所以三年内绝不触发删除**；设成 `0` 可彻底关闭、永久留全史。
 
 ---
 
@@ -170,6 +172,8 @@
 - Grafana：浏览器开 `http://localhost:53000`。
 
 **PostgreSQL 性能配置写在 `docker-compose.yml` 的 `command:` 里**（不是 postgresql.conf）：`shared_buffers=2GB`、`work_mem=16MB`、`effective_cache_size=8GB`，以及 NVMe 友好的 `random_page_cost=1.1` / `effective_io_concurrency=200`；外加 `shm_size: '512mb'`（并行查询大分区时 `/dev/shm` 的上限，防 "could not resize shared memory segment ... No space left on device"）。改这些要编辑 compose 后 `docker compose up -d audit-db` 重建容器才生效。
+
+**容器时区锁定为 `Asia/Shanghai`**（compose `command:` 里的 `-c timezone=Asia/Shanghai`）。这是功耗大盘"今日/本周/本月"统计正确的前提——这些面板用 `date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai')` 当边界，若会话时区是 UTC，边界会整体偏移 8 小时（"今日能耗"会从早上 8 点才开始算）。**别删这行**，否则 `docker compose up -d` 重建后时区 bug 复现。
 
 > ⚠️ Grafana 里有 **3 个 PostgreSQL 数据源**，全部指向同一个 `time_audit` 库：硬件大盘用 `P7A9DAD60F8AB4C18`，其余大盘用 `bfoc1vymtgni8a`，还有一个 provisioning 注入的 `PostgreSQL` 没被引用。**不同大盘用不同 UID 不是 bug**（都连同一个库），别去「统一」它们，否则现有面板会断。
 
@@ -214,6 +218,12 @@
 14. **Grafana 面板 SQL 两个反复踩的坑（写大盘查询时注意）：**
     - **路径判定别用 `LIKE 'c:\windows\system32%'`。** PostgreSQL 的 `LIKE` 把 `\w`/`\s`/`\t` 当转义序列吃掉，路径里的反斜杠会失配——曾让"高危仿冒检测"把 172 个正常系统进程全误报。改用 `starts_with(lower(path),'c:\windows')` 或 `position('\temp\' in lower(path))>0`（不受 LIKE 转义影响）。
     - **`generate_series` 的时间网格起点必须对齐到桶边界。** 若用未对齐的 `$__timeFrom()`（带秒）生成 1 分钟网格，再去 `JOIN` 一张 `date_trunc('minute',...)`（落在 :00）的表，两边时间戳永不相等、联结全落空——曾让"前台 vs 后台争抢"前台恒为 0。网格起点用 `date_trunc('minute', $__timeFrom())`。
+
+15. **PG 会话时区锁 `Asia/Shanghai`，"本地日界"统计才正确。** 功耗大盘的"今日/本周/本月"用 `date_trunc(单位, now() AT TIME ZONE 'Asia/Shanghai')` 与 `timestamptz` 列比较；PG 默认会话时区是 UTC 时，无时区常量会被当 UTC 解释、边界整体偏移 8 小时。已在 `docker-compose.yml` 用 `-c timezone=Asia/Shanghai` 根治（比逐条改 78 个 SQL 更全，连"老化趋势"按日/周/月分组也一并对齐）。**别删这行 compose 配置。** 注：`$__timeFilter` / `$__timeFrom` 这类 Grafana 宏传的是绝对时刻，不受会话时区影响、本来就对。
+
+16. **每进程父进程名用「系统快照内的 pid→name 映射」解析，绝不用 `psutil.Process.parent()`。** 后者在 Windows 上每次调用都会全量重建 `ppid_map`（枚举所有进程）——`cProfile` 实测它占 `collect_active_processes` 总耗时的 **86%**（单拍约 1 秒）。`fetch_system_processes()`（`NtQuerySystemInformation`）的同一快照里早已带每个进程的 `ppid`，直接查 `pid_to_name` 即可，零额外系统调用、且同一快照内更自洽。改回 `proc.parent()` 会让采集瞬间慢回 1 秒。
+
+17. **`collect_active_processes()` 在主循环里用 `await asyncio.to_thread(...)` 调，别改回同步直调。** `psutil.cmdline()` 对启动中/受保护进程会触发 `ERROR_PARTIAL_COPY` 的内部重试 `sleep`（单拍累计可达 0.5–1 秒）。这是同步 `sleep`，若直接在事件循环线程里跑会**冻结整个引擎**（阻塞 lifecycle 事件处理与连接自愈）。放进工作线程后，这段 sleep 不再卡住 event loop。
 
 ---
 

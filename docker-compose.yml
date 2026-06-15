@@ -24,6 +24,15 @@ services:
       - "effective_io_concurrency=200"
       - "-c"
       - "max_parallel_workers_per_gather=2"
+      # 【时区修复】PG 默认会话时区=UTC，会让 "date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai')"
+      # 这类无时区常量与 timestamptz 列比较时偏移 8 小时(功耗舱今日/本周/本月电费能耗统计错位)。强制
+      # 会话时区为北京时间，使所有"本地日界"统计与硬件老化趋势(date_trunc 按日/周/月)正确对齐；分区
+      # 路由不受影响(分区边界用带 +08 的绝对 timestamptz 定义)，Grafana 时间宏($__timeFilter 等)也是
+      # 绝对时刻不受影响。采集端 main.py 用 datetime.now(timezone.utc) 写入，绝对时刻同样不受影响。
+      - "-c"
+      - "timezone=Asia/Shanghai"
+      - "-c"
+      - "log_timezone=Asia/Shanghai"
     environment:
       POSTGRES_USER: 'leyang'
       POSTGRES_PASSWORD: 'SecurePassword123'

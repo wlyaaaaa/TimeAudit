@@ -18,6 +18,11 @@
 --  日期分区子表(如 _y2026w24)由引擎的 auto_warmup_partitions 自动创建，这里不用写。
 -- ============================================================================
 
+-- ============================ 0. 必备扩展 ============================
+-- pg_trgm：供 app_usage_logs.window_title 的 GIN 三元组模糊检索索引(idx_logs_window_title_trgm)使用。
+-- 全新装机若缺此扩展，该 GIN 索引无法创建、窗口标题模糊搜索会退化为全表顺序扫描。
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+
 -- ============================ 1. 进程指纹维度表 ============================
 -- 每个"独一无二的程序身份"存一行：进程名 + 路径 + 命令行 + 父进程 + 是否提权 + 签名状态。
 -- 事实表用 process_key 这个整数外键指向它，避免每行都重复存长字符串。
@@ -81,6 +86,36 @@ CREATE INDEX IF NOT EXISTS idx_activity_is_not_responding
 CREATE INDEX IF NOT EXISTS idx_activity_proc_key_ts
     ON public.fact_process_activity (process_key, "timestamp");
 
+-- 覆盖索引(含网络字段+局部条件)：安全审计「网络流量大户/远端IP」面板只读索引不回表，且只索引有网络活动的行。
+CREATE INDEX IF NOT EXISTS idx_process_activity_network_covering
+    ON public.fact_process_activity ("timestamp", process_key, os_pid)
+    INCLUDE (proc_network_send_kb, proc_network_recv_kb, proc_active_connections, proc_remote_ip_port)
+    WHERE (proc_network_send_kb > 0 OR proc_network_recv_kb > 0 OR proc_active_connections > 0);
+
+-- 局部索引：仅索引有远端连接的行，加速「静默外联/高危端口」审计，避免全量明细扫描。
+CREATE INDEX IF NOT EXISTS idx_activity_network_partial_opt
+    ON public.fact_process_activity ("timestamp")
+    WHERE (proc_remote_ip_port IS NOT NULL AND proc_remote_ip_port <> ''::text);
+
+-- 局部索引：仅索引连到高危端口(22/3389/445/1433/3306/5432/5900/4444/5555)的行，专供横向移动/后门审计。
+CREATE INDEX IF NOT EXISTS idx_activity_high_risk_ports_opt
+    ON public.fact_process_activity ("timestamp")
+    WHERE (proc_remote_ip_port IS NOT NULL AND proc_remote_ip_port <> ''::text AND (
+        proc_remote_ip_port LIKE '%:22,%' OR proc_remote_ip_port LIKE '%:22' OR
+        proc_remote_ip_port LIKE '%:3389,%' OR proc_remote_ip_port LIKE '%:3389' OR
+        proc_remote_ip_port LIKE '%:445,%' OR proc_remote_ip_port LIKE '%:445' OR
+        proc_remote_ip_port LIKE '%:1433,%' OR proc_remote_ip_port LIKE '%:1433' OR
+        proc_remote_ip_port LIKE '%:3306,%' OR proc_remote_ip_port LIKE '%:3306' OR
+        proc_remote_ip_port LIKE '%:5432,%' OR proc_remote_ip_port LIKE '%:5432' OR
+        proc_remote_ip_port LIKE '%:5900,%' OR proc_remote_ip_port LIKE '%:5900' OR
+        proc_remote_ip_port LIKE '%:4444,%' OR proc_remote_ip_port LIKE '%:4444' OR
+        proc_remote_ip_port LIKE '%:5555,%' OR proc_remote_ip_port LIKE '%:5555'));
+
+-- 覆盖索引：「整机活跃进程数/线程总数」面板按时间扫描时只读索引取 process_key/线程数，免回表。
+CREATE INDEX IF NOT EXISTS idx_process_activity_ts_thread_covering_opt
+    ON public.fact_process_activity ("timestamp")
+    INCLUDE (process_key, proc_thread_count);
+
 
 -- ====================== 3. 前台上下文事实表（按周分区）====================
 -- 记录"哪个窗口在前台、标题是什么、聚焦了多久"。duration_ms 是该窗口连续聚焦的毫秒数。
@@ -99,6 +134,12 @@ CREATE TABLE IF NOT EXISTS public.fact_process_context (
 CREATE INDEX IF NOT EXISTS idx_process_context_grafana_covering
     ON public.fact_process_context (timestamp, is_foreground)
     INCLUDE (process_key, os_pid, window_title, duration_ms);
+
+-- 局部覆盖索引：仅索引前台行(is_foreground=1)，供「前台聚焦/资源争抢」类面板按时间快速取会话区间，免回表。
+CREATE INDEX IF NOT EXISTS idx_ctx_fg_ts_cov
+    ON public.fact_process_context ("timestamp")
+    INCLUDE (process_key, os_pid, end_timestamp)
+    WHERE (is_foreground = 1);
 
 -- ==================== 4. 进程生命周期事件表（不分区）====================
 -- 进程的"出生(START)"与"死亡(EXIT)"离散事件，EXIT 带退出码和存活秒数。
@@ -161,6 +202,10 @@ CREATE TABLE IF NOT EXISTS public.app_usage_logs (
     window_title     VARCHAR(500)
 );
 CREATE INDEX IF NOT EXISTS idx_logs_start_time ON public.app_usage_logs (start_time);
+-- 进程名 B-tree：屏幕使用时间大盘按 process_name 分类/过滤工时时加速。
+CREATE INDEX IF NOT EXISTS idx_logs_process ON public.app_usage_logs (process_name);
+-- 窗口标题 GIN 三元组：支撑「标题排行/最近显示」面板对 window_title 的模糊(LIKE/ILIKE)检索(依赖 pg_trgm)。
+CREATE INDEX IF NOT EXISTS idx_logs_window_title_trgm ON public.app_usage_logs USING gin (window_title gin_trgm_ops);
 
 -- ============================ 7. 归属权 ============================
 ALTER TABLE public.dim_process_registry          OWNER TO leyang;

@@ -96,7 +96,7 @@ class HardwareTelemetryWorker:
         
         self.active_foreground_app = ""
         self.last_ctx_switches = None
-        self.last_ts = asyncio.get_event_loop().time()
+        self.last_ts = time.monotonic()
         
         self.network_metrics = {"ping_ms": None, "packet_loss": False, "jitter": 0.0}
         
@@ -846,7 +846,7 @@ class HardwareTelemetryWorker:
 
     def collect_hardware_snapshot(self, foreground_app_name):
         self.active_foreground_app = foreground_app_name if foreground_app_name else ""
-        now_ts = asyncio.get_event_loop().time()
+        now_ts = time.monotonic()
         dt = max(0.001, now_ts - self.last_ts)
         self.last_ts = now_ts
         
