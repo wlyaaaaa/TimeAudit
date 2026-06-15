@@ -62,12 +62,12 @@ def find_edge():
     return None
 
 
-def md_to_pdf(edge, md_path, pdf_path):
+def md_to_pdf(edge, md_path, pdf_path, html_dir):
     with open(md_path, encoding="utf-8") as f:
         text = f.read()
     body = markdown.markdown(text, extensions=["tables", "fenced_code", "sane_lists", "toc"])
     html = HTML_TMPL.format(css=CSS, body=body)
-    html_path = os.path.join(ROOT, "_pdfbuild_tmp.html")
+    html_path = os.path.join(html_dir, "_pdfbuild_tmp.html")
     with open(html_path, "w", encoding="utf-8") as f:
         f.write(html)
     file_url = "file:///" + html_path.replace("\\", "/")
@@ -93,23 +93,74 @@ def md_to_pdf(edge, md_path, pdf_path):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="Convert Markdown files to PDF using Edge headless mode.")
+    parser.add_argument("--dir", default=ROOT, help="Working directory containing the markdown files")
+    parser.add_argument("--docs", nargs="+", default=None, help="List of markdown files to convert")
+    parser.add_argument("--git", action="store_true", help="Add, commit, and push generated PDFs to GitHub")
+    args = parser.parse_args()
+
     edge = find_edge()
     if not edge:
-        print("❌ 未找到 Edge/Chrome，无法生成 PDF"); return 1
+        print("❌ 未找到 Edge/Chrome，无法生成 PDF")
+        return 1
     print("使用浏览器内核:", edge)
+
+    target_dir = os.path.abspath(args.dir)
+    if args.docs is not None:
+        docs = args.docs
+    else:
+        if target_dir == ROOT:
+            docs = DOCS
+        else:
+            docs = [f for f in os.listdir(target_dir) if f.lower().endswith(".md") and not f.startswith("_")]
+            if not docs:
+                print(f"❌ 未在目录 {target_dir} 中找到 markdown 文件")
+                return 1
+
     ok = 0
-    for md in DOCS:
-        md_path = os.path.join(ROOT, md)
+    generated_pdfs = []
+    for md in docs:
+        md_path = os.path.join(target_dir, md)
         if not os.path.exists(md_path):
-            print(f"  ⚠️ 跳过(不存在): {md}"); continue
-        pdf_path = os.path.join(ROOT, os.path.splitext(md)[0] + ".pdf")
-        if md_to_pdf(edge, md_path, pdf_path):
+            print(f"  ⚠️ 跳过(不存在): {md}")
+            continue
+        pdf_path = os.path.join(target_dir, os.path.splitext(md)[0] + ".pdf")
+        if md_to_pdf(edge, md_path, pdf_path, target_dir):
             print(f"  ✅ {md} → {os.path.basename(pdf_path)}  ({os.path.getsize(pdf_path)//1024} KB)")
             ok += 1
+            generated_pdfs.append(pdf_path)
         else:
             print(f"  ❌ 生成失败: {md}")
-    print(f"完成：{ok}/{len(DOCS)} 个 PDF")
-    return 0 if ok == len(DOCS) else 1
+
+    print(f"完成：{ok}/{len(docs)} 个 PDF")
+
+    if args.git and ok > 0:
+        print("🚀 正在将 PDF 自动上传到 GitHub...")
+        pdf_names = [os.path.basename(p) for p in generated_pdfs]
+        try:
+            for pdf in pdf_names:
+                subprocess.run(["git", "add", pdf], cwd=target_dir, check=True)
+            status = subprocess.run(["git", "status", "--porcelain"], cwd=target_dir, capture_output=True, text=True, check=True)
+            has_changes = False
+            for line in status.stdout.splitlines():
+                line = line.strip()
+                if any(pdf in line for pdf in pdf_names):
+                    has_changes = True
+                    break
+
+            if has_changes:
+                commit_msg = f"docs: auto-generate PDFs for {', '.join(pdf_names)}"
+                subprocess.run(["git", "commit", "-m", commit_msg], cwd=target_dir, check=True)
+                subprocess.run(["git", "push"], cwd=target_dir, check=True)
+                print("✅ 成功推送 PDF 到 GitHub!")
+            else:
+                print("ℹ️ 无更新，PDF 文件内容未发生变化，无需推送。")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Git 操作失败: {e}")
+            return 1
+
+    return 0 if ok == len(docs) else 1
 
 
 if __name__ == "__main__":
