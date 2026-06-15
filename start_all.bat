@@ -1,27 +1,27 @@
 @echo off
 :: ==========================================
-:: ¸öÈË¹¤Ê±Êı²Ö - ËŞÖ÷»ú¿ª»ú×ÔÆôÊØ»¤½Å±¾
+:: è‡ªåŠ¨æ‹‰èµ·è„šæœ¬ - ç®¡ç†å‘˜ææƒè‡ªé€‚åº”ç‰ˆæœ¬
 :: ==========================================
 set PROJECT_DIR=E:\TimeAudit
 
-echo [*] ÕıÔÚÀ­Æğ AHK ×´Ì¬»úÄÚºË...
+echo [*] å¯åŠ¨ AHK å®ˆæŠ¤è¿›ç¨‹...
 start "" "%PROJECT_DIR%\TimeAudit.ahk"
 
-echo [*] ÕıÔÚÒıµ¼±¾µØ Docker ÈİÆ÷Èº...
+echo [*] å¯åŠ¨ Docker ä¾èµ–...
 cd /d "%PROJECT_DIR%"
 docker compose up -d
 
-echo [*] ÕıÔÚµÈ´ı±¾µØÊı²Ö¶Ë¿Ú (55432) ÎïÀí¾ÍĞ÷...
+echo [*] æ­£åœ¨ç­‰å¾…æ•°æ®åº“ç«¯å£ (55432) è”é€š...
 :WAIT_DB
-timeout /t 1 >nul
+ping -n 2 127.0.0.1 >nul
 netstat -ano | findstr 55432 >nul
 if %errorlevel% neq 0 (
     goto WAIT_DB
 )
-echo [+] Êı¾İ¿âÎïÀí¶Ë¿ÚÒÑ¾ÍÎ»¡£
+echo [+] æ•°æ®åº“ç«¯å£å·²ç»å°±ä½ï¼
 
-echo [*] ÕıÔÚÒÔ¡¾ÍêÈ«ÒşĞÎÊØ»¤Ä£Ê½ + ¹ÜÀíÔ±ÌØÈ¨¡¿À­Æğ Python Ò£²âºËĞÄ...
+echo [*] å¯åŠ¨åå°æ ¸å¿ƒå®ˆæŠ¤è¿›ç¨‹ + ææƒæ‹‰èµ· Python é¥æµ‹å¼•æ“...
 powershell -WindowStyle Hidden -Command "$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); if ($isAdmin) { Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden } else { Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs }"
 
-echo [+] ¿ª»ú×ÔÆôÊØ»¤¹ÜÏßÒıµ¼Íê±Ï¡£
+echo [+] å¼•æ“å¯åŠ¨æŒ‡ä»¤å·²ä¸‹å‘ï¼
 exit
