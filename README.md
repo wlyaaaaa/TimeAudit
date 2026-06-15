@@ -211,6 +211,10 @@
 
 13. **`is_not_responding` 用 `IsHungAppWindow`（任务管理器同源）判定，不是 `psutil.STATUS_STOPPED`。** 后者是 Unix 概念、Windows 上几乎永不为真（曾导致该字段恒为 0）。现由 `activity_worker._scan_hung_pids()` 每拍 `EnumWindows` 标记消息泵卡死(>5s)的窗口属主 PID，采集时 O(1) 查表。注意它必须跑在**用户交互会话**里（EnumWindows 才看得到用户窗口），所以引擎不能用 SYSTEM 账户跑。
 
+14. **Grafana 面板 SQL 两个反复踩的坑（写大盘查询时注意）：**
+    - **路径判定别用 `LIKE 'c:\windows\system32%'`。** PostgreSQL 的 `LIKE` 把 `\w`/`\s`/`\t` 当转义序列吃掉，路径里的反斜杠会失配——曾让"高危仿冒检测"把 172 个正常系统进程全误报。改用 `starts_with(lower(path),'c:\windows')` 或 `position('\temp\' in lower(path))>0`（不受 LIKE 转义影响）。
+    - **`generate_series` 的时间网格起点必须对齐到桶边界。** 若用未对齐的 `$__timeFrom()`（带秒）生成 1 分钟网格，再去 `JOIN` 一张 `date_trunc('minute',...)`（落在 :00）的表，两边时间戳永不相等、联结全落空——曾让"前台 vs 后台争抢"前台恒为 0。网格起点用 `date_trunc('minute', $__timeFrom())`。
+
 ---
 
 ## 8. 怎么跑起来 / 怎么看数据 / 怎么排查
