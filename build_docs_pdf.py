@@ -26,29 +26,46 @@ EDGE_CANDIDATES = [
 ]
 
 CSS = """
-@page { size: A4; margin: 1.5cm 1.4cm; }
+/* ── 白色 · 纯绿 · 高级感主题（emerald on white）─────────────────── */
+@page { size: A4; margin: 1.6cm 1.5cm; }
 * { box-sizing: border-box; }
-body { font-family: "Microsoft YaHei","微软雅黑","Segoe UI",sans-serif;
-       font-size: 12px; line-height: 1.65; color: #222; }
-h1 { font-size: 22px; color: #1f4e79; border-bottom: 3px solid #4a90d9; padding-bottom: 6px; }
-h2 { font-size: 17px; color: #1f4e79; border-bottom: 1px solid #d8e2ec; padding-bottom: 4px; margin-top: 22px; }
-h3 { font-size: 14px; color: #2c5f8a; margin-top: 16px; }
-h4 { font-size: 13px; color: #34495e; margin-top: 12px; }
-p, li { margin: 4px 0; }
-table { border-collapse: collapse; width: 100%; margin: 8px 0; font-size: 10.5px; }
-th, td { border: 1px solid #c4cdd6; padding: 4px 7px; text-align: left; vertical-align: top; }
-th { background: #eef3f8; font-weight: 600; }
-tr:nth-child(even) td { background: #fafbfc; }
-tr, td, th { page-break-inside: avoid; }
-code { background: #f0f2f4; padding: 1px 4px; border-radius: 3px;
-       font-family: Consolas,"Courier New",monospace; font-size: 11px; color: #b5285a; }
-pre { background: #f6f8fa; border: 1px solid #e1e4e8; border-radius: 5px; padding: 10px 12px;
-      overflow-x: auto; page-break-inside: avoid; }
-pre code { background: none; color: #24292e; padding: 0; }
-blockquote { border-left: 4px solid #4a90d9; background: #f5f9fd; margin: 8px 0;
-             padding: 5px 14px; color: #4a5568; }
-a { color: #1a8a5a; text-decoration: none; }
+html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body { font-family: "Microsoft YaHei","微软雅黑","Segoe UI",-apple-system,sans-serif;
+       font-size: 12px; line-height: 1.78; color: #1b2a22; letter-spacing: .1px; background: #fff; }
+
+h1 { font-size: 25px; font-weight: 700; color: #0b6b3a; letter-spacing: .3px;
+     margin: 0 0 18px; padding: 0 0 10px; border-bottom: 2px solid #16a34a; }
+h2 { font-size: 18px; font-weight: 650; color: #0e7c43; margin: 26px 0 10px;
+     padding: 2px 0 2px 12px; border-left: 4px solid #16a34a; }
+h3 { font-size: 14.5px; font-weight: 650; color: #11885a; margin: 18px 0 6px; }
+h4 { font-size: 12.5px; font-weight: 650; color: #2f4a3c; margin: 14px 0 4px; }
 h1, h2, h3, h4 { page-break-after: avoid; }
+
+p, li { margin: 5px 0; }
+strong { color: #0b6b3a; }
+a { color: #15925f; text-decoration: none; border-bottom: 1px solid #bfe8d2; }
+ul, ol { padding-left: 22px; }
+li::marker { color: #16a34a; }
+hr { border: none; border-top: 1px solid #d7eee2; margin: 18px 0; }
+img { max-width: 100%; }
+
+table { border-collapse: collapse; width: 100%; margin: 12px 0; font-size: 10.6px;
+        border: 1px solid #d7eee2; }
+th { background: #0e7c43; color: #fff; font-weight: 600; text-align: left;
+     padding: 7px 10px; letter-spacing: .2px; }
+td { border-top: 1px solid #e4f3ea; padding: 6px 10px; vertical-align: top; color: #28382f; }
+tr:nth-child(even) td { background: #f4fbf6; }
+tr, td, th { page-break-inside: avoid; }
+
+code { background: #ecfdf3; color: #0b6b3a; padding: 1.5px 5px; border-radius: 4px;
+       font-family: "Cascadia Code",Consolas,"Courier New",monospace; font-size: 11px; }
+pre { background: #f6fdf9; border: 1px solid #d7eee2; border-left: 3px solid #16a34a;
+      border-radius: 6px; padding: 12px 14px; overflow-x: auto;
+      page-break-inside: avoid; margin: 10px 0; }
+pre code { background: none; color: #1f3a2b; padding: 0; }
+
+blockquote { border-left: 3px solid #22c55e; background: #f0fbf4; margin: 10px 0;
+             padding: 7px 16px; color: #3a4a42; border-radius: 0 6px 6px 0; }
 """
 
 HTML_TMPL = "<!DOCTYPE html><html lang='zh-CN'><head><meta charset='utf-8'>" \
