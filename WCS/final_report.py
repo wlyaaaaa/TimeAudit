@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-生成最终报告 Markdown (含自绘 SVG 图表与数学定义) -> 交给 build_docs_pdf.py 出 PDF
-本脚本将动态运行多维度仿真，提取校准误差表与敏感性审计表，保证所有数值与模拟结果完全自洽。
+生成最终报告 Markdown (含自绘 SVG 图表与原生 HTML 排版数学公式) -> 交给 build_docs_pdf.py 出 PDF
+本脚本动态运行多维度仿真，提取校准误差表与敏感性审计表，保证所有数值与模拟结果完全自洽。
+为了解决 PDF 打印时 LaTeX 公式无法渲染的问题，公式全部改用标准的 HTML/CSS/Unicode 进行原生排版。
 """
 import math, statistics, time, json, sys
 import field_sim as F
@@ -272,7 +273,7 @@ md = f"""# 游戏王 Master Duel · DC杯二阶段(WCS) 运气与技术严格量
 |---|---|---|---|
 | 1 | **铜头 运气 / 技术 占比** | **运气 {cop5000['luck']*100:.1f}% / 技术 {cop5000['tech']*100:.1f}%** | 运气 {c5l_m[2]:.1f}% – {c5l_m[3]:.1f}% (中位铜头) |
 | 2 | **中位铜头到达 16000 DP 期望场次** | **{cop5000_games} 场** (全体铜头中位为 {copper_games['p50']:.0f} 场) | {cg_m[2]:.0f} – {cg_m[3]:.0f} 场 |
-| 3 | **中位技能玩家打满 200 场的最终 DP** | **期望 {f0(probe['mean'])} DP** | 均值均回复：{f0(pm_m[0])} ± {f0(pm_m[1])} DP <br> 单种子 $\\pm1\\text{{SD}}$ 区间：`[{f0(probe['sd_lo'])}, {f0(probe['sd_hi'])}]` |
+| 3 | **中位技能玩家打满 200 场的最终 DP** | **期望 {f0(probe['mean'])} DP** | 均值回复：{f0(pm_m[0])} &plusmn; {f0(pm_m[1])} DP <br> 单种子 &plusmn;1SD 区间：`[{f0(probe['sd_lo'])}, {f0(probe['sd_hi'])}]` |
 | 4 | **金头 运气 / 技术 占比** | **技术 {gold5['tech']*100:.1f}% / 运气 {gold5['luck']*100:.1f}%** | 技术 {g5t_m[2]:.1f}% – {g5t_m[3]:.1f}% |
 
 若采用极端的**硬币归因上界口径**（即将“先手赢下的对局全部归纳为运气”，不管对手多强）：
@@ -285,34 +286,72 @@ md = f"""# 游戏王 Master Duel · DC杯二阶段(WCS) 运气与技术严格量
 
 ## 二、 系统数学定义与理论模型
 
-为了建立可审计的数学模型，我们对局势胜率、先手偏置和运气/技术分解作出了以下形式化的数学定义：
+为了建立可审计的数学模型，我们对局势胜率、先手偏置和运气/技术分解作出了以下原生网页标签兼容的数学定义，避免了 PDF 导出时公式代码乱码的问题：
 
 ### 1. 比赛胜率 Logistic 关系函数
-设玩家 A 与玩家 B 的隐藏技能值（Logit 单位）分别为 $r_A$ 和 $r_B$。令先手优势偏置参数为 $\\theta$。在 BO1 对局中，若 A 掷得先手（记为 $C_A = \\text{{First}}$），则 A 战胜 B 的胜率满足以下 Logistic 分布：
+设玩家 A 与玩家 B 的隐藏技能值（单位为 Logit）分别为 <i>r</i><sub>A</sub> 和 <i>r</i><sub>B</sub>。令先手优势偏置参数为 &theta;。在 BO1 对局中，若 A 掷得先手（记为对局先手状态 <i>C</i><sub>A</sub> = 先手），则 A 战胜 B 的胜率满足以下 Logistic 分布关系：
 
-$$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{First}}) = \\text{{sigmoid}}(\\theta + (r_A - r_B)) = \\frac{{1}}{{1 + e^{{-(\\theta + (r_A - r_B))}}}}$$
+<div style="text-align: center; margin: 16px 0; font-size: 14px; font-family: 'Times New Roman', Times, serif;">
+  <i>P</i>(A 赢得 B | 先手) = sigmoid(&theta; + (<i>r</i><sub>A</sub> - <i>r</i><sub>B</sub>)) = 
+  <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin-left: 4px;">
+    <span style="border-bottom: 1px solid #1b2a22; padding: 0 6px; line-height: 1.2;">1</span>
+    <span style="padding: 0 6px; line-height: 1.2;">1 + <i>e</i><sup>-[&theta; + (<i>r</i><sub>A</sub> - <i>r</i><sub>B</sub>)]</sup></span>
+  </div>
+</div>
 
-同理，若 A 掷得后手（记为 $C_A = \\text{{Second}}$），则 A 战胜 B 的胜率为：
+同理，若 A 掷得后手（记为对局后手状态 <i>C</i><sub>A</sub> = 后手），则 A 战胜 B 的胜率为：
 
-$$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\theta + (r_A - r_B)) = \\frac{{1}}{{1 + e^{{-(-\\theta + (r_A - r_B))}}}}$$
+<div style="text-align: center; margin: 16px 0; font-size: 14px; font-family: 'Times New Roman', Times, serif;">
+  <i>P</i>(A 赢得 B | 后手) = sigmoid(-&theta; + (<i>r</i><sub>A</sub> - <i>r</i><sub>B</sub>)) = 
+  <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin-left: 4px;">
+    <span style="border-bottom: 1px solid #1b2a22; padding: 0 6px; line-height: 1.2;">1</span>
+    <span style="padding: 0 6px; line-height: 1.2;">1 + <i>e</i><sup>-[-&theta; + (<i>r</i><sub>A</sub> - <i>r</i><sub>B</sub>)]</sup></span>
+  </div>
+</div>
 
-由于是零和对局，B 在该局的胜率满足 $P(B \\text{{ wins}}) = 1 - P(A \\text{{ wins}})$，此模型天然而严格地实现了自洽的双人零和硬币对抗。
+由于是零和对局，B 在该局的胜率满足 <i>P</i>(B 赢得 A) = 1 - <i>P</i>(A 赢得 B)，此模型天然而严格地实现了自洽的双人零和硬币对抗。
 
-### 2. 先手偏置 $\\theta$ 的代数反解标定
+### 2. 先手偏置 &theta; 的代数反解标定
 委托方提供的数据基准：**在 150 场 T1 卡组样本中，位于约 38000 分档的高水平选手（10TH金头玩家）在面对当前档对手时，其实测先手胜率为 90%，后手胜率为 40%。**
 
-设 10TH 金头选手与 38000 分档的平均选手之间的隐藏技能差为 $\\Delta^*$。代入上述 Logistic 方程可得：
+设 10TH 金头选手与 38000 分档的平均选手之间的隐藏技能差为 &Delta;<sup>*</sup>。代入上述 Logistic 方程可得：
 
-1) $\\theta + \\Delta^* = \\ln(\\frac{{0.90}}{{1 - 0.90}}) = \\ln(9) \\approx 2.19722$
-2) $-\\theta + \\Delta^* = \\ln(\\frac{{0.40}}{{1 - 0.40}}) = \\ln(\\frac{{2}}{{3}}) \\approx -0.40547$
+<div style="margin: 16px 0; padding-left: 20px; font-size: 13.5px; font-family: 'Times New Roman', Times, serif; line-height: 2.2;">
+  1) &theta; + &Delta;<sup>*</sup> = ln(
+  <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 2px;">
+    <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.0;">0.90</span>
+    <span style="padding: 0 4px; line-height: 1.0;">1 - 0.90</span>
+  </div>) = ln(9) &approx; 2.19722 <br>
+  2) -&theta; + &Delta;<sup>*</sup> = ln(
+  <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 2px;">
+    <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.0;">0.40</span>
+    <span style="padding: 0 4px; line-height: 1.0;">1 - 0.40</span>
+  </div>) = ln(
+  <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 2px;">
+    <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.0;">2</span>
+    <span style="padding: 0 4px; line-height: 1.0;">3</span>
+  </div>) &approx; -0.40547
+</div>
 
 通过解此二元一次方程组，可唯一确定两个核心系统参数：
-* **先手优势偏置参数**：$\\theta = \\frac{{\\ln(9) - \\ln(2/3)}}{{2}} \\approx 1.30135$
-* **10TH与38000档的技能差**：$\\Delta^* = \\frac{{\\ln(9) + \\ln(2/3)}}{{2}} \\approx 0.89588$
+<ul style="list-style-type: none; padding-left: 20px; font-size: 13.5px; font-family: 'Times New Roman', Times, serif; line-height: 2.2;">
+  <li>&bull; <b>先手优势偏置参数</b>：&theta; = 
+    <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 4px;">
+      <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.1;">ln(9) - ln(2/3)</span>
+      <span style="padding: 0 4px; line-height: 1.1;">2</span>
+    </div> &approx; 1.30135
+  </li>
+  <li>&bull; <b>10TH与38000档的技能差</b>：&Delta;<sup>*</sup> = 
+    <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 4px;">
+      <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.1;">ln(9) + ln(2/3)</span>
+      <span style="padding: 0 4px; line-height: 1.1;">2</span>
+    </div> &approx; 0.89588
+  </li>
+</ul>
 
-当双方技能完全相等（$\\Delta = 0$）时：
-* **先手期望胜率** = $\\text{{sigmoid}}(\\theta) \\approx 78.6\\%$
-* **后手期望胜率** = $\\text{{sigmoid}}(-\\theta) \\approx 21.4\\%$
+当双方技能完全相等（即技能差为 0）时：
+* **先手期望胜率** = sigmoid(&theta;) &approx; 78.6%
+* **后手期望胜率** = sigmoid(-&theta;) &approx; 21.4%
 
 该物理曲线被真实数据牢牢钉死，解释了为何 BO1 赛制中硬币运气的影响极其巨大。
 
@@ -320,18 +359,33 @@ $$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\t
 
 ### 3. 反事实运气/技术分解法 (Counterfactual Baseline Method)
 为了量化某玩家在整段赛程中究竟是靠好运还是靠实力，我们采用**反事实替代判定法**：
-1. 设定一个“中高水平基准场玩家”（全场第 $8000$ 名，技能值为 $r_\\text{{base}}$，代表前 $40\\%$ 的竞技门槛，即 $60\\%$ 的二阶段玩家弱于他）。
-2. 对于玩家 $i$ 所经历的每一场真实对局 $g$（其对手隐藏技能为 $r_\\text{{opp}}(g)$，硬币先手状态为 $C(g) \\in \\{{\\theta, -\\theta\\}}$），假设将玩家 $i$ 替换为该“基准场玩家”，计算基准场玩家在面临完全一样的对手和先手硬币时的期望胜率：
-   $$P_\\text{{base}}(g) = \\text{{sigmoid}}(C(g) + (r_\\text{{base}} - r_\\text{{opp}}(g)))$$
+1. 设定一个“中高水平基准场玩家”（全场第 8000 名，技能值为 <i>r</i><sub>base</sub>，代表前 40% 的竞技门槛，即 60% 的二阶段玩家弱于他）。
+2. 对于玩家 <i>i</i> 所经历的每一场真实对局 <i>g</i>（其对手隐藏技能为 <i>r</i><sub>opp</sub>(<i>g</i>)，硬币先手状态为 <i>C</i>(<i>g</i>) &in; {{&theta;, -&theta;}}），假设将玩家 <i>i</i> 替换为该“基准场玩家”，计算基准场玩家在面临完全一样的对手和先手硬币时的期望胜率：
+   <div style="text-align: center; margin: 12px 0; font-size: 13.5px; font-family: 'Times New Roman', Times, serif;">
+     <i>P</i><sub>base</sub>(<i>g</i>) = sigmoid(<i>C</i>(<i>g</i>) + (<i>r</i><sub>base</sub> - <i>r</i><sub>opp</sub>(<i>g</i>)))
+   </div>
 3. **局况性质判定**：
-   * 若 $P_\\text{{base}}(g) \\ge 0.5$：定义为**运气局**。代表即使是基准选手打此局，期望也能赢（“谁来打都能赢”的局）。
-   * 若 $P_\\text{{base}}(g) < 0.5$：定义为**技术局**。代表基准选手在低先手机率或极强对手面前，大概率会输掉这一局。如果玩家 $i$ 赢了，说明他具备超越基准的技术溢出。
+   * 若 <i>P</i><sub>base</sub>(<i>g</i>) &ge; 0.5：定义为**运气局**。代表即使是基准选手打此局，期望也能赢（“谁来打都能赢”的局）。
+   * 若 <i>P</i><sub>base</sub>(<i>g</i>) &lt; 0.5：定义为**技术局**。代表基准选手在低先手机率或极强对手面前，大概率会输掉这一局。如果玩家 <i>i</i> 赢了，说明他具备超越基准的技术溢出。
 4. **运气/技术占比公式**：
    对于某段特定对局历史（例如首次到达 16000 分或 61000 分的快照历史）：
-   * 玩家期望总胜场数 $W_\\text{{exp}} = \\sum_{{g}} P_i(g)$
-   * 运气局贡献胜场 $W_\\text{{luck}} = \\sum_{{g \\in \\text{{Luck-dominated}}}} P_i(g)$
-   * 技术局贡献胜场 $W_\\text{{skill}} = \\sum_{{g \\in \\text{{Skill-dominated}}}} P_i(g)$
-   * **运气占比**：$\\text{{Luck Ratio}} = W_\\text{{luck}} / W_\\text{{exp}}$，**技术占比**：$\\text{{Skill Ratio}} = W_\\text{{skill}} / W_\\text{{exp}}$。
+   <ul style="list-style-type: none; padding-left: 20px; font-family: 'Times New Roman', Times, serif; font-size: 13.5px; line-height: 2.2;">
+     <li>&bull; 玩家期望总胜场数：<i>W</i><sub>exp</sub> = &Sigma;<sub><i>g</i></sub> <i>P</i><sub><i>i</i></sub>(<i>g</i>)</li>
+     <li>&bull; 运气局贡献胜场：<i>W</i><sub>luck</sub> = &Sigma;<sub><i>g</i> &in; 运气局</sub> <i>P</i><sub><i>i</i></sub>(<i>g</i>)</li>
+     <li>&bull; 技术局贡献胜场：<i>W</i><sub>skill</sub> = &Sigma;<sub><i>g</i> &in; 技术局</sub> <i>P</i><sub><i>i</i></sub>(<i>g</i>)</li>
+     <li>&bull; <b>运气占比</b>：Luck Ratio = 
+       <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 4px;">
+         <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.0;"><i>W</i><sub>luck</sub></span>
+         <span style="padding: 0 4px; line-height: 1.0;"><i>W</i><sub>exp</sub></span>
+       </div>
+     </li>
+     <li>&bull; <b>技术占比</b>：Skill Ratio = 
+       <div style="display: inline-flex; flex-direction: column; align-items: center; vertical-align: middle; margin: 0 4px;">
+         <span style="border-bottom: 1px solid #1b2a22; padding: 0 4px; line-height: 1.0;"><i>W</i><sub>skill</sub></span>
+         <span style="padding: 0 4px; line-height: 1.0;"><i>W</i><sub>exp</sub></span>
+       </div>
+     </li>
+   </ul>
 
 ---
 
@@ -339,14 +393,21 @@ $$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\t
 
 本模拟完全抛弃了静态匹配的粗糙近似，采用 2 万名玩家实时攀爬的 Agent-Based 架构。其具体边界与条件设定如下：
 
-1. **玩家规模与技能分布**：真实玩家数 $N_\\text{{field}} = 20000$。技能分布满足正态分布 $r_i \\sim \\mathcal{{N}}(0.0, \\sigma^2)$。主模型取 $\\sigma = 1.0$。为了在不干扰天梯竞争的情况下获取中位水平玩家的数据，另外引入了 $N_\\text{{probe}} = 3000$ 名技能为 $0.0$ 的探针玩家，其积分与玩家同步更新。
-2. **积分得失分与掉分保护**：初始积分全员为 $0$ DP。积分转移按如下规则进行：
+1. **玩家规模与技能分布**：真实玩家数 <i>N</i><sub>field</sub> = 20000。技能分布满足正态分布 <i>r</i><sub>i</sub> &sim; <i>N</i>(0.0, &sigma;<sup>2</sup>)。主模型取 &sigma; = 1.0。为了在不干扰天梯竞争的情况下获取中位水平玩家的数据，另外引入了 <i>N</i><sub>probe</sub> = 3000 名技能为 0.0 的探针玩家，其积分与玩家同步更新。
+2. **积分得失分与掉分保护**：初始积分全员为 0 DP。积分转移按如下规则进行：
    * 胜方增加 1000 DP；
    * 负方扣减积分根据当前分段而定：
-     $$\\text{{loss\\_dp}}(DP) = \\begin{{cases}} 100, & DP < 9000 \\\\ 500, & 9000 \\le DP < 10000 \\\\ 1000, & DP \\ge 10000 \\end{{cases}}$$
-   * 这一规则意味着，低于 10000 DP 时输方扣分极少，系统存在巨大的“水分注入”；而在 10000 DP 以上时赢输分值完全对称（$+1000 / -1000$），因此等价于：对绝大多数高分段玩家，$(胜 - 负) \\times 1000 = DP$。
-3. **ELO 软匹配算法**：每一轮，系统将全员当前的积分 $DP_i$ 加上一个均匀随机噪声 $\\delta_i \\sim U(-600, 600)$，模拟天梯匹配在一定分数范围内的波动。之后根据 $DP_i + \\delta_i$ 进行从小到大排序，并对相邻玩家进行配对进行比赛。
-4. **时间步长与满勤时间映射**：WCS二阶段赛程共 72 小时。模拟的总步数 $T_\\text{{steps}} = 330$ 步，每一步代表全员并发打完一局。第 38 小时对应模拟的第 $174$ 步（即天梯快照）。
+     <div style="text-align: center; margin: 12px 0; font-family: 'Times New Roman', Times, serif; font-size: 13.5px;">
+       loss_dp(<i>DP</i>) = 
+       <div style="display: inline-flex; flex-direction: column; align-items: flex-start; vertical-align: middle; margin-left: 6px;">
+         <span>100 (若 <i>DP</i> &lt; 9000)</span>
+         <span>500 (若 9000 &le; <i>DP</i> &lt; 10000)</span>
+         <span>1000 (若 <i>DP</i> &ge; 10000)</span>
+       </div>
+     </div>
+   * 这一规则意味着，低于 10000 DP 时输方扣分极少，系统存在大量的“水分注入”；而在 10000 DP 以上时赢输分值完全对称（+1000 / -1000），因此等价于：对绝大多数高分段玩家，(胜 - 负) &times; 1000 = DP。
+3. **ELO 软匹配算法**：每一轮，系统将全员当前的积分 <i>DP</i><sub><i>i</i></sub> 加上一个均匀随机噪声 &delta;<sub><i>i</i></sub> &sim; <i>U</i>(-600, 600)，模拟天梯匹配在一定分数范围内的波动。之后根据 <i>DP</i><sub><i>i</i></sub> + &delta;<sub><i>i</i></sub> 进行从小到大排序，并对相邻玩家进行配对进行比赛。
+4. **时间步长与满勤时间映射**：WCS二阶段赛程共 72 小时。模拟的总步数 <i>T</i><sub>steps</sub> = 330 步，每一步代表全员并发打完一局。第 38 小时对应模拟的第 174 步（即天梯快照）。
 5. **满勤偏差的修正——到达快照机制**：
    在真实天梯中，大量铜头水平玩家在累积到 16000 分后即选择“下班收手”，并非满勤打满 330 局，只有争夺前十的金头玩家打满全场。为了消除这种活跃度偏差，我们对每一位玩家分别建立：
    * **铜头数据快照**：仅在其分数**首次**突破或达到 16000 DP 的那一刻，冻结并记录他这一路上的总场次、胜场数以及运气期望。
@@ -357,7 +418,7 @@ $$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\t
 
 ## 四、 模型校准与数据基准对照
 
-通过引入 $\\sigma=1.0$ 的个体离散度和 $\\theta=1.30135$ 的先手偏置，模型精确复现了委托方天梯的多项关键基准指标。
+通过引入 &sigma;=1.0 的个体离散度和 &theta;=1.30135$ 的先手偏置，模型精确复现了委托方天梯的多项关键基准指标。
 
 ### 1. 第 38 小时（第 174 步）天梯快照积分误差校验
 
@@ -383,7 +444,7 @@ $$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\t
 * **中位铜头（第 5000 名，铜头群体里的平均水平）**：
   * 运气占比：**{cop5000['luck']*100:.1f}%**，技术占比：**{cop5000['tech']*100:.1f}%**。
   * 首次到达 16000 DP 需要 **{cop5000['games']}** 场，总胜率 **{cop5000['total_wr']*100:.1f}%**。
-* **物理机制分析**：铜头门槛代表了天梯的中位水平。对于这个技术水平段的玩家，其最终达标很大程度上得益于“运气较好”（例如早期遇到了大量弱对手、以及抛硬币先手率高）。
+* **物理机制分析**：铜头门槛代表了天梯的中位水平。对于这个技术水平段 of 玩家，其最终达标很大程度上得益于“运气较好”（例如早期遇到了大量弱对手、以及抛硬币先手率高）。
 
 ### 2. 需求 2：中位铜头到达 16000 DP 的场次分布
 在所有成功冲过 16000 分线（铜头下班线）的玩家中：
@@ -391,15 +452,15 @@ $$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\t
 * 全体铜头选手的场次统计分布：
   * 中位数：**{copper_games['p50']:.0f} 场**，均值：**{copper_games['mean']:.1f} 场**，标准差（SD）：**{copper_games['sd']:.1f} 场**。
   * 极佳运气（最快）：**{copper_games['min']:.0f} 场**达标。
-  * 极差运气（最慢）：需要 **{copper_games['max']:.0f} 场**才达标。
+  * 极差运气（最慢）：需要 **{copper_games['max']:.0f} 场**才达标.
   * 95% 经验区间：`[{copper_games['p2_5']:.0f}, {copper_games['p97_5']:.0f}]` 场。
 * 由于 10000 DP 以下有掉分保护，系统具有源源不断注入积分的“积分注入”机制，使得中位水平玩家只需 40-50 场即可顺利“蹭”过 16000 分线。
 
 ### 3. 需求 3：中位技能玩家打满 200 场的最终 DP 分布
 这部分利用了未计入排名的 3000 名隐藏技能值为 0.0 的纯中位探针玩家：
-* **期望 DP 值 (均值) ≈ {f0(probe['mean'])} DP** (跨种子稳定性为 {f0(pm_m[0])} ± {f0(pm_m[1])} DP)。
+* **期望 DP 值 (均值) ≈ {f0(probe['mean'])} DP** (跨种子稳定性为 {f0(pm_m[0])} &plusmn; {f0(pm_m[1])} DP)。
 * **标准差 (SD) ≈ {f0(probe['sd'])} DP**。
-* **±1 标准差波动范围**：`[{f0(probe['sd_lo'])}, {f0(probe['sd_hi'])}]` DP。
+* **&plusmn;1 标准差波动范围**：`[{f0(probe['sd_lo'])}, {f0(probe['sd_hi'])}]` DP。
 * **95% 经验置信区间**：`[{f0(probe['p2_5'])}, {f0(probe['p97_5'])}]` DP。
 * **历史极端极值**：最低 `{f0(probe['min'])}` DP，最高达 `{f0(probe['max'])}` DP。
 * **胜率指标**：中位探针玩家在 200 局过程中的平均总胜率为 **{main_summary['probe_wr']*100:.1f}%**。
@@ -420,18 +481,18 @@ $$P(A \\text{{ wins}} \\mid r_A, r_B, \\text{{Second}}) = \\text{{sigmoid}}(-\\t
 
 ## 六、 敏感性分析与稳健性审计
 
-为了确保上述结论的科学性和普适性，我们针对隐藏技能离散度 $\\sigma$、反事实基准排名 $base\\_rank$ 以及多随机种子进行了全套敏感性扫描审计。
+为了确保上述结论的科学性和普适性，我们针对隐藏技能离散度 &sigma;、反事实基准排名 $base\_rank$ 以及多随机种子进行了全套敏感性扫描审计。
 
-### A. 隐藏技能离散度 $\\sigma$ 敏感性测试表 (base_rank=8000)
-$\\sigma$ 控制了全场竞技场技能的广度。$\\sigma$ 越大，顶尖玩家对底层的压制力越恐怖。
+### A. 隐藏技能离散度 &sigma; 敏感性测试表 (base_rank=8000)
+&sigma; 控制了全场竞技场技能的广度。&sigma; 越大，顶尖玩家对底层的压制力越恐怖。
 
-| $\\sigma$ 设定 | 金头第 5 名 运/技 % | 金头第 10 名 运气 % | 铜头第 5000 名 运/技 % | 铜头第 10000 名 运气 % | 中位铜头场次 (全体中位) | 探针200场 期望/SD | 金头第5名胜率 (场次) |
+| &sigma; 设定 | 金头第 5 名 运/技 % | 金头第 10 名 运气 % | 铜头第 5000 名 运/技 % | 铜头第 10000 名 运气 % | 中位铜头场次 (全体中位) | 探针200场 期望/SD | 金头第5名胜率 (场次) |
 |---|---|---|---|---|---|---|---|
 {sigma_table}
 
-*审计结论*：当 $\\sigma$ 在 $0.8 \sim 1.2$ 之间波动时，金头技术比重始终占 $85\\% \sim 99\\\%$，铜头运气比重始终占 $72\\% \sim 87\\\%$。我们的定性与定量结论对全场技能分布的参数波动是非常稳健的。
+*审计结论*：当 &sigma; 在 0.8 &sim; 1.2 之间波动时，金头技术比重始终占 85% &sim; 99%，铜头运气比重始终占 72% &sim; 87%。我们的定性与定量结论对全场技能分布的参数波动是非常稳健的。
 
-### B. 反事实判定基准 $base\\_rank$ 敏感性测试表 ($\\sigma=1.0$)
+### B. 反事实判定基准 $base\_rank$ 敏感性测试表 (&sigma;=1.0)
 改变我们设定的“中高水平基准选手”在全天梯的排名门槛，以观察两把尺子的漂移：
 
 | 反事实基准门槛 (基准排名) | 金头第 5 名 运气 / 技术 占比 | 铜头第 5000 名 运气 / 技术 占比 |
@@ -440,13 +501,13 @@ $\\sigma$ 控制了全场竞技场技能的广度。$\\sigma$ 越大，顶尖玩
 
 *审计结论*：即使将基准名次放宽到第 12000 名，或者收紧至第 5000 名（代表前 25% 的极高技术基准），金头依靠技术的绝对本质仍然不会改变，铜头的运气主导特性亦没有发生偏转。
 
-### C. 多种子稳定性与不确定性测试表 ($\\sigma=1.0$, $base\\_rank=8000$)
+### C. 多种子稳定性与不确定性测试表 (&sigma;=1.0, $base\_rank=8000$)
 
 | 随机种子方案 (SEED) | 金头第 5 名 运气 / 技术 | 铜头第 5000 名 运气 / 技术 | 中位铜头达标场次 | 探针200场 积分期望与标准差 |
 |---|---|---|---|---|
 {seed_table}
 
-*审计结论*：跨 8 个独立的天梯演化种子，铜头期望达标场次稳定在 $41 \\pm 3$ 场，探针 200 场均值稳定在 $17500 \\pm 150$ 积分。这排除了因为单次仿真中特定随机硬币分配带来的小样本偶然性。
+*审计结论*：跨 8 个独立的天梯演化种子，铜头期望达标场次稳定在 41 &plusmn; 3 场，探针 200 场均值稳定在 17500 &plusmn; 150 积分。这排除了因为单次仿真中特定随机硬币分配带来的小样本偶然性。
 
 ---
 
@@ -454,7 +515,7 @@ $\\sigma$ 控制了全场竞技场技能的广度。$\\sigma$ 越大，顶尖玩
 
 1. **满勤模拟天梯偏高**：为了保证 agent 模型内天梯匹配有足够多的并发流，我们假定了全场 2 万人全部满勤打满 72 小时。这导致模型内中段名次的绝对分数偏高（例如模拟 38h 时的 5000TH 约为 16500 分，而实测目标为 13578 分）。但因为本报告的四项结论完全采用了“单人首次到达分数的战绩快照”，不依赖于终局名次的绝对分数对应，因此该偏差对量化结果不造成实质性影响。
 2. **忽略了卡组微调与演员环境**：模型将所有选手等价为使用当前 T1 卡组的一流选手。忽略了少部分使用 T2-T3 卡组选手的降维打击以及演员秒投行为。
-3. **匹配队列的极端放宽**：在实际环境中深夜高分段可能出现匹配极其漫长并强行放宽积分差的情况。模型通过加入 $\\pm 600$ DP 的随机抖动进行了近似，基本符合真实体验。
+3. **匹配队列的极端放宽**：在实际环境中深夜高分段可能出现匹配极其漫长并强行放宽积分差的情况。模型通过加入 &plusmn; 600 DP 的随机抖动进行了近似，基本符合真实体验。
 
 ---
 
