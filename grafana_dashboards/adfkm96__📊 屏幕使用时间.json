@@ -83,7 +83,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- 🎯 窗口裁剪：把每条事件时长裁剪到当前时间窗口内，再排除深睡眠（口径与标题对齐）\nSELECT\n  SUM(GREATEST(0, EXTRACT(EPOCH FROM (\n        LEAST(start_time + (duration_seconds || ' seconds')::interval, $__timeTo()::timestamptz)\n      - GREATEST(start_time, $__timeFrom()::timestamptz)\n    ))))::bigint AS value\nFROM app_usage_logs\nWHERE process_name <> 'System_Sleep'\n  AND start_time < $__timeTo()::timestamptz\n  AND start_time + (duration_seconds || ' seconds')::interval > $__timeFrom()::timestamptz",
+          "rawSql": "-- 🎯 区间并集(去重叠) + 裁剪到窗口。口径=排除深睡眠后、电脑通电运转的真实墙钟时长（与标题「已剔除睡眠」对齐）。\n-- app_usage_logs 偶有相互重叠的事件(AHK 暂离回溯重入会叠出多条 System_Idle 片)，\n-- 朴素 SUM 会重复计数、甚至超过窗口长度；故先用 gaps-and-islands 合并区间再求覆盖时长。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt),\nclip AS (\n  SELECT GREATEST(a.start_time, b.tf) AS s,\n         LEAST(a.start_time + (a.duration_seconds || ' seconds')::interval, b.tt) AS e\n  FROM app_usage_logs a, b\n  WHERE a.process_name <> 'System_Sleep'\n    AND a.start_time < b.tt\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.tf\n),\nislands AS (\n  SELECT s, e,\n         CASE WHEN s > MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)\n              THEN 1 ELSE 0 END AS new_island\n  FROM clip\n),\ngrouped AS (\n  SELECT s, e, SUM(new_island) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp\n  FROM islands\n)\nSELECT COALESCE(SUM(EXTRACT(EPOCH FROM (mx - mn))), 0)::bigint AS value\nFROM (SELECT MIN(s) AS mn, MAX(e) AS mx FROM grouped GROUP BY grp) t;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -170,7 +170,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- 🎯 窗口裁剪 + 排除一切无键鼠交互态（深睡眠 / 熄屏 / 暂离 / 锁屏）\nSELECT\n  SUM(GREATEST(0, EXTRACT(EPOCH FROM (\n        LEAST(start_time + (duration_seconds || ' seconds')::interval, $__timeTo()::timestamptz)\n      - GREATEST(start_time, $__timeFrom()::timestamptz)\n    ))))::bigint AS value\nFROM app_usage_logs\nWHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'System_LockScreen')\n  AND start_time < $__timeTo()::timestamptz\n  AND start_time + (duration_seconds || ' seconds')::interval > $__timeFrom()::timestamptz",
+          "rawSql": "-- 🎯 区间并集(去重叠) + 裁剪到窗口。口径=排除一切无键鼠交互态（深睡眠/熄屏/暂离/锁屏）后的真实活跃墙钟时长。\n-- app_usage_logs 偶有相互重叠的事件(AHK 暂离回溯重入会叠出多条 System_Idle 片)，\n-- 朴素 SUM 会重复计数、甚至超过窗口长度；故先用 gaps-and-islands 合并区间再求覆盖时长。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt),\nclip AS (\n  SELECT GREATEST(a.start_time, b.tf) AS s,\n         LEAST(a.start_time + (a.duration_seconds || ' seconds')::interval, b.tt) AS e\n  FROM app_usage_logs a, b\n  WHERE a.process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'System_LockScreen')\n    AND a.start_time < b.tt\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.tf\n),\nislands AS (\n  SELECT s, e,\n         CASE WHEN s > MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)\n              THEN 1 ELSE 0 END AS new_island\n  FROM clip\n),\ngrouped AS (\n  SELECT s, e, SUM(new_island) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp\n  FROM islands\n)\nSELECT COALESCE(SUM(EXTRACT(EPOCH FROM (mx - mn))), 0)::bigint AS value\nFROM (SELECT MIN(s) AS mn, MAX(e) AS mx FROM grouped GROUP BY grp) t;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -252,7 +252,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "-- 🎯 窗口裁剪：分别统计熄屏与深睡眠落在当前窗口内的真实秒数，与「用户使用电脑状态时间轴」严格一致\nSELECT\n  SUM(CASE WHEN process_name = 'System_DisplayOff' THEN clip_sec ELSE 0 END)::bigint AS \"显示器熄灭时长\",\n  SUM(CASE WHEN process_name = 'System_Sleep'      THEN clip_sec ELSE 0 END)::bigint AS \"操作系统深睡眠时长\"\nFROM (\n  SELECT\n    process_name,\n    GREATEST(0, EXTRACT(EPOCH FROM (\n        LEAST(start_time + (duration_seconds || ' seconds')::interval, $__timeTo()::timestamptz)\n      - GREATEST(start_time, $__timeFrom()::timestamptz)\n    ))) AS clip_sec\n  FROM app_usage_logs\n  WHERE process_name IN ('System_DisplayOff', 'System_Sleep')\n    AND start_time < $__timeTo()::timestamptz\n  AND start_time + (duration_seconds || ' seconds')::interval > $__timeFrom()::timestamptz\n) q;",
+          "rawSql": "-- 🎯 裁剪到窗口 + COALESCE 防空：窗口内无熄屏/睡眠时返回 0 而非 NULL(否则面板空白)。\n-- 睡眠/熄屏是单流互斥状态、不会相互重叠，无需区间并集。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt)\nSELECT\n  COALESCE(SUM(CASE WHEN process_name = 'System_DisplayOff' THEN clip_sec END), 0)::bigint AS \"显示器熄灭时长\",\n  COALESCE(SUM(CASE WHEN process_name = 'System_Sleep'      THEN clip_sec END), 0)::bigint AS \"操作系统深睡眠时长\"\nFROM (\n  SELECT process_name,\n         EXTRACT(EPOCH FROM (LEAST(start_time + (duration_seconds || ' seconds')::interval, b.tt)\n                           - GREATEST(start_time, b.tf))) AS clip_sec\n  FROM app_usage_logs a, b\n  WHERE process_name IN ('System_DisplayOff', 'System_Sleep')\n    AND start_time < b.tt\n    AND start_time + (duration_seconds || ' seconds')::interval > b.tf\n) q;",
           "refId": "A",
           "sql": {
             "columns": [

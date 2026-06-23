@@ -236,9 +236,12 @@
     数据库内 `fact_process_activity`（活跃进程表）是高频时序数据，运行三年后将积累数千万行数据。为避免全表扫描或全分区扫描拖垮数据库甚至导致 Grafana 面板超时卡死，在编写或修改任何针对该表（及其他分区表）的 SQL 查询时，**必须在 WHERE 子句中显式加上时间下界**（如 `timestamp >= $__timeFrom()` 或带有明确的时间间隔偏移）。若有 JOIN 查询，在 JOIN 条件中也必须将关联时间下界下推，确保 PostgreSQL 的优化器百分之百进行“分区剪裁”（Partition Pruning）。
 
 21. **区间型数据（`start_time` + `duration`）按时间窗汇总，必须"裁剪到窗口"，绝不能 `SUM(duration) WHERE $__timeFilter(start_time)`。**
-    `app_usage_logs` 存的是**区间事件**（起点 + 时长），不是时间点采样。早期「屏幕使用时间」大盘的统计卡直接 `SUM(duration_seconds) WHERE $__timeFilter(start_time)`——只要事件**起点**落在窗口内，就把**整条时长**计进去。短事件（2–300 秒）误差可忽略，但遇到横跨一小时以上的 `System_Sleep`（一次合盖深睡眠就是一条 6782 秒 / ≈1:53 的事件）就彻底穿帮：① 起点早于窗口起点的长睡眠被**整条漏算**——「过去 1 小时」视图里深睡眠卡只显示"几秒"，而旁边的「用户使用电脑状态时间轴」却画着一大块睡眠，**两个面板自相矛盾**（这正是 2026-06-23 报的 bug）；② 起点在窗口内、尾巴越过窗口末端的事件被**整条超算**。根治办法是把每条事件**裁剪到当前窗口**再求和：
-    `SUM(GREATEST(0, EXTRACT(EPOCH FROM (LEAST(start_time + (duration_seconds||' seconds')::interval, $__timeTo()::timestamptz) - GREATEST(start_time, $__timeFrom()::timestamptz)))))`，
-    并把 WHERE 从 `$__timeFilter(start_time)` 换成"区间与窗口有交叠"：`start_time < $__timeTo()::timestamptz AND start_time + (duration_seconds||' seconds')::interval > $__timeFrom()::timestamptz`。同次修复还纠正了两处**口径错误**：「电脑开机总时长（已剔除睡眠）」过去把 `System_Sleep` 也 `SUM` 进去了（与标题直接矛盾）、「键鼠活跃估计总时间」只排除了 `System_Idle` 却把睡眠/熄屏当成了"活跃"。⚠️ 这是**时序点采样**表（`fact_system_hardware` 等按 `timestamp` 取样）不会遇到的坑——它们在睡眠期只是"无数据空档"，不会错算求和；所以**其余 4 个硬件/进程大盘无需改动**，此坑只出现在聚合 `app_usage_logs` 区间表的「屏幕使用时间」大盘。
+    `app_usage_logs` 存的是**区间事件**（起点 + 时长），不是时间点采样。早期「屏幕使用时间」大盘的统计卡直接 `SUM(duration_seconds) WHERE $__timeFilter(start_time)`——只要事件**起点**落在窗口内，就把**整条时长**计进去。短事件（2–300 秒）误差可忽略，但遇到横跨一小时以上的 `System_Sleep`（一次合盖深睡眠就是一条 6782 秒 / ≈1:53 的事件）就彻底穿帮：① 起点早于窗口起点的长睡眠被**整条漏算**——「过去 1 小时」视图里深睡眠卡只显示"几秒"，而旁边的「用户使用电脑状态时间轴」却画着一大块睡眠，**两个面板自相矛盾**（这正是 2026-06-23 报的 bug）；② 起点在窗口内、尾巴越过窗口末端的事件被**整条超算**。根治分三步：
+    - **裁剪到窗口**：WHERE 从 `$__timeFilter(start_time)` 换成"区间与窗口有交叠"（`start_time < $__timeTo()::timestamptz AND start_time + (duration_seconds||' seconds')::interval > $__timeFrom()::timestamptz`），每条只取 `LEAST(end,$__timeTo()::timestamptz) - GREATEST(start,$__timeFrom()::timestamptz)`。
+    - **裁剪后不能直接 `SUM`，要做区间并集（gaps-and-islands 去重叠）**——`app_usage_logs` 的事件**会相互重叠**：AHK 进暂离时把 `startTime` 回拨 60 秒（`DateAdd(A_Now,-idleSeconds)`，为让时间轴严丝合缝），一旦 idle 状态因"音频豁免"抖动重入，就会叠出一串重叠的 `System_Idle` 片（实测过去 1 小时窗口内有 **138 对重叠**）。朴素求和会重复计数，算出"过去 1 小时却开机 1.5 小时"（2026-06-23 第二次报的 bug）。故「电脑开机总时长」「键鼠活跃」改用 gaps-and-islands 先合并重叠区间、再求覆盖墙钟时长（`s > MAX(e) OVER (... ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)` 切岛 → 每岛 `MAX(e)-MIN(s)`），结果恒 ≤ 窗口长度。
+    - **空集要 `COALESCE(...,0)`**：「显示屏和睡眠」面板在窗口内无睡眠/熄屏时 `SUM` 返回 `NULL` → 面板**整片空白**，须兜底为 0。（睡眠/熄屏是单流互斥状态、不会相互重叠，故它无需区间并集，仅裁剪 + COALESCE。）
+
+    同次还纠正两处**口径错误**：「电脑开机总时长（已剔除睡眠）」过去把 `System_Sleep` 也 `SUM` 进去了（与标题直接矛盾）、「键鼠活跃估计总时间」只排除了 `System_Idle` 却把睡眠/熄屏当成了"活跃"。⚠️ 这是**时序点采样**表（`fact_system_hardware` 等按 `timestamp` 取样）不会遇到的坑——它们在睡眠期只是"无数据空档"，不会错算求和；所以**其余 4 个硬件/进程大盘无需改动**，此坑只出现在聚合 `app_usage_logs` 区间表的「屏幕使用时间」大盘。（根因 AHK 暂离回溯产生重叠 `System_Idle` 是已知数据源瑕疵，目前由大盘并集兜住；若要从源头清，需在 AHK 里把回拨夹到"不早于上一条已落盘事件的结束"。）
 
 ---
 
