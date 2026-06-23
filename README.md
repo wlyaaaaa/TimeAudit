@@ -95,7 +95,7 @@
 - 每 3 秒一拍驱动所有采集。
 - **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
 - **崩溃自愈（两层，注意盲区）**：① 主循环抛 **Python 异常**时，外层 `while True` 等 5 秒重启它；② 但若进程被 **native 崩溃**整个带走（实测 2026-06-22：psutil 的 `_psutil_windows.pyd` 触发 `0xc0000005` 访问冲突，整个 `pythonw` 段错误退出），外层 `while` 也一起死、**兜不住**——曾因此静默停摆 17 小时。这种由下面的「外部进程守护」兜底。
-- **外部进程守护**（补 native 崩溃盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 5 分钟 + 登录触发、提权）**独立于引擎**运行，只检测 `main.py` 进程在不在（刻意**不看数据延迟**，避免系统睡眠正常停写时误判重启），不在就用一次性提权任务重启它。引擎整进程死亡也能 ≤5 分钟自愈，日志见 `telemetry_watchdog.log`。
+- **外部进程守护**（补 native 崩溃盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 5 分钟 + 登录触发、提权）**独立于引擎**运行，检测 `main.py`（Python 遥测引擎）**和 `TimeAudit.ahk`（「屏幕使用时间」大盘的数据源头）两个采集进程**在不在（刻意**不看数据延迟**，避免系统睡眠正常停写时误判重启），哪个不在就用一次性提权任务把它**单独**重启。AHK 自带 `#SingleInstance Force`，重启幂等、不会重复双写。两个采集器整进程死亡都能 ≤5 分钟自愈，日志见 `telemetry_watchdog.log`。（早期此守护只盯 `main.py`，AHK 一旦崩溃就会让屏幕使用时间数据源静默断流、无人拉起——已于 2026-06-23 补齐。）
 - **睡眠/唤醒处理**（重点，见第 7 节）：用"墙上时间"判断系统是否刚从睡眠/休眠醒来，醒来后把跨睡眠的脏数据截断掉。
 - **冷启动清理**：每次启动先把上次"关机时没来得及收尾"的前台会话补上结束时间（否则会留下永远不结束的"幽灵行"）。
 - **分区预热**：每 12 小时（按墙上时间）提前把"下一周/下一月"的数据库分区建好，免得到了周一零点没表可写而丢数据。
@@ -235,6 +235,11 @@
 20. **分区大表查询强制裁剪下推（Grafana SQL 核心调优）。**
     数据库内 `fact_process_activity`（活跃进程表）是高频时序数据，运行三年后将积累数千万行数据。为避免全表扫描或全分区扫描拖垮数据库甚至导致 Grafana 面板超时卡死，在编写或修改任何针对该表（及其他分区表）的 SQL 查询时，**必须在 WHERE 子句中显式加上时间下界**（如 `timestamp >= $__timeFrom()` 或带有明确的时间间隔偏移）。若有 JOIN 查询，在 JOIN 条件中也必须将关联时间下界下推，确保 PostgreSQL 的优化器百分之百进行“分区剪裁”（Partition Pruning）。
 
+21. **区间型数据（`start_time` + `duration`）按时间窗汇总，必须"裁剪到窗口"，绝不能 `SUM(duration) WHERE $__timeFilter(start_time)`。**
+    `app_usage_logs` 存的是**区间事件**（起点 + 时长），不是时间点采样。早期「屏幕使用时间」大盘的统计卡直接 `SUM(duration_seconds) WHERE $__timeFilter(start_time)`——只要事件**起点**落在窗口内，就把**整条时长**计进去。短事件（2–300 秒）误差可忽略，但遇到横跨一小时以上的 `System_Sleep`（一次合盖深睡眠就是一条 6782 秒 / ≈1:53 的事件）就彻底穿帮：① 起点早于窗口起点的长睡眠被**整条漏算**——「过去 1 小时」视图里深睡眠卡只显示"几秒"，而旁边的「用户使用电脑状态时间轴」却画着一大块睡眠，**两个面板自相矛盾**（这正是 2026-06-23 报的 bug）；② 起点在窗口内、尾巴越过窗口末端的事件被**整条超算**。根治办法是把每条事件**裁剪到当前窗口**再求和：
+    `SUM(GREATEST(0, EXTRACT(EPOCH FROM (LEAST(start_time + (duration_seconds||' seconds')::interval, $__timeTo()::timestamptz) - GREATEST(start_time, $__timeFrom()::timestamptz)))))`，
+    并把 WHERE 从 `$__timeFilter(start_time)` 换成"区间与窗口有交叠"：`start_time < $__timeTo()::timestamptz AND start_time + (duration_seconds||' seconds')::interval > $__timeFrom()::timestamptz`。同次修复还纠正了两处**口径错误**：「电脑开机总时长（已剔除睡眠）」过去把 `System_Sleep` 也 `SUM` 进去了（与标题直接矛盾）、「键鼠活跃估计总时间」只排除了 `System_Idle` 却把睡眠/熄屏当成了"活跃"。⚠️ 这是**时序点采样**表（`fact_system_hardware` 等按 `timestamp` 取样）不会遇到的坑——它们在睡眠期只是"无数据空档"，不会错算求和；所以**其余 4 个硬件/进程大盘无需改动**，此坑只出现在聚合 `app_usage_logs` 区间表的「屏幕使用时间」大盘。
+
 ---
 
 ## 8. 怎么跑起来 / 怎么看数据 / 怎么排查
@@ -305,7 +310,7 @@ E:\TimeAudit\
 ├── restore_grafana.py       从备份 JSON 恢复 Grafana 仪表盘
 │
 ├── start_all.bat            开机自启：拉起 AHK + Docker + 提权的 main.py
-├── telemetry_watchdog.ps1   外部进程守护：每5分钟查 main.py，native 崩溃则提权重启（任务 TimeAudit_Watchdog）
+├── telemetry_watchdog.ps1   外部进程守护：每5分钟查 main.py + TimeAudit.ahk，崩溃则各自提权重启（任务 TimeAudit_Watchdog）
 ├── check_status_gui.ps1     图形化状态体检小工具
 │
 ├── test_telemetry_health.py 在线健康综合体检（先跑它排查问题）

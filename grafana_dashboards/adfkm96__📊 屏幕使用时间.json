@@ -83,7 +83,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\r\n  SUM(duration_seconds) as value\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)",
+          "rawSql": "-- 🎯 窗口裁剪：把每条事件时长裁剪到当前时间窗口内，再排除深睡眠（口径与标题对齐）\nSELECT\n  SUM(GREATEST(0, EXTRACT(EPOCH FROM (\n        LEAST(start_time + (duration_seconds || ' seconds')::interval, $__timeTo()::timestamptz)\n      - GREATEST(start_time, $__timeFrom()::timestamptz)\n    ))))::bigint AS value\nFROM app_usage_logs\nWHERE process_name <> 'System_Sleep'\n  AND start_time < $__timeTo()::timestamptz\n  AND start_time + (duration_seconds || ' seconds')::interval > $__timeFrom()::timestamptz",
           "refId": "A",
           "sql": {
             "columns": [
@@ -170,7 +170,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\r\n  SUM(duration_seconds) as value\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\n  AND process_name != 'System_Idle'",
+          "rawSql": "-- 🎯 窗口裁剪 + 排除一切无键鼠交互态（深睡眠 / 熄屏 / 暂离 / 锁屏）\nSELECT\n  SUM(GREATEST(0, EXTRACT(EPOCH FROM (\n        LEAST(start_time + (duration_seconds || ' seconds')::interval, $__timeTo()::timestamptz)\n      - GREATEST(start_time, $__timeFrom()::timestamptz)\n    ))))::bigint AS value\nFROM app_usage_logs\nWHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'System_LockScreen')\n  AND start_time < $__timeTo()::timestamptz\n  AND start_time + (duration_seconds || ' seconds')::interval > $__timeFrom()::timestamptz",
           "refId": "A",
           "sql": {
             "columns": [
@@ -252,7 +252,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT\r\n  -- 1. 🎯 统计息屏挂机总长：风扇在转、屏幕黑着、人不在\r\n  SUM(CASE WHEN process_name = 'System_DisplayOff' THEN duration_seconds ELSE 0 END) as \"显示器熄灭时长\",\r\n  \r\n  -- 2. 🎯 统计真硬件睡眠总长：主板合盖、风扇彻底停转的冷冻时间\r\n  SUM(CASE WHEN process_name = 'System_Sleep' THEN duration_seconds ELSE 0 END) as \"操作系统深睡眠时长\"\r\nFROM app_usage_logs\r\n-- 🔒 完美套用 Grafana 全局时间筛选器，支持任意历史跨度查询\r\nWHERE $__timeFilter(start_time);",
+          "rawSql": "-- 🎯 窗口裁剪：分别统计熄屏与深睡眠落在当前窗口内的真实秒数，与「用户使用电脑状态时间轴」严格一致\nSELECT\n  SUM(CASE WHEN process_name = 'System_DisplayOff' THEN clip_sec ELSE 0 END)::bigint AS \"显示器熄灭时长\",\n  SUM(CASE WHEN process_name = 'System_Sleep'      THEN clip_sec ELSE 0 END)::bigint AS \"操作系统深睡眠时长\"\nFROM (\n  SELECT\n    process_name,\n    GREATEST(0, EXTRACT(EPOCH FROM (\n        LEAST(start_time + (duration_seconds || ' seconds')::interval, $__timeTo()::timestamptz)\n      - GREATEST(start_time, $__timeFrom()::timestamptz)\n    ))) AS clip_sec\n  FROM app_usage_logs\n  WHERE process_name IN ('System_DisplayOff', 'System_Sleep')\n    AND start_time < $__timeTo()::timestamptz\n  AND start_time + (duration_seconds || ' seconds')::interval > $__timeFrom()::timestamptz\n) q;",
           "refId": "A",
           "sql": {
             "columns": [
