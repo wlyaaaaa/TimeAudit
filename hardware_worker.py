@@ -570,6 +570,7 @@ class HardwareTelemetryWorker:
                                     creationflags=subprocess.CREATE_NO_WINDOW,
                                     cwd=os.path.dirname(lhm_path)
                                 )
+                                lhm_stuck_fails = 0
                                 print("[🛸 硬件探针] 伴随驱动进程缺失，自动看门狗已隐藏复活 LibreHardwareMonitor。")
                             except Exception as e:
                                 print(f"[⚠️ 硬件探针] 自动看门狗拉起 LibreHardwareMonitor 失败: {e}")
