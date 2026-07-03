@@ -527,7 +527,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU 温度与功率 (RTX 5090 D)",
+      "title": "GPU 温度与功率 (RTX5080)",
       "type": "timeseries"
     },
     {
@@ -2253,7 +2253,7 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS range_start,\n    $__timeTo()::timestamptz AS range_end\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.range_start) / extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval)))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.range_end) / extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval)))::timestamptz,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\nper_sample AS (\n  SELECT \n    timestamp,\n    COUNT(process_key) AS procs,\n    SUM(proc_thread_count) AS threads\n  FROM public.fact_process_activity, time_bounds b\n  WHERE timestamp >= $__timeFrom()::timestamptz\n    AND timestamp <= $__timeTo()::timestamptz\n  GROUP BY timestamp\n),\naggregated_data AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from timestamp) / extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval)))::timestamptz AS bucket_time,\n    ROUND(AVG(procs)) AS procs,\n    ROUND(AVG(threads)) AS threads\n  FROM per_sample\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS \"time\",\n  ad.procs AS \"活跃进程数\",\n  ad.threads AS \"线程总数\"\nFROM time_grid g\nLEFT JOIN aggregated_data ad ON ad.bucket_time = g.grid_time\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS range_start,\n    $__timeTo()::timestamptz AS range_end\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.range_start) / extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval)))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.range_end) / extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval)))::timestamptz,\n    GREATEST(interval '3 seconds', ('$__interval')::interval)\n  ) AS grid_time\n  FROM time_bounds b\n),\nper_sample AS (\n  SELECT \n    timestamp,\n    COUNT(process_key) AS procs,\n    SUM(proc_thread_count) AS threads\n  FROM public.fact_process_activity, time_bounds b\n  WHERE timestamp >= b.range_start\n    AND timestamp <= b.range_end\n  GROUP BY timestamp\n),\naggregated_data AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from timestamp) / extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval))) * extract(epoch from GREATEST(interval '3 seconds', ('$__interval')::interval)))::timestamptz AS bucket_time,\n    ROUND(AVG(procs)) AS procs,\n    ROUND(AVG(threads)) AS threads\n  FROM per_sample\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS \"time\",\n  ad.procs AS \"活跃进程数\",\n  ad.threads AS \"线程总数\"\nFROM time_grid g\nLEFT JOIN aggregated_data ad ON ad.bucket_time = g.grid_time\nORDER BY 1;",
           "refId": "A"
         }
       ],
@@ -2516,7 +2516,7 @@
           "refId": "A"
         }
       ],
-      "title": "整机显存总占用 (RTX 5090 D)",
+      "title": "整机显存总占用 (RTX5080)",
       "type": "timeseries"
     },
     {
