@@ -113,8 +113,8 @@ class HardwareTelemetryWorker:
         self.cached_wmi_temp = None        # CPU 封装温度 (LHM: Core (Tctl/Tdie))
         self.cached_wmi_power = None        # CPU 封装功率 (LHM: Powers/Package)
         self.cached_cpu_vcore = None        # CPU Vcore (LHM: 主板 Super I/O 真实读数)
-        self.cached_gpu_voltage = None      # RTX5080 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
-        self.cached_gpu_hotspot = None      # RTX5080 显存结点/热点温度 (LHM)
+        self.cached_gpu_voltage = None      # NVIDIA GPU 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
+        self.cached_gpu_hotspot = None      # NVIDIA GPU 显存结点/热点温度 (LHM)
         self.stop_event = threading.Event()
         
         self.pdh_lock = threading.Lock()
@@ -525,7 +525,7 @@ class HardwareTelemetryWorker:
 
     def _background_lhm_loop(self):
         """通过 LibreHardwareMonitor 内置 Web 服务(/data.json)采集 NVML/PDH 无法可靠提供的真实硬件量：
-        CPU Vcore、CPU 封装温度(Tctl/Tdie)与功率、RTX5080 核心电压与显存结点(热点)温度。
+        CPU Vcore、CPU 封装温度(Tctl/Tdie)与功率、NVIDIA GPU 核心电压与显存结点(热点)温度。
         相比旧的 WMI(root\\LibreHardwareMonitor) 通道：该命名空间在本机并未发布、旧通道长期失败并退化到
         伪造/静态值；HTTP JSON 通道无需 WMI 注册、稳定且为 LHM 官方推荐。同时内置看门狗保活 LHM 进程。"""
         import urllib.request
@@ -645,7 +645,7 @@ class HardwareTelemetryWorker:
                     pass
 
     def _read_gpu_throttle_reasons(self):
-        """隔离的降频原因读取。GeForce 同样支持该接口(本机 RTX5080 实测返回 0x0，AI 所谓"仅
+        """隔离的降频原因读取。GeForce 同样支持该接口(本机 NVIDIA 驱动实测返回 0x0，AI 所谓"仅
         Tesla/Quadro 支持→GeForce 必崩"的结论被实机证伪)，但不同驱动/pynvml 版本里该函数已从
         ...ThrottleReasons 改名为 ...EventReasons。任一失败都返回 0 且绝不上抛——防止单个非致命
         调用拖垮整块 GPU 采集并触发 nvmlShutdown 级联重载，把温度/时钟/占用全部清零。"""
@@ -971,7 +971,7 @@ class HardwareTelemetryWorker:
             "system_commit_size_gb": commit_gb, 
             "system_hard_page_faults": system_hard_page_faults,
             "gpu_usage": gpu_usage if gpu_usage is not None else 0.0,
-            "gpu_core_voltage": gpu_core_voltage,   # LHM(NVAPI) RTX5080 真实核心电压；不可用时写 NULL
+            "gpu_core_voltage": gpu_core_voltage,   # LHM(NVAPI) NVIDIA GPU 真实核心电压；不可用时写 NULL
             "gpu_core_clock": gpu_core_clock if gpu_core_clock is not None else 0,
             "gpu_mem_clock": gpu_mem_clock if gpu_mem_clock is not None else 0,
             "gpu_core_temp": gpu_core_temp if gpu_core_temp is not None else 0.0, 

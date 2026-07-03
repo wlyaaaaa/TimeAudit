@@ -28,7 +28,7 @@
 | "通宵跑 AI 训练耗了多少电？" | 对 `gpu_board_power` + `cpu_package_power` 按时间积分。 |
 | "那个程序无缘无故闪退，死因是什么？" | 查它的 `EXIT` 事件里的退出码（如 `0xC0000005` = 内存非法访问）。 |
 
-**适用场景**：个人的高配工作站（本项目就是为 Windows 11 + AMD 9950X3D + RTX 5080 这套机器调的），
+**适用场景**：个人的高配工作站（本项目就是为 Windows 11 + AMD 9950X3D + NVIDIA GeForce RTX 5090 D 这套机器调的），
 想长期、细粒度地审计自己电脑的性能与时间花销。它**不是**给公司批量部署的监控（没有多机、没有告警推送），就是一个硬核极客的"自己电脑的飞行记录仪"。
 
 ---
@@ -108,7 +108,7 @@
 
 ### `activity_worker.py` — 活跃进程舱
 - 用 NTDLL 一次性拿到全系统进程快照（比逐个 psutil 快得多），算出每个进程这一拍的 CPU、磁盘读写、IOPS（都是"速率"，靠两拍差分算）。
-- GPU 显存/占用走 Windows 图形内核的 PDH 计数器（和任务管理器同源），并**只认 RTX 5080 这张独显**（按厂商 ID 锁 LUID，隔离核显和虚拟显示器，见第 7 节）。
+- GPU 显存/占用走 Windows 图形内核的 PDH 计数器（和任务管理器同源），并**只认 NVIDIA 独显**（按厂商 ID 锁 LUID，隔离核显和虚拟显示器，见第 7 节）。
 - 网络流量按"每进程连接数占比"近似分摊（这是个已知的粗略估算，不是精确值）。
 - 写进 `fact_process_activity`，并维护进程身份维度表 `dim_process_registry`。
 
@@ -198,10 +198,10 @@
 
 5. **每进程 CPU 归一化到 0–100%**（除以逻辑核数并封顶）。不要改回"单核百分比"，否则多线程进程会冒出 2500% 这种吓人的值。
 
-6. **GPU 只认 RTX 5080 这张独显。** 这台机器有三个显示适配器（RTX5080 独显 + AMD 核显 + 向日葵虚拟显示器）。核显是 UMA 架构会把系统内存误报成几十 GB"专用显存"。所以开机时从注册表按厂商 ID(NVIDIA=0x10DE) 锁定独显的 LUID 前缀，之后每进程 GPU 数据只认这张卡。
+6. **GPU 只认 NVIDIA 独显。** 这台机器有三个显示适配器（RTX 5090 D 独显 + AMD 核显 + 向日葵虚拟显示器）。核显是 UMA 架构会把系统内存误报成几十 GB"专用显存"。所以开机时从注册表按厂商 ID(NVIDIA=0x10DE) 锁定独显的 LUID 前缀，之后每进程 GPU 数据只认这张卡。
 
 7. **NVML 的每个易失败调用要各自隔离。**
-   降频原因、PCIe 吞吐这些调用在某些驱动版本会抛异常；它们各自包了 try，单个失败不会把整块 GPU 采集拖垮、更不会触发 `nvmlShutdown` 把 GPU 数据全部清零。（注：throttle 接口在本机 RTX5080 上实测是支持的，不会崩。）
+   降频原因、PCIe 吞吐这些调用在某些驱动版本会抛异常；它们各自包了 try，单个失败不会把整块 GPU 采集拖垮、更不会触发 `nvmlShutdown` 把 GPU 数据全部清零。（注：throttle 接口在当前 NVIDIA 驱动上实测是支持的，不会崩。）
 
 8. **两个外部 exe 必须保持在线，靠"看门狗重拉"而不是"降级造假"。**
    LibreHardwareMonitor / PresentMon 掉了就自动隐身重启；LHM 网页服务卡死连续 ~15 秒也强杀重拉。理念是"要么采到真值，要么重启再采，绝不写假数据"。
@@ -269,6 +269,16 @@ python E:\TimeAudit\telemetry_test_suite.py
 python E:\TimeAudit\test_optimizations.py
 ```
 
+**跑深度数据库审计**（逐表查行数 / 越界值 / 孤儿外键 / 时序一致性 / 分区健康，并带自动化断言）：
+```powershell
+python E:\TimeAudit\db_audit.py
+```
+
+**跑大盘 SQL 分区裁剪审计**（扫描 `grafana_dashboards/` 里的 SQL，确认高频分区表只扫当前时间范围分区）：
+```powershell
+python E:\TimeAudit\test_sql_partition_explain.py
+```
+
 **手动重启引擎**（用配好的提权计划任务，最干净）：
 ```powershell
 schtasks /run /tn TimeAudit_AutoStart
@@ -285,7 +295,30 @@ powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_all.ps1
 
 ---
 
-## 9. 目录结构
+## 9. 审计这个项目的几个方向
+
+如果要系统审计 TimeAudit，不建议只做普通代码走读。它的风险主要在“长期 7×24 写入 + Windows 本机权限 + 时序数据口径 + Grafana SQL”这几个交叉点。推荐按下面几条线推进：
+
+1. **采集链路与自愈审计**
+   重点看 `main.py` 的 3 秒主循环、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明 `main.py`、`TimeAudit.ahk`、`LibreHardwareMonitor.exe`、`PresentMonConsole.exe` 任一掉线后能恢复，且不会因多实例导致重复写库。入口脚本：`python E:\TimeAudit\test_telemetry_health.py`，再对照 `telemetry.log` / `telemetry_watchdog.log`。
+
+2. **数据正确性与时序边界审计**
+   重点看睡眠/唤醒、锁屏、系统时间回拨、跨周/月分区边界、前台会话闭合、`duration_ms` 是否为负、硬件数值是否物理越界。入口脚本：`python E:\TimeAudit\db_audit.py`。这里尤其要盯 `time.time()` 与 `time.monotonic()` 的分工，别把“落库时间戳”和“速率差分分母”混在一起。
+
+3. **数据库分区、索引与 Grafana SQL 审计**
+   重点看 `schema.sql`、`auto_warmup_partitions()`、`auto_retention_cleanup()`、`docker-compose.yml` 的 PG 参数，以及 `grafana_dashboards/*.json` 里的 SQL。目标是确认所有面板都有时间条件下推、能触发分区裁剪，且新增索引不会把每 3 秒写入成本放大太多。入口脚本：`python E:\TimeAudit\test_sql_partition_explain.py`，必要时进库手动 `EXPLAIN (ANALYZE, BUFFERS)`。
+
+4. **取证与安全口径审计**
+   重点看 `dim_process_registry`、`fact_process_lifecycle_events`、签名校验、提权状态、系统进程仿冒、LOLBins、高危端口和敏感窗口期后台活动。目标不是“拦截恶意软件”，而是确认数据足够可靠，能在事后还原：谁启动、从哪启动、是否签名、是否管理员、何时退出、退出码是什么。采集端拿不到真实路径时必须写成 `<unknown>\进程名`，不能伪造成 `C:\Windows\System32\...`；回归入口：`python E:\TimeAudit\test_lifecycle_unknown_path.py`。
+
+5. **备份、恢复与文档一致性审计**
+   重点看 `backup_all.ps1`、`backup_db.ps1`、`backup_grafana.py`、`restore_grafana.py`、`快速部署.md` 的恢复步骤，以及 README / PDF 是否与真实脚本同步。目标是至少能从最近一次 `.dump` + Grafana 备份恢复出可用系统。回归入口：`python E:\TimeAudit\test_backup_all_script.py`、`python E:\TimeAudit\restore_grafana.py --dry-run`，以及对最新 `.dump` 跑 `pg_restore -l`。改完 Markdown 后跑 `python E:\TimeAudit\build_docs_pdf.py --docs README.md 使用手册.md 快速部署.md` 更新对应 PDF。
+
+推荐顺序：先跑 `test_telemetry_health.py` 确认链路活着，再跑 `db_audit.py` 看历史数据有没有脏口径，最后跑 `test_sql_partition_explain.py` 审大盘性能。若三者都绿，再进入代码级 review，效率最高。
+
+---
+
+## 10. 目录结构
 
 ```
 E:\TimeAudit\
@@ -317,8 +350,10 @@ E:\TimeAudit\
 ├── check_status_gui.ps1     图形化状态体检小工具
 │
 ├── test_telemetry_health.py 在线健康综合体检（先跑它排查问题）
+├── db_audit.py              深度数据库审计（逐表/字段/跨表一致性 + 自动断言）
 ├── telemetry_test_suite.py  单元/集成测试套件（6 个用例）
 ├── test_optimizations.py    优化/修复回归测试（连接池/调优/无响应检测/前端，14 用例）
+├── test_sql_partition_explain.py Grafana SQL 分区裁剪与执行计划审计
 │
 ├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :8085）
 ├── PresentMonConsole.exe    外部帧率探针（FPS / 帧时间）
@@ -334,13 +369,13 @@ E:\TimeAudit\
 
 ---
 
-## 10. 给 AI 维护者的快速上手清单
+## 11. 给 AI 维护者的快速上手清单
 
 1. **先读第 7 节"关键设计 & 坑"**，那里是历史血泪，照着它就不会把修好的 bug 改回去。
-2. **改完代码先跑三件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_optimizations.py`（应 14/14 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。
+2. **改完代码先跑三件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_optimizations.py`（应 14/14 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。改 Grafana SQL 或数据库口径时，额外跑 `python db_audit.py` 和 `python test_sql_partition_explain.py`。
 3. **跑测试要用 UTF-8**：默认 GBK 控制台会因日志里的 emoji 崩；套件已自愈 stdout，但你手动跑别的脚本时记得 `PYTHONUTF8=1`。
 4. **这是写密集时序库**：每 3 秒几十行写入。加索引、改表结构前先想清楚写放大代价。
-5. **本机就是目标机**（RTX 5080 + 9950X3D，PostgreSQL 跑在 55432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
+5. **本机就是目标机**（RTX 5090 D + 9950X3D，PostgreSQL 跑在 55432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
 6. **测试里 mock NVML 时，假句柄(MagicMock)千万别传给真实 NVML 函数**——会在 C 层访问违例直接把进程干崩（try/except 拦不住）。所有 NVML 函数名都要 mock 到位。
 
 ---

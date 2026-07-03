@@ -2,7 +2,7 @@
 """
 TimeAudit — Grafana 仪表盘恢复
 ==============================
-把 grafana_backups/dashboards/ 里备份的仪表盘 JSON，通过 Grafana API 重新导入回 Grafana。
+把 grafana_dashboards/ 里备份的仪表盘 JSON，通过 Grafana API 重新导入回 Grafana。
 用于：换电脑迁移、灾后恢复，或不小心改坏了仪表盘想回滚。
 
 手动跑：

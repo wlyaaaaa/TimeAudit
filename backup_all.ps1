@@ -17,16 +17,42 @@ $env:PATH = $env:PATH + ";C:\Program Files\Git\cmd;C:\Program Files\Docker\Docke
 # 强制 Python UTF-8 模式，避免非交互环境下 stdout 默认 GBK 编不了 ✓/❌ 等字符而崩溃。
 $env:PYTHONUTF8 = "1"
 
+function Invoke-LoggedCommand {
+    param([scriptblock]$Command)
+
+    try {
+        $global:LASTEXITCODE = 0
+        & $Command 2>&1 | ForEach-Object {
+            "$_" | Out-File $log -Append -Encoding utf8
+        }
+        if ($null -eq $global:LASTEXITCODE) { return 0 }
+        return [int]$global:LASTEXITCODE
+    } catch {
+        "[backup-all] ERROR $($_.Exception.Message)" | Out-File $log -Append -Encoding utf8
+        return 1
+    }
+}
+
+$exitCode = 0
+
 "============================================================" | Out-File $log -Encoding utf8
 "[backup-all] start $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $log -Append -Encoding utf8
 
 # 1) PostgreSQL —— 用独立 powershell 进程跑，隔离它内部的 exit 调用
 "[backup-all] 1/2 备份 PostgreSQL 数据库..." | Out-File $log -Append -Encoding utf8
-& powershell -NoProfile -ExecutionPolicy Bypass -File "E:\TimeAudit\backup_db.ps1" *>> $log
+$dbExit = Invoke-LoggedCommand { powershell -NoProfile -ExecutionPolicy Bypass -File "E:\TimeAudit\backup_db.ps1" }
+if ($dbExit -ne 0) {
+    "[backup-all] PostgreSQL 备份失败，exit=$dbExit" | Out-File $log -Append -Encoding utf8
+    $exitCode = $dbExit
+}
 
 # 2) Grafana 仪表盘 —— 用系统级 py 启动器，免疫 PATH 顺序/uv shim 问题
 "[backup-all] 2/2 备份 Grafana 仪表盘(导出JSON + git提交 + grafana.db)..." | Out-File $log -Append -Encoding utf8
-& py "E:\TimeAudit\backup_grafana.py" *>> $log
+$grafanaExit = Invoke-LoggedCommand { py "E:\TimeAudit\backup_grafana.py" }
+if ($grafanaExit -ne 0) {
+    "[backup-all] Grafana 备份失败，exit=$grafanaExit" | Out-File $log -Append -Encoding utf8
+    if ($exitCode -eq 0) { $exitCode = $grafanaExit }
+}
 
 "[backup-all] done $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $log -Append -Encoding utf8
-exit 0
+exit $exitCode

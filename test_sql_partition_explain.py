@@ -41,6 +41,32 @@ p_year, p_week, _ = prev_week_date.isocalendar()
 prev_week_suffix = f"y{p_year}w{p_week:02d}"
 
 
+def month_suffixes_between(start_dt, end_dt):
+    suffixes = []
+    cursor = datetime.date(start_dt.year, start_dt.month, 1)
+    end_month = datetime.date(end_dt.year, end_dt.month, 1)
+    while cursor <= end_month:
+        suffixes.append(f"y{cursor.year}m{cursor.month:02d}")
+        if cursor.month == 12:
+            cursor = datetime.date(cursor.year + 1, 1, 1)
+        else:
+            cursor = datetime.date(cursor.year, cursor.month + 1, 1)
+    return suffixes
+
+
+def allowed_hardware_month_suffixes(test_sql):
+    """硬件表按月分区；老化趋势等长窗口查询允许跨到上一个月。"""
+    match = re.search(
+        r"timestamp\s*>=\s*now\(\)\s*-\s*interval\s+'(\d+)\s+days?'",
+        test_sql,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        start_dt = now_cn - datetime.timedelta(days=int(match.group(1)))
+        return month_suffixes_between(start_dt, now_cn)
+    return [current_month_suffix]
+
+
 print("=" * 60)
 print("  TimeAudit 大盘 SQL 分区剪裁与索引验证测试")
 print(f"  当前北京时间: {now_cn.strftime('%Y-%m-%d %X')}")
@@ -162,7 +188,7 @@ async def run_explain_tests(sql_list):
                 
                 # 1. 活跃进程表 (周分区)
                 # 使用 on 后缀匹配防止匹配到被截断的索引名称
-                activity_matches = re.findall(r'on\s+(?:public\.)?fact_process_activity_(y\d+w\d+)', plan_text, flags=re.IGNORECASE)
+                activity_matches = re.findall(r'on\s+(?:public\.)?fact_process_activity_(y\d{4}w\d{2})(?:\b|_)', plan_text, flags=re.IGNORECASE)
                 if activity_matches:
                     for suffix in activity_matches:
                         allowed = [current_week_suffix]
@@ -172,7 +198,7 @@ async def run_explain_tests(sql_list):
                             pruning_errors.append(f"扫描了非活跃范围分区: fact_process_activity_{suffix} (允许范围: {allowed})")
                 
                 # 2. 前台上下文表 (周分区)
-                context_matches = re.findall(r'on\s+(?:public\.)?fact_process_context_(y\d+w\d+)', plan_text, flags=re.IGNORECASE)
+                context_matches = re.findall(r'on\s+(?:public\.)?fact_process_context_(y\d{4}w\d{2})(?:\b|_)', plan_text, flags=re.IGNORECASE)
                 if context_matches:
                     for suffix in context_matches:
                         allowed = [current_week_suffix]
@@ -183,11 +209,12 @@ async def run_explain_tests(sql_list):
 
                             
                 # 3. 整机硬件能效表 (月分区)
-                hardware_matches = re.findall(r'on\s+(?:public\.)?fact_system_hardware_(y\d+m\d+)', plan_text, flags=re.IGNORECASE)
+                hardware_matches = re.findall(r'on\s+(?:public\.)?fact_system_hardware_(y\d{4}m\d{2})(?:\b|_)', plan_text, flags=re.IGNORECASE)
                 if hardware_matches:
+                    allowed = allowed_hardware_month_suffixes(test_sql)
                     for suffix in hardware_matches:
-                        if suffix != current_month_suffix:
-                            pruning_errors.append(f"扫描了非当前月分区: fact_system_hardware_{suffix}")
+                        if suffix not in allowed:
+                            pruning_errors.append(f"扫描了非当前月分区: fact_system_hardware_{suffix} (允许范围: {allowed})")
                 
                 if pruning_errors:
                     print(f"❌ FAIL [{idx+1}] {filename} -> {panel_name}")

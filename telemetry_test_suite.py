@@ -75,6 +75,8 @@ class TelemetryEngineTestSuite(unittest.TestCase):
         pynvml.nvmlDeviceGetGraphicsRunningProcesses = MagicMock(return_value=[])
         pynvml.nvmlDeviceGetProcessUtilization = MagicMock(return_value=[])
 
+        activity_worker = None
+        hardware_worker = None
         try:
             activity_worker = ProcessActivityWorker()
             hardware_worker = HardwareTelemetryWorker()
@@ -130,9 +132,6 @@ class TelemetryEngineTestSuite(unittest.TestCase):
 
             print(f" 📊  性能耗时反馈 -> 平均: {avg_lat:.2f}ms | 中位: {median_lat:.2f}ms | P95: {p95_lat:.2f}ms | 最差: {worst_lat:.2f}ms")
 
-            # 释放常驻资源
-            hardware_worker.terminate()
-
             # 以"中位拍"作为可持续吞吐 SLA：引擎实际以 3s 节拍运行。中位阈值定为 1500ms(节拍的一半)——
             # Windows 上对数百进程(含不断新生的瞬时 cmd/conhost 等)采集身份时，psutil.cmdline() 对启动中/
             # 受保护进程会触发 ERROR_PARTIAL_COPY 内部重试 sleep，这是固有成本(cProfile 实证)，500ms 不现实。
@@ -142,6 +141,10 @@ class TelemetryEngineTestSuite(unittest.TestCase):
             self.assertLess(worst_lat, 3000.0, "性能严重退化：单轮遥测耗时逼近/超过 3s 采集节拍上限。")
             print(" ✅  性能测试达标！稳态中位采样延迟在 3s 节拍预算内且不阻塞事件循环。")
         finally:
+            if activity_worker is not None:
+                activity_worker.terminate()
+            if hardware_worker is not None:
+                hardware_worker.terminate()
             # 恢复原始 NVML 驱动绑定
             pynvml.nvmlInit = orig_init
             pynvml.nvmlDeviceGetHandleByIndex = orig_get_handle
@@ -293,6 +296,7 @@ class TelemetryEngineTestSuite(unittest.TestCase):
             if len(args) > 1:
                 hw_executed_args = args
                 
+        activity_worker.terminate()
         hardware_worker.terminate()
         
         # 🚨 断言：两张事实表写入时使用的时间戳完全相等，保障等值 Join 完整关联
@@ -302,10 +306,10 @@ class TelemetryEngineTestSuite(unittest.TestCase):
         print(f" ✅  时间戳微秒级物理对齐测试成功！对齐时间线: {activity_executed_args[0]}")
 
     # =========================================================================
-    # 🎯 数据正确性测试：RTX 5080 显存结温保护与 Hotspot 合并
+    # 🎯 数据正确性测试：Blackwell/GDDR7 显存结温保护与 Hotspot 合并
     # =========================================================================
-    def test_04_rtx_5080_blackwell_gddr7_hotspot_safety_clamp(self):
-        print("\n[TEST-04] 正确性验证：RTX 5080 显存颗粒温控与 Hotspot 合并限制测试...")
+    def test_04_blackwell_gddr7_hotspot_safety_clamp(self):
+        print("\n[TEST-04] 正确性验证：Blackwell/GDDR7 显存颗粒温控与 Hotspot 合并限制测试...")
         
         # 模拟 NVML 物理读取接口，将其进行全防御的 Monkey-Patch
         import pynvml
@@ -353,6 +357,8 @@ class TelemetryEngineTestSuite(unittest.TestCase):
             # 🚨 验证 2：板卡热点温度是否自动被温度最高的显存颗粒结温（98°C）实施合并保护
             self.assertEqual(metrics["gpu_hotspot_temp"], 98.0, "热点温度合并机制失效，未能反映真实的 GDDR7 显存结温过载状态。")
         finally:
+            if worker is not None:
+                worker.terminate()
             pynvml.nvmlDeviceGetTemperature = orig_get_temp
             pynvml.nvmlDeviceGetUtilizationRates = orig_get_util
             pynvml.nvmlDeviceGetPowerUsage = orig_get_power
@@ -361,8 +367,6 @@ class TelemetryEngineTestSuite(unittest.TestCase):
                 pynvml.nvmlDeviceGetCurrentClocksEventReasons = orig_get_event
             pynvml.nvmlDeviceGetClockInfo = orig_get_clock
             pynvml.nvmlDeviceGetPcieThroughput = orig_get_pcie
-            if worker is not None:
-                worker.terminate()
 
         print(f" ✅  显存结温极限合并保护校验通过！Core: {metrics['gpu_core_temp']}°C | Hotspot: {metrics['gpu_hotspot_temp']}°C (已准确融合 GDDR7 高热红线)")
 

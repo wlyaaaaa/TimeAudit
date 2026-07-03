@@ -1,7 +1,14 @@
 # -*- coding: utf-8 -*-
 import asyncio
 import datetime
+import sys
 import asyncpg
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # 数据库 DSN 配置
 DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"

@@ -7,7 +7,7 @@ import psutil
 import os
 import re
 
-from lifecycle_worker import check_process_elevation, check_file_signature
+from lifecycle_worker import check_process_elevation, check_file_signature, unknown_executable_path
 
 user32 = ctypes.windll.user32
 kernel32 = ctypes.windll.kernel32
@@ -135,7 +135,7 @@ class WindowStateTracker:
 
         return {
             "process_name": "Unknown_Protected_Process",
-            "executable_path": "C:\\Windows\\System32\\Unknown.exe",
+            "executable_path": unknown_executable_path("Unknown.exe"),
             "parent_process": None, "command_line": "", "service_name": None,
             "is_elevated": -1, "signature_status": 0
         }

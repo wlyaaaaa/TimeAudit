@@ -208,7 +208,7 @@ class ProcessActivityWorker:
         self.path_elevation_cache = {} 
         self.nvml_initialized = False
         self.gpu_handle = None
-        self.gpu_total_vram_gb = 0.0   # RTX5080 整卡显存容量(GB)，每进程专用显存的物理上限
+        self.gpu_total_vram_gb = 0.0   # NVIDIA 独显整卡显存容量(GB)，每进程专用显存的物理上限
         self.num_cpus = psutil.cpu_count(logical=True) or 1   # 逻辑核数(9950X3D=32)，用于把每进程 CPU 归一化为整机占用%
 
         self.cpu_time_cache = {}
@@ -219,16 +219,17 @@ class ProcessActivityWorker:
         self.net_conn_cache = {}
         self.shared_vram_cache = {}
         self.hung_pids_cache = set()   # 后台线程每拍刷新的“无响应/卡死”进程 PID 集合(IsHungAppWindow 同源)
+        self.stop_event = threading.Event()
         
         self.vram_map_cache = {}
         self.gpu_util_map_cache = {}
-        # 【RTX5080 永久锁定】本机为三适配器拓扑：RTX5080 独显 + 9950X3D 的 AMD 核显 + 向日葵
+        # 【NVIDIA 独显永久锁定】本机为三适配器拓扑：NVIDIA 独显 + 9950X3D 的 AMD 核显 + 向日葵
         # 虚拟显示器(OrayIddDriver)。AMD 核显是 UMA 架构，会把大块系统内存误报成"专用显存"
         # (实测 dwm 在核显上"专用显存"高达 47GB，远超任何物理显存)，旧的"每轮取最大专用显存"
-        # 启发式因此会被核显骗到，把游戏的显存/占用算到核显上、导致 RTX5080 进程数据恒为 ~0。
-        # 现改为开机时从 DirectX 注册表按厂商 ID(NVIDIA=0x10DE)确定锁定 RTX5080 的 LUID 前缀，
+        # 启发式因此会被核显骗到，把游戏的显存/占用算到核显上、导致独显进程数据恒为 ~0。
+        # 现改为开机时从 DirectX 注册表按厂商 ID(NVIDIA=0x10DE)确定锁定 NVIDIA 独显的 LUID 前缀，
         # 之后所有每进程 GPU 数据只认这张卡。LUID 每次开机重分配，故每次启动重读；来源是确定的
-        # 硬件厂商 ID，绝非动态猜测，满足"不需要动态识别、永远是 RTX5080"的要求。
+        # 硬件厂商 ID，绝非动态猜测。
         self.nvidia_luid_prefixes = self._detect_nvidia_luid_prefixes()
         if self.nvidia_luid_prefixes:
             print(f"[🎮 GPU 进程遥测] 已按厂商 ID 锁定 NVIDIA 独显 LUID 前缀 {sorted(self.nvidia_luid_prefixes)}，核显/虚拟显示器一律隔离。")
@@ -453,7 +454,7 @@ class ProcessActivityWorker:
                 # 才是常驻专用显存：dwm 仅 1.35GB，且全进程合计 ~4.9GB 与整卡实际已用 ~5.7GB 吻合。
                 h_dedicated_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Process Memory(*)\\Local Usage")
                 h_gpu_engine = self._pdh_add_counter(pdh, pdh_query, "\\GPU Engine(*)\\Utilization Percentage")
-                # 每适配器专用显存总量，用于在双 GPU(独显+核显+虚拟显示器)中识别独显 RTX5080
+                # 每适配器专用显存总量，用于在双 GPU(独显+核显+虚拟显示器)中识别 NVIDIA 独显
                 h_adapter_mem = self._pdh_add_counter(pdh, pdh_query, "\\GPU Adapter Memory(*)\\Dedicated Usage")
                 pdh_initialized = any([h_shared_mem, h_dedicated_mem, h_gpu_engine])
                 print(f"[🎮 GPU 进程遥测] PDH 计数器并网: 共享显存={'✅' if h_shared_mem else '❌'} | 专用显存={'✅' if h_dedicated_mem else '❌'} | GPU引擎利用率={'✅' if h_gpu_engine else '❌'} | 适配器甄别={'✅' if h_adapter_mem else '❌'}")
@@ -467,7 +468,7 @@ class ProcessActivityWorker:
         except:
             pass
 
-        while True:
+        while not self.stop_event.is_set():
             temp_net_conn = {}
             try:
                 from collections import defaultdict
@@ -505,7 +506,7 @@ class ProcessActivityWorker:
                 try:
                     res = pdh.PdhCollectQueryData(pdh_query)
                     if res == 0:
-                        # 【RTX5080 厂商级锁定】只统计 NVIDIA 独显上的每进程显存/占用，彻底隔离
+                        # 【NVIDIA 厂商级锁定】只统计 NVIDIA 独显上的每进程显存/占用，彻底隔离
                         # AMD 核显(UMA 会把系统内存误报成巨量专用显存)与向日葵虚拟显示器。
                         nv = self.nvidia_luid_prefixes
                         if not nv:
@@ -514,7 +515,7 @@ class ProcessActivityWorker:
                             if nv:
                                 print(f"[🎮 GPU 进程遥测] 已补充锁定 NVIDIA 独显 LUID 前缀 {sorted(nv)}。")
 
-                        def _is_rtx5080(instance_name):
+                        def _is_nvidia_gpu(instance_name):
                             # 仅保留 NVIDIA 独显的实例；nv 为空(极端兜底)时不过滤，退化为全卡合计。
                             if not nv:
                                 return True
@@ -522,7 +523,7 @@ class ProcessActivityWorker:
                             return p is not None and p in nv
 
                         for name, val in self._read_pdh_pid_array(pdh, h_shared_mem):
-                            if not _is_rtx5080(name):
+                            if not _is_nvidia_gpu(name):
                                 continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
@@ -542,7 +543,7 @@ class ProcessActivityWorker:
                         except Exception:
                             pass
                         for name, val in self._read_pdh_pid_array(pdh, h_dedicated_mem):
-                            if not _is_rtx5080(name):
+                            if not _is_nvidia_gpu(name):
                                 continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
@@ -554,7 +555,7 @@ class ProcessActivityWorker:
                                 temp_pdh_dedicated_gb[pid] = temp_pdh_dedicated_gb.get(pid, 0.0) + val_gb
 
                         for name, val in self._read_pdh_pid_array(pdh, h_gpu_engine):
-                            if not _is_rtx5080(name):
+                            if not _is_nvidia_gpu(name):
                                 continue
                             match = re.search(r'pid_(\d+)', name, re.IGNORECASE)
                             if match:
@@ -603,7 +604,16 @@ class ProcessActivityWorker:
                 self.gpu_util_map_cache = temp_gpu_util_map
                 self.hung_pids_cache = temp_hung_pids
 
-            time.sleep(2.0)
+            self.stop_event.wait(2.0)
+
+    def terminate(self):
+        self.stop_event.set()
+        if hasattr(self, 'bg_thread') and self.bg_thread:
+            try:
+                self.bg_thread.join(timeout=2.5)
+            except Exception:
+                pass
+            self.bg_thread = None
 
     async def get_or_register_cached(self, conn, proc_info):
         exe_path = proc_info["exe"]

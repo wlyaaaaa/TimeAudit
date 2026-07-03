@@ -2,7 +2,14 @@
 import json
 import os
 import asyncio
+import sys
 import asyncpg
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 DASHBOARD_PATH = r"E:\TimeAudit\grafana_dashboards\addrd7x__🐀 资源大户与后台内鬼.json"
 

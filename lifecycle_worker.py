@@ -192,6 +192,13 @@ def check_file_signature(filepath):
         SIGNATURE_CACHE[filepath] = status
     return status
 
+def unknown_executable_path(process_name):
+    raw_name = str(process_name or "").strip().replace("/", "\\")
+    base_name = os.path.basename(raw_name) or "Unknown.exe"
+    if base_name in (".", ".."):
+        base_name = "Unknown.exe"
+    return f"<unknown>\\{base_name}"
+
 def sanitize_command_line(process_name, cmdline):
     if not cmdline: return ""
     proc_lower = process_name.lower()
@@ -288,7 +295,7 @@ class ProcessLifecycleWorker:
             proc = psutil.Process(os_pid)
             name = proc.name()
             try: exe = proc.exe()
-            except Exception: exe = f"C:\\Windows\\System32\\{name}"
+            except Exception: exe = unknown_executable_path(name)
         except Exception:
             return None
 
@@ -383,7 +390,7 @@ class ProcessLifecycleWorker:
                             proc_obj = psutil.Process(pid)
                             exe = proc_obj.exe()
                         except Exception:
-                            exe = f"C:\\Windows\\System32\\{name}"
+                            exe = unknown_executable_path(name)
 
                         self.pid_start_time[pid] = create_time
 
@@ -465,7 +472,7 @@ class ProcessLifecycleWorker:
                 metadata = event.get("metadata")
                 if not metadata:
                     name = event.get("name", "Unknown")
-                    exe = event.get("exe", "C:\\Windows\\System32\\Unknown.exe")
+                    exe = event.get("exe") or unknown_executable_path(name)
                     metadata = await asyncio.to_thread(self.harvest_live_pid_metadata_sync, os_pid, name, exe)
                 
                 if not metadata: return
@@ -494,7 +501,7 @@ class ProcessLifecycleWorker:
                 if not metadata:
                     metadata = {
                         "name": "Unknown_Exited_Process",
-                        "exe": "C:\\Windows\\System32\\Unknown.exe",
+                        "exe": unknown_executable_path("Unknown.exe"),
                         "parent_name": None,
                         "cmdline": "",
                         "service_name": None,

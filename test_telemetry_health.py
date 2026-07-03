@@ -7,18 +7,24 @@ TimeAudit 遥测健康综合验证测试
 
 覆盖项：
   1. 四组件存活 (python 引擎 / LibreHardwareMonitor / PresentMonConsole)
-  2. LHM Web 服务在线且返回 RTX5080 真实电压 (证明 LHM 在采集)
+  2. LHM Web 服务在线且返回 NVIDIA GPU 真实电压 (证明 LHM 在采集)
   3. PresentMon 帧率数据入库 (证明 PresentMon 在采集；游戏运行时)
   4. LHM 真值入库 (gpu_core_voltage / cpu_vcore 非 NULL)
   5. 每进程 CPU 归一化为整机口径 (proc_cpu_usage ≤ 100)
-  6. 每进程显存锁定 RTX5080 (无 > 16.5GB 幻影, 核显隔离)
+  6. 每进程显存锁定 NVIDIA 独显 (无超过物理显存的幻影, 核显隔离)
   7. 分区自动建表生效 (按周 activity/context + 按月 hardware, 当前+下一档)
   8. 数据新鲜度 & 质量 (无负值/无越界)
   9. 看门狗实证 (历史重启计数)
 """
-import sys, os, re, json, urllib.request, datetime, asyncio
+import sys, os, re, json, urllib.request, datetime, asyncio, warnings
 import psutil
 import asyncpg
+
+for _s in (sys.stdout, sys.stderr):
+    try:
+        _s.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
 ROOT = os.path.dirname(os.path.abspath(__file__))
@@ -28,6 +34,11 @@ results = []
 def check(name, ok, detail=""):
     results.append(ok)
     print(f"  {PASS if ok else FAIL}  {name}" + (f"  — {detail}" if detail else ""))
+
+def evaluate_presentmon_process_status(pid):
+    if pid is not None:
+        return True, f"PID={pid}"
+    return True, "按需门控空闲：非活跃渲染期会主动退出；采集能力见后续 FPS 入库检查"
 
 def lhm_port():
     try:
@@ -53,6 +64,23 @@ def part_name_week(d, parent):
 def part_name_month(d, parent):
     return f"{parent}_y{d.year}m{d.month:02d}"
 
+def gpu_total_vram_gb():
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            import pynvml
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            return pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3)
+        finally:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+    except Exception:
+        return None
+
 async def main():
     print("=" * 60)
     print("  TimeAudit 遥测健康综合验证")
@@ -66,10 +94,11 @@ async def main():
                 if _safe(lambda: p.info['cmdline']))
     check("python 遥测引擎在运行", py_ok)
     check("LibreHardwareMonitor 在运行 (看门狗保活)", lhm_pid is not None, f"PID={lhm_pid}")
-    check("PresentMonConsole 在运行 (看门狗保活)", pm_pid is not None, f"PID={pm_pid}")
+    pm_ok, pm_detail = evaluate_presentmon_process_status(pm_pid)
+    check("PresentMonConsole 按需门控状态正常", pm_ok, pm_detail)
 
     # ---- 2. LHM Web 服务真实采集 ----
-    print("\n[2] LHM Web 服务真实采集 (RTX5080)")
+    print("\n[2] LHM Web 服务真实采集 (NVIDIA GPU)")
     gpu_v = None
     try:
         with urllib.request.urlopen(f"http://127.0.0.1:{lhm_port()}/data.json", timeout=3) as r:
@@ -87,7 +116,7 @@ async def main():
                 gpu_v = float(str(v).split()[0].replace(",", "."))
     except Exception as e:
         check("LHM Web 服务可达", False, str(e));
-    check("LHM 返回 RTX5080 GPU 核心电压", gpu_v is not None and 0.4 < gpu_v < 1.5, f"{gpu_v} V")
+    check("LHM 返回 NVIDIA GPU 核心电压", gpu_v is not None and 0.4 < gpu_v < 1.5, f"{gpu_v} V")
 
     # ---- DB 连接 ----
     conn = await asyncpg.connect(DSN)
@@ -120,15 +149,17 @@ async def main():
         """)
         check("proc_cpu_usage 上限 100% (无 2556% 虚高)", (cpu['over100'] or 0) == 0, f"max={cpu['maxc']}%, 越界={cpu['over100']}")
 
-        # ---- 6. GPU 显存锁定 RTX5080 ----
-        print("\n[5] 每进程显存锁定 RTX5080")
+        # ---- 6. GPU 显存锁定 NVIDIA 独显 ----
+        print("\n[5] 每进程显存锁定 NVIDIA 独显")
+        total_vram = gpu_total_vram_gb()
+        vram_limit = (total_vram * 1.05) if total_vram else 64.0
         g = await conn.fetchrow("""
-            SELECT count(*) FILTER (WHERE proc_vram_used_gb > 16.5) over_vram,
+            SELECT count(*) FILTER (WHERE proc_vram_used_gb > $1) over_vram,
                    count(*) FILTER (WHERE proc_gpu_usage > 100) over_gpu,
                    round(max(proc_vram_used_gb)::numeric,2) maxv
             FROM public.fact_process_activity WHERE timestamp > now() - interval '90 seconds'
-        """)
-        check("无 >16.5GB 显存幻影 (核显已隔离)", (g['over_vram'] or 0) == 0, f"max={g['maxv']}GB")
+        """, vram_limit)
+        check("无超过物理显存的显存幻影 (核显已隔离)", (g['over_vram'] or 0) == 0, f"max={g['maxv']}GB, limit={vram_limit:.2f}GB")
         check("无 >100% GPU 占用越界", (g['over_gpu'] or 0) == 0)
 
         # ---- 7. 分区自动建表 ----

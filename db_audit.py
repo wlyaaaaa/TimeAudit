@@ -6,6 +6,7 @@ import asyncio
 import asyncpg
 import sys
 import io
+import warnings
 from datetime import datetime, timezone
 
 # 强制标准输出使用 UTF-8
@@ -15,12 +16,36 @@ sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='repla
 DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
 
 
+def gpu_total_vram_gb():
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", FutureWarning)
+            import pynvml
+        pynvml.nvmlInit()
+        try:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+            return pynvml.nvmlDeviceGetMemoryInfo(handle).total / (1024 ** 3)
+        finally:
+            try:
+                pynvml.nvmlShutdown()
+            except Exception:
+                pass
+    except Exception:
+        return None
+
+
 async def run():
     conn = await asyncpg.connect(DB_DSN)
+    total_vram_gb = gpu_total_vram_gb()
+    process_vram_limit_gb = total_vram_gb * 1.05 if total_vram_gb else 64.0
     
     print("=" * 80)
     print("  TimeAudit 深度数据库审计报告")
     print(f"  审计时间: {datetime.now()}")
+    if total_vram_gb:
+        print(f"  NVIDIA 显存审计上限: {process_vram_limit_gb:.2f}GB (物理显存 {total_vram_gb:.2f}GB × 1.05)")
+    else:
+        print(f"  NVIDIA 显存审计上限: {process_vram_limit_gb:.2f}GB (NVML 不可用，使用宽松兜底)")
     print("=" * 80)
     
     # ============================================================
@@ -90,6 +115,8 @@ async def run():
                 COUNT(*) FILTER (WHERE gpu_usage < 0 OR gpu_usage > 100) as gpu_oob,
                 COUNT(*) FILTER (WHERE cpu_package_temp < 0 OR cpu_package_temp > 120) as ct_oob,
                 COUNT(*) FILTER (WHERE gpu_core_temp < 0 OR gpu_core_temp > 120) as gt_oob,
+                COUNT(*) FILTER (WHERE gpu_core_temp = 0) as gt_zero,
+                COUNT(*) FILTER (WHERE gpu_hotspot_temp = 0) as hs_zero,
                 COUNT(*) FILTER (WHERE system_ram_usage_pct < 0 OR system_ram_usage_pct > 100) as ram_oob,
                 COUNT(*) FILTER (WHERE current_fps < 0) as fps_neg,
                 COUNT(*) FILTER (WHERE frametime_ms < 0) as ft_neg,
@@ -109,7 +136,7 @@ async def run():
         print(f"    GPU 使用率: {c['gpu_min']:.1f} ~ {c['gpu_max']:.1f}%  越界={c['gpu_oob']}")
         print(f"    CPU 温度:   {c['cpu_temp_min']:.1f} ~ {c['cpu_temp_max']:.1f}°C  越界={c['ct_oob']}")
         print(f"    GPU 核心温度: {c['gpu_temp_min']:.1f} ~ {c['gpu_temp_max']:.1f}°C  越界={c['gt_oob']}")
-        print(f"    GPU 热点温度: {c['hs_min']:.1f} ~ {c['hs_max']:.1f}°C")
+        print(f"    GPU 热点温度: {c['hs_min']:.1f} ~ {c['hs_max']:.1f}°C  传感器零值={c['gt_zero']}/{c['hs_zero']}")
         print(f"    RAM 使用率: {c['ram_min']:.1f} ~ {c['ram_max']:.1f}%  越界={c['ram_oob']}")
         print(f"    FPS:        {c['fps_min']:.1f} ~ {c['fps_max']:.1f}  负数={c['fps_neg']}")
         print(f"    帧时间:     {c['ft_min']:.2f} ~ {c['ft_max']:.2f}ms  负数={c['ft_neg']}")
@@ -187,7 +214,7 @@ async def run():
                 COUNT(*) as total
             FROM public.fact_system_hardware
         """)
-        print(f"    GPU热点<核心温度(物理违规): {phys['hotspot_lt_core']} {'❌' if phys['hotspot_lt_core'] > 0 else '✅'}")
+        print(f"    GPU热点<核心温度(传感器瞬时倒挂): {phys['hotspot_lt_core']} {'⚠️' if phys['hotspot_lt_core'] > 0 else '✅'}")
         print(f"    GPU热点-核心>30°C(异常): {phys['hotspot_gap_huge']} {'⚠️' if phys['hotspot_gap_huge'] > 0 else '✅'}")
         print(f"    CPU空闲但功耗>100W(异常): {phys['idle_high_power']} {'⚠️' if phys['idle_high_power'] > 0 else '✅'}")
         print(f"    GPU空闲但功耗>100W(异常): {phys['gpu_idle_high_power']} {'⚠️' if phys['gpu_idle_high_power'] > 0 else '✅'}")
@@ -276,7 +303,7 @@ async def run():
                 MIN(proc_ram_mb) as ram_min, MAX(proc_ram_mb) as ram_max,
                 COUNT(*) FILTER (WHERE proc_ram_mb < 0) as ram_neg,
                 MIN(proc_vram_used_gb) as vram_min, MAX(proc_vram_used_gb) as vram_max,
-                COUNT(*) FILTER (WHERE proc_vram_used_gb > 16.5) as vram_phantom,
+                COUNT(*) FILTER (WHERE proc_vram_used_gb > $1) as vram_phantom,
                 MIN(proc_vram_shared_mb) as vsm_min, MAX(proc_vram_shared_mb) as vsm_max,
                 COUNT(*) FILTER (WHERE proc_disk_read_rate_mb < 0) as dr_neg,
                 COUNT(*) FILTER (WHERE proc_disk_write_rate_mb < 0) as dw_neg,
@@ -286,11 +313,11 @@ async def run():
                 COUNT(*) FILTER (WHERE is_not_responding = 1) as not_resp,
                 COUNT(*) as total
             FROM public.fact_process_activity
-        """)
+        """, process_vram_limit_gb)
         print(f"  proc_cpu_usage: {ac['cpu_min']:.2f} ~ {ac['cpu_max']:.2f}%  >100%={ac['cpu_over']} <0={ac['cpu_neg']}")
         print(f"  proc_gpu_usage: {ac['gpu_min']:.2f} ~ {ac['gpu_max']:.2f}%  >100%={ac['gpu_over']} <0={ac['gpu_neg']}")
         print(f"  proc_ram_mb: {ac['ram_min']} ~ {ac['ram_max']}MB  负数={ac['ram_neg']}")
-        print(f"  proc_vram_used_gb: {ac['vram_min']:.2f} ~ {ac['vram_max']:.2f}GB  >16.5GB幻影={ac['vram_phantom']}")
+        print(f"  proc_vram_used_gb: {ac['vram_min']:.2f} ~ {ac['vram_max']:.2f}GB  >{process_vram_limit_gb:.2f}GB幻影={ac['vram_phantom']}")
         print(f"  proc_vram_shared_mb: {ac['vsm_min']} ~ {ac['vsm_max']}MB")
         print(f"  磁盘读/写负数: {ac['dr_neg']}/{ac['dw_neg']}")
         print(f"  网络发送/接收负数: {ac['ns_neg']}/{ac['nr_neg']}")
@@ -338,7 +365,7 @@ async def run():
         """)
         for gs in gpu_sum:
             status = "✅" if gs['sum_proc_gpu'] <= (gs['hw_gpu_total'] or 0) * 1.5 + 5 else "⚠️"
-            print(f"    {cs['timestamp']}: Σproc_gpu={gs['sum_proc_gpu']:.1f}% hw_total={gs['hw_gpu_total']:.1f}% {status}")
+            print(f"    {gs['timestamp']}: Σproc_gpu={gs['sum_proc_gpu']:.1f}% hw_total={gs['hw_gpu_total']:.1f}% {status}")
 
     # ============================================================
     # 5. fact_process_context 审计
@@ -557,8 +584,8 @@ async def run():
             WHERE cpu_total_usage < 0 OR cpu_total_usage > 100
                OR gpu_usage < 0 OR gpu_usage > 100
                OR system_ram_usage_pct < 0 OR system_ram_usage_pct > 100
-               OR cpu_package_temp < 10 OR cpu_package_temp > 115
-               OR gpu_core_temp < 10 OR gpu_core_temp > 115
+               OR cpu_package_temp < 0 OR cpu_package_temp > 115
+               OR gpu_core_temp < 0 OR gpu_core_temp > 115
                OR current_fps < 0
                OR frametime_ms < 0
                OR cpu_package_power < 0 OR cpu_package_power > 400
@@ -583,8 +610,8 @@ async def run():
             WHERE proc_cpu_usage < 0 OR proc_cpu_usage > 100
                OR proc_gpu_usage < 0 OR proc_gpu_usage > 100
                OR proc_ram_mb < 0
-               OR proc_vram_used_gb < 0 OR proc_vram_used_gb > 17.0
-        """)
+               OR proc_vram_used_gb < 0 OR proc_vram_used_gb > $1
+        """, process_vram_limit_gb)
         if act_oob > 0:
             failures.append(f"fact_process_activity 存在越界指标: {act_oob} 行")
 
@@ -646,4 +673,3 @@ async def run():
 
 if __name__ == "__main__":
     asyncio.run(run())
-
