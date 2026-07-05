@@ -158,12 +158,20 @@ CaptureActiveWindow() {
     SetTimer(CaptureActiveWindow, -2000, 1) ; 动态排队，完全消除多轮心跳并发重叠隐患
 }
 
-; 🔒 防崩溃原子化写入管道（强锁 +08 显式时区）
+; 根据当前系统时区生成 ISO 风格 UTC offset，避免跨时区机器把本地时间误标成 +08。
+GetUtcOffsetSuffix() {
+    offsetMinutes := DateDiff(A_Now, A_NowUTC, "Minutes")
+    sign := offsetMinutes < 0 ? "-" : "+"
+    offsetMinutes := Abs(offsetMinutes)
+    return Format("{}{:02}{:02}", sign, Floor(offsetMinutes / 60), Mod(offsetMinutes, 60))
+}
+
+; 🔒 防崩溃原子化写入管道（强锁 + 动态显式时区）
 CommitToDisk(proc, title, sTime, duration, forceWrite := false) {
     if (duration < 2) 
         return
         
-    formattedTime := FormatTime(sTime, "yyyy-MM-dd HH:mm:ss") . "+08"
+    formattedTime := FormatTime(sTime, "yyyy-MM-dd HH:mm:ss") . GetUtcOffsetSuffix()
     
     ; 核心格式化安全清洗：合并串联式清洗，安全剥离所有换行符并实现双引号安全转义，保持原始输出结构不发生改变
     cleanTitle := StrReplace(RegExReplace(title, "[\r\n]+", " "), '"', '""')

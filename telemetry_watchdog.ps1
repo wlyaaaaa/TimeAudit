@@ -22,12 +22,27 @@ function Find-Proc($exeName, $cmdMatch) {
         Where-Object { $_.CommandLine -match $cmdMatch } | Select-Object -First 1
 }
 
+function Remove-StaleTask($taskName) {
+    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    if ($task -and $task.State -ne 'Running') {
+        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+    }
+}
+
+Remove-StaleTask 'TimeAudit_WatchdogRestart_tmp'
+Remove-StaleTask 'TimeAudit_WatchdogAhkRestart_tmp'
+
 # Restart a target via a one-shot elevated, interactive-session scheduled task. This is the same
 # method proven to bring up main.py / LHM / PresentMon with proper elevation AND inside the user's
 # interactive desktop session (required so the AHK engine can read foreground window titles).
 function Restart-ViaTask($taskName, $exe, $arg, $workDir) {
     if (-not (Test-Path $exe)) { Log ("ABORT: exe missing -> {0}" -f $exe); return }
-    $act = New-ScheduledTaskAction -Execute $exe -Argument $arg -WorkingDirectory $workDir
+    $exeLiteral = "'" + ($exe -replace "'", "''") + "'"
+    $argLiteral = "'" + ($arg -replace "'", "''") + "'"
+    $workDirLiteral = "'" + ($workDir -replace "'", "''") + "'"
+    $launcher = "Start-Process -FilePath $exeLiteral -ArgumentList $argLiteral -WorkingDirectory $workDirLiteral -WindowStyle Hidden"
+    $encodedLauncher = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($launcher))
+    $act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -EncodedCommand {0}" -f $encodedLauncher) -WorkingDirectory $workDir
     $pr  = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -RunLevel Highest -LogonType Interactive
     Register-ScheduledTask -TaskName $taskName -Action $act -Principal $pr -Force | Out-Null
     Start-ScheduledTask -TaskName $taskName
