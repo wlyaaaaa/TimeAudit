@@ -13,6 +13,7 @@ time_audit.pid
 # 本次维护的临时调试脚本/转储，不进版本库
 tmp_*.py
 tmp_*.txt
+tmp/
 
 # 数据库备份（本地/异地保存，不进版本库）
 backups/
