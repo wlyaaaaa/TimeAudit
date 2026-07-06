@@ -5,8 +5,9 @@
 '  WindowStyle=0 表示完全隐藏；bWaitOnReturn=False 表示不阻塞。
 '  可移植：自动推导本脚本所在目录，整个文件夹搬走后仍可用。
 ' ============================================================
-Dim fso, here, shell
+Dim fso, here, shell, exitCode
 Set fso = CreateObject("Scripting.FileSystemObject")
 here = fso.GetParentFolderName(WScript.ScriptFullName)
 Set shell = CreateObject("WScript.Shell")
-shell.Run "powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & here & "\backup_all.ps1""", 0, False
+exitCode = shell.Run("powershell.exe -NoProfile -ExecutionPolicy Bypass -File """ & here & "\backup_all.ps1""", 0, True)
+WScript.Quit exitCode
