@@ -14,7 +14,7 @@
 #
 #  恢复方法见《快速部署.md》"换电脑 / 容灾恢复"一章。
 #
-#  建议：用 Windows 任务计划程序设为每天凌晨自动跑一次（命令见文末注释）。
+#  建议：用 Windows 任务计划程序设为每天 20:40 自动跑一次（命令见文末注释）。
 # =====================================================================
 
 param(
@@ -85,7 +85,7 @@ Write-Host "[+] 完成。当前共保留 $kept 个备份（保留策略：$Reten
 #
 #    $A = New-ScheduledTaskAction -Execute "powershell.exe" `
 #         -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File E:\TimeAudit\backup_db.ps1"
-#    $T = New-ScheduledTaskTrigger -Daily -At 4:00AM
+#    $T = New-ScheduledTaskTrigger -Daily -At '20:40'
 #    $P = New-ScheduledTaskPrincipal -LogonType Interactive -RunLevel Highest
 #    Register-ScheduledTask -TaskName "TimeAudit_DailyBackup" -Action $A -Trigger $T -Principal $P -Force
 #

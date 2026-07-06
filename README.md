@@ -288,7 +288,7 @@ schtasks /run /tn TimeAudit_AutoStart
 ```powershell
 powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_all.ps1
 ```
-> 数据库和 Grafana 仪表盘每天凌晨 4 点会由计划任务 `TimeAudit_DailyBackup` 自动备份，
+> 数据库和 Grafana 仪表盘每天 20:40 会由计划任务 `TimeAudit_DailyBackup` 自动备份，
 > 仪表盘还会自动 commit + push 到 GitHub。无需手动导出。详见[快速部署.md](快速部署.md)。
 
 **看大盘**：浏览器开 `http://localhost:53000`。
