@@ -1,19 +1,48 @@
 @echo off
+setlocal EnableExtensions EnableDelayedExpansion
 :: ==========================================
 :: 自动拉起脚本 - 管理员提权自适应版本
 :: ==========================================
 set PROJECT_DIR=E:\TimeAudit
+set DOCKER_DESKTOP=C:\Program Files\Docker\Docker\Docker Desktop.exe
+set DOCKER_WAIT_SECONDS=180
 
 echo [*] 启动 AHK 守护进程...
 start "" "%PROJECT_DIR%\TimeAudit.ahk"
 
-echo [*] 启动 Docker 依赖...
 cd /d "%PROJECT_DIR%"
+echo [*] 启动 Docker Desktop 并等待 Linux engine 就绪...
+if exist "%DOCKER_DESKTOP%" (
+    start "" "%DOCKER_DESKTOP%"
+) else (
+    echo [-] 未找到 Docker Desktop: "%DOCKER_DESKTOP%"
+    exit /b 1
+)
+
+set /a DOCKER_WAIT_REMAINING=%DOCKER_WAIT_SECONDS%
+:WAIT_DOCKER
+docker info >nul 2>nul
+if %errorlevel% neq 0 (
+    if !DOCKER_WAIT_REMAINING! LEQ 0 (
+        echo [-] Docker daemon 在 %DOCKER_WAIT_SECONDS% 秒内未就绪，放弃启动容器。
+        exit /b 1
+    )
+    timeout /t 3 /nobreak >nul
+    set /a DOCKER_WAIT_REMAINING-=3
+    goto WAIT_DOCKER
+)
+echo [+] Docker daemon 已就绪。
+
+echo [*] 启动 Docker 依赖...
 docker compose up -d
+if %errorlevel% neq 0 (
+    echo [-] docker compose up -d 失败。
+    exit /b 1
+)
 
 echo [*] 正在等待数据库端口 (55432) 联通...
 :WAIT_DB
-ping -n 2 127.0.0.1 >nul
+timeout /t 2 /nobreak >nul
 netstat -ano | findstr 55432 >nul
 if %errorlevel% neq 0 (
     goto WAIT_DB
