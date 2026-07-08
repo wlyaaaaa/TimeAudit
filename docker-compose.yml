@@ -69,6 +69,6 @@ services:
       - GF_USERS_DEFAULT_THEME=light
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
     volumes:
-      - E:/Projects/Tools/TimeAudit/grafana_data:/var/lib/grafana
+      - ./grafana_data:/var/lib/grafana
       # 🟢 【新增核心挂载】：将本地脱水的纯文本卡片配置无感注入容器内部
       - ./grafana_provisioning:/etc/grafana/provisioning:ro
