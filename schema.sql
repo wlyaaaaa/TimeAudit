@@ -10,7 +10,7 @@
 --    所以全新装机时，必须先跑一次本文件把父表建好，引擎才有表可写。
 --
 --  怎么用（全新安装时执行一次）：
---    cmd /c "docker exec -i audit-postgres psql -U leyang -d time_audit < E:\TimeAudit\schema.sql"
+--    cmd /c "docker exec -i audit-postgres psql -U leyang -d time_audit < E:\Projects\Tools\TimeAudit\schema.sql"
 --
 --  注意：如果你是"换电脑/容灾恢复"，请直接用 pg_restore 导入备份(.dump)，
 --        那里面已经包含完整结构和历史数据，【不需要】再跑本文件。

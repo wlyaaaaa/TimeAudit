@@ -230,7 +230,7 @@
     当有多个实例或后台进程（如手动启动的同时计划任务也在拉起实例）试图在非常短的时间内同时打开 `telemetry.log` 时，会导致文件写操作的独占锁争用，抛出 `PermissionError`（拒绝访问）。主程序的 `SafeStdoutWrapper` 在类初始化中对此进行了 `try/except` 自愈防护以规避因日志句柄初始化失败导致的进程崩溃，但最佳实践仍是依赖单例锁（`enforce_singleton`）踢掉旧实例，避免多个实例长期并发双写。
 
 19. **计划任务提权启动的 Python 解释器绝对路径与 `-WorkingDirectory` 强依赖。**
-    在 Windows 计划任务中以最高权限（Highest Privilege）拉起脚本时，由于运行环境不包含完整的用户 PATH 变量，如果使用普通 `python` 命令行，或者未显式设置 WorkingDirectory，经常会导致解释器闪退或因为相对路径偏移找不到外部依赖（如 `LibreHardwareMonitor.config`）。必须始终使用 Python 解释器的**绝对物理路径**（如 `C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe`），并且在计划任务中指定“起始于”（Start in）为项目根目录 `E:\TimeAudit`。
+    在 Windows 计划任务中以最高权限（Highest Privilege）拉起脚本时，由于运行环境不包含完整的用户 PATH 变量，如果使用普通 `python` 命令行，或者未显式设置 WorkingDirectory，经常会导致解释器闪退或因为相对路径偏移找不到外部依赖（如 `LibreHardwareMonitor.config`）。必须始终使用 Python 解释器的**绝对物理路径**（如 `C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe`），并且在计划任务中指定“起始于”（Start in）为项目根目录 `E:\Projects\Tools\TimeAudit`。
 
 20. **分区大表查询强制裁剪下推（Grafana SQL 核心调优）。**
     数据库内 `fact_process_activity`（活跃进程表）是高频时序数据，运行三年后将积累数千万行数据。为避免全表扫描或全分区扫描拖垮数据库甚至导致 Grafana 面板超时卡死，在编写或修改任何针对该表（及其他分区表）的 SQL 查询时，**必须在 WHERE 子句中显式加上时间下界**（如 `timestamp >= $__timeFrom()` 或带有明确的时间间隔偏移）。若有 JOIN 查询，在 JOIN 条件中也必须将关联时间下界下推，确保 PostgreSQL 的优化器百分之百进行“分区剪裁”（Partition Pruning）。
@@ -251,32 +251,32 @@
 
 **看实时日志**（引擎在干嘛、谁出生谁死亡）：
 ```powershell
-Get-Content -Wait -Tail 20 E:\TimeAudit\telemetry.log -Encoding utf8
+Get-Content -Wait -Tail 20 E:\Projects\Tools\TimeAudit\telemetry.log -Encoding utf8
 ```
 
 **一键体检**（强烈推荐排查问题时先跑它，会逐项检查：组件存活 / 真值入库 / CPU 归一化 / 显存锁卡 / 分区建表 / 数据质量）：
 ```powershell
-python E:\TimeAudit\test_telemetry_health.py
+python E:\Projects\Tools\TimeAudit\test_telemetry_health.py
 ```
 
 **跑单元测试套件**（改完代码后回归，应 6/6 全绿）：
 ```powershell
-python E:\TimeAudit\telemetry_test_suite.py
+python E:\Projects\Tools\TimeAudit\telemetry_test_suite.py
 ```
 
 **跑优化/修复回归测试**（连接池封顶 / 数据库调优 / 无响应检测 / 前端面板回归，应 14/14 全绿）：
 ```powershell
-python E:\TimeAudit\test_optimizations.py
+python E:\Projects\Tools\TimeAudit\test_optimizations.py
 ```
 
 **跑深度数据库审计**（逐表查行数 / 越界值 / 孤儿外键 / 时序一致性 / 分区健康，并带自动化断言）：
 ```powershell
-python E:\TimeAudit\db_audit.py
+python E:\Projects\Tools\TimeAudit\db_audit.py
 ```
 
 **跑大盘 SQL 分区裁剪审计**（扫描 `grafana_dashboards/` 里的 SQL，确认高频分区表只扫当前时间范围分区）：
 ```powershell
-python E:\TimeAudit\test_sql_partition_explain.py
+python E:\Projects\Tools\TimeAudit\test_sql_partition_explain.py
 ```
 
 **手动重启引擎**（用配好的提权计划任务，最干净）：
@@ -286,7 +286,7 @@ schtasks /run /tn TimeAudit_AutoStart
 
 **手动全量备份（数据库 + Grafana 仪表盘）**：
 ```powershell
-powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_all.ps1
+powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.ps1
 ```
 > 数据库和 Grafana 仪表盘每天 20:40 会由计划任务 `TimeAudit_DailyBackup` 自动备份，
 > 仪表盘还会自动 commit + push 到 GitHub。无需手动导出。详见[快速部署.md](快速部署.md)。
@@ -300,19 +300,19 @@ powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_all.ps1
 如果要系统审计 TimeAudit，不建议只做普通代码走读。它的风险主要在“长期 7×24 写入 + Windows 本机权限 + 时序数据口径 + Grafana SQL”这几个交叉点。推荐按下面几条线推进：
 
 1. **采集链路与自愈审计**
-   重点看 `main.py` 的 3 秒主循环、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明 `main.py`、`TimeAudit.ahk`、`LibreHardwareMonitor.exe`、`PresentMonConsole.exe` 任一掉线后能恢复，且不会因多实例导致重复写库。入口脚本：`python E:\TimeAudit\test_telemetry_health.py`，再对照 `telemetry.log` / `telemetry_watchdog.log`。
+   重点看 `main.py` 的 3 秒主循环、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明 `main.py`、`TimeAudit.ahk`、`LibreHardwareMonitor.exe`、`PresentMonConsole.exe` 任一掉线后能恢复，且不会因多实例导致重复写库。入口脚本：`python E:\Projects\Tools\TimeAudit\test_telemetry_health.py`，再对照 `telemetry.log` / `telemetry_watchdog.log`。
 
 2. **数据正确性与时序边界审计**
-   重点看睡眠/唤醒、锁屏、系统时间回拨、跨周/月分区边界、前台会话闭合、`duration_ms` 是否为负、硬件数值是否物理越界。入口脚本：`python E:\TimeAudit\db_audit.py`。这里尤其要盯 `time.time()` 与 `time.monotonic()` 的分工，别把“落库时间戳”和“速率差分分母”混在一起。
+   重点看睡眠/唤醒、锁屏、系统时间回拨、跨周/月分区边界、前台会话闭合、`duration_ms` 是否为负、硬件数值是否物理越界。入口脚本：`python E:\Projects\Tools\TimeAudit\db_audit.py`。这里尤其要盯 `time.time()` 与 `time.monotonic()` 的分工，别把“落库时间戳”和“速率差分分母”混在一起。
 
 3. **数据库分区、索引与 Grafana SQL 审计**
-   重点看 `schema.sql`、`auto_warmup_partitions()`、`auto_retention_cleanup()`、`docker-compose.yml` 的 PG 参数，以及 `grafana_dashboards/*.json` 里的 SQL。目标是确认所有面板都有时间条件下推、能触发分区裁剪，且新增索引不会把每 3 秒写入成本放大太多。入口脚本：`python E:\TimeAudit\test_sql_partition_explain.py`，必要时进库手动 `EXPLAIN (ANALYZE, BUFFERS)`。
+   重点看 `schema.sql`、`auto_warmup_partitions()`、`auto_retention_cleanup()`、`docker-compose.yml` 的 PG 参数，以及 `grafana_dashboards/*.json` 里的 SQL。目标是确认所有面板都有时间条件下推、能触发分区裁剪，且新增索引不会把每 3 秒写入成本放大太多。入口脚本：`python E:\Projects\Tools\TimeAudit\test_sql_partition_explain.py`，必要时进库手动 `EXPLAIN (ANALYZE, BUFFERS)`。
 
 4. **取证与安全口径审计**
-   重点看 `dim_process_registry`、`fact_process_lifecycle_events`、签名校验、提权状态、系统进程仿冒、LOLBins、高危端口和敏感窗口期后台活动。目标不是“拦截恶意软件”，而是确认数据足够可靠，能在事后还原：谁启动、从哪启动、是否签名、是否管理员、何时退出、退出码是什么。采集端拿不到真实路径时必须写成 `<unknown>\进程名`，不能伪造成 `C:\Windows\System32\...`；回归入口：`python E:\TimeAudit\test_lifecycle_unknown_path.py`。
+   重点看 `dim_process_registry`、`fact_process_lifecycle_events`、签名校验、提权状态、系统进程仿冒、LOLBins、高危端口和敏感窗口期后台活动。目标不是“拦截恶意软件”，而是确认数据足够可靠，能在事后还原：谁启动、从哪启动、是否签名、是否管理员、何时退出、退出码是什么。采集端拿不到真实路径时必须写成 `<unknown>\进程名`，不能伪造成 `C:\Windows\System32\...`；回归入口：`python E:\Projects\Tools\TimeAudit\test_lifecycle_unknown_path.py`。
 
 5. **备份、恢复与文档一致性审计**
-   重点看 `backup_all.ps1`、`backup_db.ps1`、`backup_grafana.py`、`restore_grafana.py`、`快速部署.md` 的恢复步骤，以及 README / PDF 是否与真实脚本同步。目标是至少能从最近一次 `.dump` + Grafana 备份恢复出可用系统。回归入口：`python E:\TimeAudit\test_backup_all_script.py`、`python E:\TimeAudit\restore_grafana.py --dry-run`，以及对最新 `.dump` 跑 `pg_restore -l`。改完 Markdown 后跑 `python E:\TimeAudit\build_docs_pdf.py --docs README.md 使用手册.md 快速部署.md` 更新对应 PDF。
+   重点看 `backup_all.ps1`、`backup_db.ps1`、`backup_grafana.py`、`restore_grafana.py`、`快速部署.md` 的恢复步骤，以及 README / PDF 是否与真实脚本同步。目标是至少能从最近一次 `.dump` + Grafana 备份恢复出可用系统。回归入口：`python E:\Projects\Tools\TimeAudit\test_backup_all_script.py`、`python E:\Projects\Tools\TimeAudit\restore_grafana.py --dry-run`，以及对最新 `.dump` 跑 `pg_restore -l`。改完 Markdown 后跑 `python E:\Projects\Tools\TimeAudit\build_docs_pdf.py --docs README.md 使用手册.md 快速部署.md` 更新对应 PDF。
 
 推荐顺序：先跑 `test_telemetry_health.py` 确认链路活着，再跑 `db_audit.py` 看历史数据有没有脏口径，最后跑 `test_sql_partition_explain.py` 审大盘性能。若三者都绿，再进入代码级 review，效率最高。
 
@@ -321,7 +321,7 @@ powershell -ExecutionPolicy Bypass -File E:\TimeAudit\backup_all.ps1
 ## 10. 目录结构
 
 ```
-E:\TimeAudit\
+E:\Projects\Tools\TimeAudit\
 ├── main.py                  总调度 + 3 秒主循环 + 睡眠/分区/自愈
 ├── context_worker.py        前台窗口上下文舱 → fact_process_context
 ├── activity_worker.py       活跃进程舱 → fact_process_activity (+ dim_process_registry)

@@ -9,7 +9,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-DASHBOARD_DIR = r"E:\TimeAudit\grafana_dashboards"
+DASHBOARD_DIR = r"E:\Projects\Tools\TimeAudit\grafana_dashboards"
 
 def optimize_sql(sql):
     # 替换所有的物理换行，确保只用 \n，方便匹配

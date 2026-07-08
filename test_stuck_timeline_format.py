@@ -11,7 +11,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-DASHBOARD_PATH = r"E:\TimeAudit\grafana_dashboards\addrd7x__🐀 资源大户与后台内鬼.json"
+DASHBOARD_PATH = r"E:\Projects\Tools\TimeAudit\grafana_dashboards\addrd7x__🐀 资源大户与后台内鬼.json"
 
 DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
 

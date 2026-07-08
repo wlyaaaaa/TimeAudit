@@ -1,4 +1,4 @@
-﻿# check_status_gui.ps1
+# check_status_gui.ps1
 # =====================================================================
 # 针对 VBScript GUI 弹窗定制的纯文本解析器 (宿主机驱动直连穿透版)
 # =====================================================================
@@ -23,7 +23,7 @@ try {
     $py_pid = "N/A"
     
     # 优先使用 PID 文件校验（最直接且免错）
-    $pidFile = "E:\TimeAudit\time_audit.pid"
+    $pidFile = "E:\Projects\Tools\TimeAudit\time_audit.pid"
     if (Test-Path $pidFile) {
         $pidContent = (Get-Content $pidFile).Trim()
         if ($pidContent -match "^\d+$") {

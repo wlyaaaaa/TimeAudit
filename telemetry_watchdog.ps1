@@ -8,11 +8,11 @@
 # are merely suspended (process still exists) and intentionally pause writes, so a lag-based check
 # would false-restart on every wake. A missing process is an unambiguous crash.
 $ErrorActionPreference = 'SilentlyContinue'
-$log       = 'E:\TimeAudit\telemetry_watchdog.log'
+$log       = 'E:\Projects\Tools\TimeAudit\telemetry_watchdog.log'
 $py        = 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe'
-$script    = 'E:\TimeAudit\main.py'
+$script    = 'E:\Projects\Tools\TimeAudit\main.py'
 $ahkExe    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
-$ahkScript = 'E:\TimeAudit\TimeAudit.ahk'
+$ahkScript = 'E:\Projects\Tools\TimeAudit\TimeAudit.ahk'
 
 function Log($m){ "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m | Out-File -FilePath $log -Append -Encoding utf8 }
 
@@ -57,7 +57,7 @@ if (Find-Proc 'pythonw.exe' 'main\.py') {
     Log "main.py NOT running - attempting restart"
     if (-not (Test-Path $script)) { Log "ABORT: main.py path missing" }
     else {
-        Restart-ViaTask 'TimeAudit_WatchdogRestart_tmp' $py ('"{0}"' -f $script) 'E:\TimeAudit'
+        Restart-ViaTask 'TimeAudit_WatchdogRestart_tmp' $py ('"{0}"' -f $script) 'E:\Projects\Tools\TimeAudit'
         $now = Find-Proc 'pythonw.exe' 'main\.py'
         if ($now) { Log ("RESTART OK - main.py PID {0}" -f $now.ProcessId) }
         else      { Log "RESTART FAILED - main.py still down" }
@@ -73,7 +73,7 @@ if (Find-Proc 'AutoHotkey64.exe' 'TimeAudit\.ahk') {
     Log "TimeAudit.ahk NOT running - attempting restart"
     if (-not (Test-Path $ahkScript)) { Log "ABORT: TimeAudit.ahk path missing" }
     else {
-        Restart-ViaTask 'TimeAudit_WatchdogAhkRestart_tmp' $ahkExe ('"{0}"' -f $ahkScript) 'E:\TimeAudit'
+        Restart-ViaTask 'TimeAudit_WatchdogAhkRestart_tmp' $ahkExe ('"{0}"' -f $ahkScript) 'E:\Projects\Tools\TimeAudit'
         $now = Find-Proc 'AutoHotkey64.exe' 'TimeAudit\.ahk'
         if ($now) { Log ("RESTART OK - TimeAudit.ahk PID {0}" -f $now.ProcessId) }
         else      { Log "RESTART FAILED - TimeAudit.ahk still down" }

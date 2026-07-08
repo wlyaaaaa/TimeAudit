@@ -1,4 +1,4 @@
-﻿#Requires AutoHotkey v2.0
+#Requires AutoHotkey v2.0
 ; 【全自动化修复】新实例静默替换旧实例，杜绝 start_all.bat 重复运行时弹出"已在运行?"确认框。
 ; 旧实例退出时会触发 SafeExitHandler 提交挂起数据，无丢失。
 #SingleInstance Force
@@ -10,14 +10,14 @@ global lastTitle := ""
 global startTime := A_Now           ; 统一采用最直观的本地时间
 global lastFiredTime := A_Now       ; 现实世界绝对时间心跳锚点
 global isScreenOff := false         ; 显式时区与显示器物理信号标志位
-global logPath := "E:\TimeAudit\log\buffer.csv"
+global logPath := "E:\Projects\Tools\TimeAudit\log\buffer.csv"
 global maxUnwrittenDuration := 300  ; 最大未写入缓冲时间（秒）
 global maxIdleTime := 60000         ; 【优化】：用户暂离判定阈值，已修改为 60000 毫秒（60秒 / 1分钟）
 global hPowerNotify := 0            ; 显式固化电源通知句柄存根，防止内存与内核句柄泄漏
 
 ; 确保高频缓冲区目录存在
-if !DirExist("E:\TimeAudit\log")
-    DirCreate("E:\TimeAudit\log")
+if !DirExist("E:\Projects\Tools\TimeAudit\log")
+    DirCreate("E:\Projects\Tools\TimeAudit\log")
 
 ; 注册系统事件钩子
 OnExit(SafeExitHandler)

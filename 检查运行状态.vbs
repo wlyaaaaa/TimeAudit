@@ -5,18 +5,18 @@ Set objFSO = CreateObject("Scripting.FileSystemObject")
 tempFile = objShell.ExpandEnvironmentStrings("%TEMP%\time_audit_status.txt")
 errLog = objShell.ExpandEnvironmentStrings("%TEMP%\time_audit_powershell_error.log")
 
-' ÔËÐÐ powershell ²¢ÖØ¶¨Ïò stderr µ½ errLog£¬Èç¹û³ö´í¿ÉÒÔ²é¿´
-psCommand = "cmd /c powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File E:\TimeAudit\check_status_gui.ps1 2> " & Chr(34) & errLog & Chr(34)
+' ï¿½ï¿½ï¿½ï¿½ powershell ï¿½ï¿½ï¿½Ø¶ï¿½ï¿½ï¿½ stderr ï¿½ï¿½ errLogï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ô²é¿´
+psCommand = "cmd /c powershell -NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\check_status_gui.ps1 2> " & Chr(34) & errLog & Chr(34)
 exitCode = objShell.Run(psCommand, 0, True)
 
 If objFSO.FileExists(tempFile) Then
-    ' ÕâÀïµÄ -1 ±íÊ¾ÒÔ Unicode (UTF-16 LE) Ä£Ê½¶ÁÈ¡ÎÄ±¾£¬Óë powershell µÄ Out-File ±£³ÖÒ»ÖÂ
+    ' ï¿½ï¿½ï¿½ï¿½ï¿½ -1 ï¿½ï¿½Ê¾ï¿½ï¿½ Unicode (UTF-16 LE) Ä£Ê½ï¿½ï¿½È¡ï¿½Ä±ï¿½ï¿½ï¿½ï¿½ï¿½ powershell ï¿½ï¿½ Out-File ï¿½ï¿½ï¿½ï¿½Ò»ï¿½ï¿½
     Set objFile = objFSO.OpenTextFile(tempFile, 1, False, -1)
     strStatus = objFile.ReadAll
     objFile.Close
     objFSO.DeleteFile(tempFile)
     
-    ' Èç¹û´æÔÚ´íÎóÈÕÖ¾ÇÒ´óÐ¡Îª0£¬ÔòÉ¾³ý
+    ' ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ú´ï¿½ï¿½ï¿½ï¿½ï¿½Ö¾ï¿½Ò´ï¿½Ð¡Îª0ï¿½ï¿½ï¿½ï¿½É¾ï¿½ï¿½
     If objFSO.FileExists(errLog) Then
         If objFSO.GetFile(errLog).Size = 0 Then
             objFSO.DeleteFile(errLog)
@@ -27,7 +27,7 @@ Else
     If objFSO.FileExists(errLog) Then
         If objFSO.GetFile(errLog).Size > 0 Then
             Set objErrFile = objFSO.OpenTextFile(errLog, 1, False)
-            errDetails = vbCrLf & "PowerShell ´íÎóÏêÇé:" & vbCrLf & objErrFile.ReadAll
+            errDetails = vbCrLf & "PowerShell ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½:" & vbCrLf & objErrFile.ReadAll
             objErrFile.Close
         End If
         objFSO.DeleteFile(errLog)
