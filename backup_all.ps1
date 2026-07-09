@@ -1,4 +1,4 @@
-# =====================================================================
+﻿# =====================================================================
 #  TimeAudit 一键全量备份（数据库 + Grafana 仪表盘）
 #  每天由计划任务 TimeAudit_DailyBackup 自动调用；也可手动跑：
 #      powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.ps1
