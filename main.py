@@ -76,6 +76,7 @@ from hardware_worker import HardwareTelemetryWorker
 from context_worker import WindowStateTracker
 from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
+from runtime_health import command_line_targets_script, write_telemetry_heartbeat
 
 DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
 WARMUP_INTERVAL_SEC = 43200
@@ -101,6 +102,7 @@ def enforce_singleton():
         
         current_pid = os.getpid()
         current_exe = os.path.basename(sys.executable).lower()
+        target_script = os.path.abspath(__file__)
         
         for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
             try:
@@ -115,7 +117,7 @@ def enforce_singleton():
                     if p_name.lower() == current_exe:
                         proc.kill()
                 elif 'python' in p_name.lower():
-                    if p_cmdline and any('main.py' in arg for arg in p_cmdline):
+                    if command_line_targets_script(p_cmdline, target_script):
                         proc.kill()
             except (psutil.NoSuchProcess, psutil.AccessDenied):
                 continue
@@ -243,9 +245,7 @@ async def cleanup_orphan_context_sessions(pool):
     except Exception as e:
         print(f"[启动清理] 幽灵会话闭合跳过: {e}")
 
-async def main():
-    _singleton_mutex = enforce_singleton()
-
+async def _run_collector():
     # 写入自身真实 PID 到 time_audit.pid，供外部运维/状态检查脚本读取当前采集进程号(单例由内核互斥体
     # 保证唯一，此文件仅作信息记录)。此前该文件无人维护、内容长期是过期 PID；写失败不影响采集。
     try:
@@ -384,6 +384,7 @@ async def main():
                     hardware_worker.write_to_db(pool, hw_data, batch_timestamp),
                     activity_worker.write_batch_to_db(pool, active_procs, batch_timestamp)
                 )
+                write_telemetry_heartbeat()
             except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as db_err:
                 print(f"[{datetime.datetime.now().strftime('%X')} 🚨 连接断开] 检测到连接异常: {db_err}")
                 if pool:
@@ -421,6 +422,17 @@ async def main():
                 except Exception:
                     pass
         print("[主控] 遥测管线释放，闭舱。")
+
+
+async def main():
+    _singleton_mutex = enforce_singleton()
+    try:
+        await _run_collector()
+    finally:
+        try:
+            ctypes.windll.kernel32.CloseHandle(_singleton_mutex)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     # 【修复】：只有当作为主程序直接运行时，才安全接管控制台标准流。

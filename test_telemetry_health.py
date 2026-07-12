@@ -16,7 +16,7 @@ TimeAudit 遥测健康综合验证测试
   8. 数据新鲜度 & 质量 (无负值/无越界)
   9. 看门狗实证 (历史重启计数)
 """
-import sys, os, re, json, urllib.request, datetime, asyncio, warnings
+import sys, os, re, json, urllib.request, datetime, asyncio, warnings, subprocess
 import psutil
 import asyncpg
 
@@ -44,9 +44,24 @@ def lhm_port():
     try:
         with open(os.path.join(ROOT, "LibreHardwareMonitor.config"), encoding="utf-8", errors="ignore") as f:
             m = re.search(r'key="listenerPort"\s+value="(\d+)"', f.read())
-            return int(m.group(1)) if m else 8085
+            return int(m.group(1)) if m else 18085
     except Exception:
-        return 8085
+        return 18085
+
+def excluded_tcp_port_ranges():
+    try:
+        output = subprocess.check_output(
+            ["netsh", "interface", "ipv4", "show", "excludedportrange", "protocol=tcp"],
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return [
+            (int(start), int(end))
+            for start, end in re.findall(r"^\s*(\d+)\s+(\d+)(?:\s+\*)?\s*$", output, re.MULTILINE)
+        ]
+    except Exception:
+        return []
 
 def proc_alive(name):
     for p in psutil.process_iter(['name']):
@@ -99,10 +114,15 @@ async def main():
 
     # ---- 2. LHM Web 服务真实采集 ----
     print("\n[2] LHM Web 服务真实采集 (NVIDIA GPU)")
+    configured_lhm_port = lhm_port()
+    excluded_ranges = excluded_tcp_port_ranges()
+    excluded = any(start <= configured_lhm_port <= end for start, end in excluded_ranges)
     gpu_v = None
+    web_ok = False
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{lhm_port()}/data.json", timeout=3) as r:
+        with urllib.request.urlopen(f"http://127.0.0.1:{configured_lhm_port}/data.json", timeout=3) as r:
             data = json.loads(r.read().decode("utf-8", "ignore"))
+        web_ok = True
         flat = {}
         def walk(n, p):
             t = n.get("Text", ""); cur = (p + "/" + t) if t else p
@@ -116,6 +136,11 @@ async def main():
                 gpu_v = float(str(v).split()[0].replace(",", "."))
     except Exception as e:
         check("LHM Web 服务可达", False, str(e));
+    check(
+        "LHM Web 端口未被 Windows TCP 排除阻断",
+        web_ok or not excluded,
+        f"port={configured_lhm_port}" + (" (active/reserved)" if web_ok and excluded else ""),
+    )
     check("LHM 返回 NVIDIA GPU 核心电压", gpu_v is not None and 0.4 < gpu_v < 1.5, f"{gpu_v} V")
 
     # ---- DB 连接 ----

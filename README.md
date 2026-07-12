@@ -46,7 +46,7 @@
 │              └─ lifecycle_worker  进程出生(START)/死亡(EXIT)事件 + 退出码    │
 │                     │         ▲                                            │
 │                     │         │ 读硬件真值                                  │
-│                     │     LibreHardwareMonitor.exe (CPU/GPU 电压温度, HTTP :8085)
+│                     │     LibreHardwareMonitor.exe (CPU/GPU 电压温度, HTTP :18085)
 │                     │     PresentMonConsole.exe     (游戏 FPS / 帧时间)      │
 │                     ▼                                                       │
 │             [asyncpg 异步批量写入]                                          │
@@ -95,7 +95,7 @@
 - 每 3 秒一拍驱动所有采集。
 - **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
 - **崩溃自愈（两层，注意盲区）**：① 主循环抛 **Python 异常**时，外层 `while True` 等 5 秒重启它；② 但若进程被 **native 崩溃**整个带走（实测 2026-06-22：psutil 的 `_psutil_windows.pyd` 触发 `0xc0000005` 访问冲突，整个 `pythonw` 段错误退出），外层 `while` 也一起死、**兜不住**——曾因此静默停摆 17 小时。这种由下面的「外部进程守护」兜底。
-- **外部进程守护**（补 native 崩溃盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 5 分钟 + 登录触发、提权）**独立于引擎**运行，检测 `main.py`（Python 遥测引擎）**和 `TimeAudit.ahk`（「屏幕使用时间」大盘的数据源头）两个采集进程**在不在（刻意**不看数据延迟**，避免系统睡眠正常停写时误判重启），哪个不在就用一次性提权任务把它**单独**重启。AHK 自带 `#SingleInstance Force`，重启幂等、不会重复双写。两个采集器整进程死亡都能 ≤5 分钟自愈，日志见 `telemetry_watchdog.log`。（早期此守护只盯 `main.py`，AHK 一旦崩溃就会让屏幕使用时间数据源静默断流、无人拉起——已于 2026-06-23 补齐。）
+- **外部进程守护**（补 native 崩溃和“进程活着但采集卡死”盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 5 分钟 + 登录触发、提权）**独立于引擎**运行。`main.py` 每次成功落库后原子更新本地 heartbeat；watchdog 同时检查本项目进程和 heartbeat，新启动或睡眠恢复时先宽限 45 秒再复查，仍陈旧才拉起新实例，由单例锁安全接管。`TimeAudit.ahk` 继续按精确脚本路径检查进程。两个采集器整进程死亡都能 ≤5 分钟自愈，日志见 `telemetry_watchdog.log`。
 - **睡眠/唤醒处理**（重点，见第 7 节）：用"墙上时间"判断系统是否刚从睡眠/休眠醒来，醒来后把跨睡眠的脏数据截断掉。
 - **冷启动清理**：每次启动先把上次"关机时没来得及收尾"的前台会话补上结束时间（否则会留下永远不结束的"幽灵行"）。
 - **分区预热**：每 12 小时（按墙上时间）提前把"下一周/下一月"的数据库分区建好，免得到了周一零点没表可写而丢数据。
@@ -115,10 +115,10 @@
 ### `hardware_worker.py` — 整机硬件舱
 - NVML 读 GPU：利用率、温度、功耗、显存时钟、PCIe、降频原因。
 - PDH 读 CPU：频率、ACPI 温度、硬缺页等。
-- **LibreHardwareMonitor**（外部 exe）通过 HTTP `http://127.0.0.1:8085/data.json` 读 NVML/PDH 给不出来的真值：CPU 核心电压(Vcore)、CPU 封装温度(Tctl/Tdie)、GPU 核心电压、GPU 热点温度。
+- **LibreHardwareMonitor**（外部 exe）通过 HTTP `http://127.0.0.1:18085/data.json` 读 NVML/PDH 给不出来的真值：CPU 核心电压(Vcore)、CPU 封装温度(Tctl/Tdie)、GPU 核心电压、GPU 热点温度。`18085` 避开了启动前会阻断绑定的 Windows TCP 宽排除段；服务在线后出现同端口的单项活动保留是正常现象。
 - **PresentMonConsole**（外部 exe）抓游戏的 FPS / 帧时间 / 1% Low。
 - 自己测 DPC 延迟、Ping、丢包、抖动。
-- 这两个外部 exe 都有**看门狗**：进程没了自动隐身重启；LHM 的网页服务卡死了也会强杀重拉。
+- 这两个外部 exe 都有**看门狗**：进程没了自动隐身重启；LHM 的网页服务持续失败时只结束本项目实例，并按 60–300 秒退避重试，避免端口等持久故障造成高速重启循环。
 - 写进 `fact_system_hardware`。
 
 ### `lifecycle_worker.py` — 进程生死舱
@@ -204,7 +204,7 @@
    降频原因、PCIe 吞吐这些调用在某些驱动版本会抛异常；它们各自包了 try，单个失败不会把整块 GPU 采集拖垮、更不会触发 `nvmlShutdown` 把 GPU 数据全部清零。（注：throttle 接口在当前 NVIDIA 驱动上实测是支持的，不会崩。）
 
 8. **两个外部 exe 必须保持在线，靠"看门狗重拉"而不是"降级造假"。**
-   LibreHardwareMonitor / PresentMon 掉了就自动隐身重启；LHM 网页服务卡死连续 ~15 秒也强杀重拉。理念是"要么采到真值，要么重启再采，绝不写假数据"。
+   LibreHardwareMonitor / PresentMon 掉了就自动隐身重启；LHM 网页服务连续 ~15 秒无响应会结束本项目实例，随后按 60–300 秒退避重试。理念是"要么采到真值，要么明确为空并受控恢复，绝不写假数据"。
 
 9. **外部 exe 需要管理员权限。** 非提权环境下 PresentMon/LHM 会报 `WinError 740`，引擎会退避重试而**不会崩**，但拿不到 FPS/电压。所以**引擎必须以管理员身份运行**（开机自启任务已配好提权，见快速部署.md）。
 
@@ -289,7 +289,8 @@ schtasks /run /tn TimeAudit_AutoStart
 powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.ps1
 ```
 > 数据库和 Grafana 仪表盘每天 20:40 会由计划任务 `TimeAudit_DailyBackup` 自动备份，
-> 仪表盘还会自动 commit + push 到 GitHub。无需手动导出。详见[快速部署.md](快速部署.md)。
+> PostgreSQL dump 和 `grafana.db` 分别写到 `G:\80_Backup\TimeAudit\postgresql` 与
+> `G:\80_Backup\TimeAudit\grafana_db`；仪表盘 JSON 仍在仓库内自动 commit + push。详见[快速部署.md](快速部署.md)。
 
 **看大盘**：浏览器开 `http://localhost:53000`。
 
@@ -346,7 +347,7 @@ E:\Projects\Tools\TimeAudit\
 ├── restore_grafana.py       从备份 JSON 恢复 Grafana 仪表盘
 │
 ├── start_all.bat            开机自启：拉起 AHK + Docker + 提权的 main.py
-├── telemetry_watchdog.ps1   外部进程守护：每5分钟查 main.py + TimeAudit.ahk，崩溃则各自提权重启（任务 TimeAudit_Watchdog）
+├── telemetry_watchdog.ps1   外部进程守护：查进程 + main.py 成功落库 heartbeat（任务 TimeAudit_Watchdog）
 ├── check_status_gui.ps1     图形化状态体检小工具
 │
 ├── test_telemetry_health.py 在线健康综合体检（先跑它排查问题）
@@ -355,17 +356,17 @@ E:\Projects\Tools\TimeAudit\
 ├── test_optimizations.py    优化/修复回归测试（连接池/调优/无响应检测/前端，14 用例）
 ├── test_sql_partition_explain.py Grafana SQL 分区裁剪与执行计划审计
 │
-├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :8085）
+├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :18085）
 ├── PresentMonConsole.exe    外部帧率探针（FPS / 帧时间）
 │
 ├── postgres_data/           PostgreSQL 数据卷（别手删！）
 ├── grafana_data/            Grafana 数据卷（含 grafana.db 仪表盘库）
 ├── grafana_provisioning/    Grafana 数据源/大盘 provider 配置（自动注入容器）
-├── backups/                 数据库 .dump 备份（不进 git）
 ├── grafana_dashboards/      Grafana 仪表盘 JSON = 前端"代码"(进 git, 每日自动导出+push)
-├── grafana_backups/         grafana.db 二进制库备份 = "数据"(不进 git, 轮转14份)
 └── log/                     AHK 的 buffer.csv + 备份日志 backup.log
 ```
+
+备份数据不放在项目树内：数据库 dump 位于 `G:\80_Backup\TimeAudit\postgresql`，Grafana 二进制库位于 `G:\80_Backup\TimeAudit\grafana_db`，两者各轮转 14 份。
 
 ---
 

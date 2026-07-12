@@ -2,7 +2,7 @@
 #  TimeAudit 数据库自动备份脚本  (backup_db.ps1)
 # ---------------------------------------------------------------------
 #  作用：把容器里的 PostgreSQL 数据库 time_audit 完整导出成一个压缩备份
-#        文件，存到 E:\Projects\Tools\TimeAudit\backups\，并自动删除过期的旧备份。
+#        文件，存到 G:\80_Backup\TimeAudit\postgresql\，并自动删除过期的旧备份。
 #
 #  用法（在普通 PowerShell 里直接跑即可，不需要管理员）：
 #      cd E:\Projects\Tools\TimeAudit
@@ -10,7 +10,7 @@
 #
 #  可选参数：
 #      -RetentionDays 30     # 保留最近 30 天的备份（默认 14 天）
-#      -BackupDir D:\bak     # 备份存到别的盘（默认 E:\Projects\Tools\TimeAudit\backups）
+#      -BackupDir D:\bak     # 备份存到别的盘（默认 G:\80_Backup\TimeAudit\postgresql）
 #
 #  恢复方法见《快速部署.md》"换电脑 / 容灾恢复"一章。
 #
@@ -19,7 +19,7 @@
 
 param(
     [int]$RetentionDays = 14,
-    [string]$BackupDir  = "E:\Projects\Tools\TimeAudit\backups",
+    [string]$BackupDir  = "G:\80_Backup\TimeAudit\postgresql",
     [string]$Container  = "audit-postgres",
     [string]$DbUser     = "leyang",
     [string]$DbName     = "time_audit"
@@ -91,5 +91,5 @@ Write-Host "[+] 完成。当前共保留 $kept 个备份（保留策略：$Reten
 #
 #  恢复（导入到一个干净的新库）：
 #    docker exec -i audit-postgres pg_restore -U leyang -d time_audit --clean --if-exists `
-#        < E:\Projects\Tools\TimeAudit\backups\time_audit_YYYYMMDD_HHmmss.dump
+#        < G:\80_Backup\TimeAudit\postgresql\time_audit_YYYYMMDD_HHmmss.dump
 # =====================================================================

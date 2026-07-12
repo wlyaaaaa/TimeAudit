@@ -4,15 +4,22 @@
 #   2. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
 #                            i.e. the 屏幕使用时间 dashboard). Previously UNGUARDED: if it died,
 #                            the entire screen-time data source went silent with nobody to revive it.
-# Guards ONLY process existence (not data lag) on purpose: during system sleep/idle both engines
-# are merely suspended (process still exists) and intentionally pause writes, so a lag-based check
-# would false-restart on every wake. A missing process is an unambiguous crash.
+# main.py also writes a local heartbeat only after a successful database batch. If that heartbeat is
+# stale, the watchdog waits through a resume/startup grace period and checks again before relaunching.
+# This catches a live-but-stuck collector without false-restarting immediately after system sleep.
 $ErrorActionPreference = 'SilentlyContinue'
 $log       = 'E:\Projects\Tools\TimeAudit\telemetry_watchdog.log'
 $py        = 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe'
 $script    = 'E:\Projects\Tools\TimeAudit\main.py'
 $ahkExe    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
 $ahkScript = 'E:\Projects\Tools\TimeAudit\TimeAudit.ahk'
+$heartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_heartbeat'
+$heartbeatMaxAgeSeconds = 90
+$heartbeatGraceSeconds = 45
+$startupGraceSeconds = 15
+$autoStartMaxGraceSeconds = 240
+$mainScriptPattern = '(?i)(?:^|\s|")' + [regex]::Escape($script) + '(?:"|\s|$)'
+$ahkScriptPattern = '(?i)(?:^|\s|")' + [regex]::Escape($ahkScript) + '(?:"|\s|$)'
 
 function Log($m){ "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m | Out-File -FilePath $log -Append -Encoding utf8 }
 
@@ -20,6 +27,29 @@ function Log($m){ "{0}  {1}" -f (Get-Date -Format 'yyyy-MM-dd HH:mm:ss'), $m | O
 function Find-Proc($exeName, $cmdMatch) {
     Get-CimInstance Win32_Process -Filter ("Name='{0}'" -f $exeName) |
         Where-Object { $_.CommandLine -match $cmdMatch } | Select-Object -First 1
+}
+
+function Find-MainProc {
+    foreach ($exeName in 'pythonw.exe','python.exe') {
+        $process = Find-Proc $exeName $mainScriptPattern
+        if ($process) { return $process }
+    }
+}
+
+function Test-HeartbeatFresh($path, $maxAgeSeconds) {
+    $item = Get-Item -LiteralPath $path -ErrorAction SilentlyContinue
+    if (-not $item) { return $false }
+    $ageSeconds = ((Get-Date).ToUniversalTime() - $item.LastWriteTimeUtc).TotalSeconds
+    return ($ageSeconds -le $maxAgeSeconds)
+}
+
+function Test-AutoStartWithinGrace {
+    $task = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
+    if (-not $task -or $task.State -ne 'Running') { return $false }
+    $info = Get-ScheduledTaskInfo -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
+    if (-not $info) { return $false }
+    $ageSeconds = ((Get-Date) - $info.LastRunTime).TotalSeconds
+    return ($ageSeconds -ge 0 -and $ageSeconds -le $autoStartMaxGraceSeconds)
 }
 
 function Remove-StaleTask($taskName) {
@@ -51,30 +81,51 @@ function Restart-ViaTask($taskName, $exe, $arg, $workDir) {
 }
 
 # === 1. main.py (Python telemetry engine) ===
-if (Find-Proc 'pythonw.exe' 'main\.py') {
-    # healthy
-} else {
-    Log "main.py NOT running - attempting restart"
+function Restart-Main($reason) {
+    Log ("main.py {0} - attempting restart" -f $reason)
     if (-not (Test-Path $script)) { Log "ABORT: main.py path missing" }
     else {
         Restart-ViaTask 'TimeAudit_WatchdogRestart_tmp' $py ('"{0}"' -f $script) 'E:\Projects\Tools\TimeAudit'
-        $now = Find-Proc 'pythonw.exe' 'main\.py'
+        $now = Find-MainProc
         if ($now) { Log ("RESTART OK - main.py PID {0}" -f $now.ProcessId) }
         else      { Log "RESTART FAILED - main.py still down" }
+    }
+}
+
+$mainProc = Find-MainProc
+if (-not $mainProc) {
+    Log ("main.py not running - waiting {0}s for startup race" -f $startupGraceSeconds)
+    Start-Sleep -Seconds $startupGraceSeconds
+    $mainProc = Find-MainProc
+    if (-not $mainProc) {
+        if (Test-AutoStartWithinGrace) {
+            Log ("main.py not running yet, but TimeAudit_AutoStart is within its {0}s startup window - defer this cycle" -f $autoStartMaxGraceSeconds)
+        } else {
+            Restart-Main 'NOT running after startup grace period'
+        }
+    }
+} elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
+    Log ("main.py heartbeat stale - waiting {0}s for startup/resume recovery" -f $heartbeatGraceSeconds)
+    Start-Sleep -Seconds $heartbeatGraceSeconds
+    $mainProc = Find-MainProc
+    if (-not $mainProc) {
+        Restart-Main 'stopped during heartbeat grace period'
+    } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
+        Restart-Main 'heartbeat stale after grace period'
     }
 }
 
 # === 2. TimeAudit.ahk (AutoHotkey screen-time engine) ===
 # #SingleInstance Force inside the script makes a relaunch idempotent: any stale instance is
 # silently replaced and flushes its pending buffer via SafeExitHandler, so a race cannot duplicate data.
-if (Find-Proc 'AutoHotkey64.exe' 'TimeAudit\.ahk') {
+if (Find-Proc 'AutoHotkey64.exe' $ahkScriptPattern) {
     # healthy
 } else {
     Log "TimeAudit.ahk NOT running - attempting restart"
     if (-not (Test-Path $ahkScript)) { Log "ABORT: TimeAudit.ahk path missing" }
     else {
         Restart-ViaTask 'TimeAudit_WatchdogAhkRestart_tmp' $ahkExe ('"{0}"' -f $ahkScript) 'E:\Projects\Tools\TimeAudit'
-        $now = Find-Proc 'AutoHotkey64.exe' 'TimeAudit\.ahk'
+        $now = Find-Proc 'AutoHotkey64.exe' $ahkScriptPattern
         if ($now) { Log ("RESTART OK - TimeAudit.ahk PID {0}" -f $now.ProcessId) }
         else      { Log "RESTART FAILED - TimeAudit.ahk still down" }
     }

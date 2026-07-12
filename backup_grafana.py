@@ -3,8 +3,8 @@
 TimeAudit — Grafana 仪表盘自动备份
 ==================================
 把 Grafana 里的【所有仪表盘】通过官方 API 导出成可读、可 diff 的 JSON 文件，
-存到 grafana_backups/dashboards/，并且【只在内容有变化时】自动 git commit + push。
-同时复制一份 grafana.db（SQLite 全量库）做二进制兜底（带轮转、不进 git）。
+存到 grafana_dashboards/，并且【只在内容有变化时】自动 git commit + push。
+同时把 grafana.db（SQLite 全量库）复制到 G:\\80_Backup\\TimeAudit\\grafana_db 做二进制兜底（带轮转、不进 git）。
 
 为什么这样设计：
   - JSON 文件人类可读、git 能看出每次改了哪个面板 —— 这就是你要的"自动备份到 GitHub"。
@@ -43,10 +43,9 @@ for _s in (sys.stdout, sys.stderr):
 
 ROOT = os.path.dirname(os.path.abspath(__file__))
 # 仪表盘 JSON = 前端"代码"，放进 git 跟踪的 grafana_dashboards/。
-# grafana.db 二进制 = "数据"备份，放进 gitignore 的 grafana_backups/。两者刻意分开。
+# grafana.db 二进制 = "数据"备份，放到 G 盘备份区。两者刻意分开。
 DASH_DIR = os.path.join(ROOT, "grafana_dashboards")
-BACKUP_DIR = os.path.join(ROOT, "grafana_backups")
-DB_BACKUP_DIR = os.path.join(BACKUP_DIR, "grafana_db")
+DB_BACKUP_DIR = r"G:\80_Backup\TimeAudit\grafana_db"
 GRAFANA_DB = os.path.join(ROOT, "grafana_data", "grafana.db")
 
 

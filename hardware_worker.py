@@ -19,6 +19,7 @@ from collections import defaultdict
 import psutil
 import pynvml
 import atexit
+from runtime_health import bounded_backoff_seconds
 
 NVML_PCIE_UTIL_TX_BYTES = 0
 NVML_PCIE_UTIL_RX_BYTES = 1
@@ -503,7 +504,7 @@ class HardwareTelemetryWorker:
             print(f"[⚠️ 硬件探针] 动态拉取 LibreHardwareMonitor 异常 (可能遭遇脱机或网络抖动): {e}")
 
     def _read_lhm_port(self):
-        # 从 LibreHardwareMonitor.config 读取 Web 服务端口(listenerPort)，缺省 8085。
+        # 从 LibreHardwareMonitor.config 读取 Web 服务端口(listenerPort)，缺省 18085。
         try:
             cfg = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitor.config")
             if os.path.exists(cfg):
@@ -513,7 +514,7 @@ class HardwareTelemetryWorker:
                         return int(m.group(1))
         except Exception:
             pass
-        return 8085
+        return 18085
 
     @staticmethod
     def _lhm_num(s):
@@ -534,7 +535,17 @@ class HardwareTelemetryWorker:
         url = "http://127.0.0.1:%d/data.json" % self._read_lhm_port()
         lhm_process = None
         lhm_stuck_fails = 0   # 连续 JSON 拉取失败计数：进程在但 Web 服务卡死时据此强制重启自愈
+        lhm_restart_count = 0
+        lhm_restart_not_before = 0.0
         lhm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitor.exe")
+        normalized_lhm_path = os.path.normcase(os.path.abspath(lhm_path))
+
+        def schedule_lhm_retry(reason):
+            nonlocal lhm_restart_count, lhm_restart_not_before
+            lhm_restart_count += 1
+            restart_delay = bounded_backoff_seconds(lhm_restart_count)
+            lhm_restart_not_before = time.monotonic() + restart_delay
+            print(f"[⚠️ 硬件探针] LHM {reason}；{restart_delay}s 后退避重试。")
 
         def flatten(node, path, out):
             text = node.get("Text", "")
@@ -551,16 +562,22 @@ class HardwareTelemetryWorker:
                 # 【看门狗】物理文件存在但进程缺失时，3s 内静默(隐藏窗口)重新拉起。
                 if os.path.exists(lhm_path):
                     is_alive = bool(lhm_process and lhm_process.poll() is None)
+                    if lhm_process is not None and not is_alive:
+                        lhm_process = None
+                        if time.monotonic() >= lhm_restart_not_before:
+                            schedule_lhm_retry("process exited")
                     if not is_alive:
                         lhm_running = False
-                        for proc in psutil.process_iter(['name']):
+                        for proc in psutil.process_iter(['name', 'exe']):
                             try:
-                                if proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe":
+                                proc_exe = proc.info.get('exe') or ""
+                                if (proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe"
+                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path):
                                     lhm_running = True
                                     break
                             except Exception:
                                 pass
-                        if not lhm_running:
+                        if not lhm_running and time.monotonic() >= lhm_restart_not_before:
                             try:
                                 startupinfo = subprocess.STARTUPINFO()
                                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
@@ -574,6 +591,7 @@ class HardwareTelemetryWorker:
                                 print("[🛸 硬件探针] 伴随驱动进程缺失，自动看门狗已隐藏复活 LibreHardwareMonitor。")
                             except Exception as e:
                                 print(f"[⚠️ 硬件探针] 自动看门狗拉起 LibreHardwareMonitor 失败: {e}")
+                                schedule_lhm_retry("launch failed")
 
                 cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
                 json_ok = False
@@ -604,13 +622,17 @@ class HardwareTelemetryWorker:
                 # 令上方看门狗拉起健康新实例 —— 贯彻"始终在采集、绝不默默降级为 NULL"。
                 if json_ok:
                     lhm_stuck_fails = 0
+                    lhm_restart_count = 0
+                    lhm_restart_not_before = 0.0
                 else:
-                    lhm_stuck_fails += 1
-                    if lhm_stuck_fails >= 15:
+                    lhm_stuck_fails = min(15, lhm_stuck_fails + 1)
+                    if lhm_stuck_fails >= 15 and time.monotonic() >= lhm_restart_not_before:
                         killed = False
-                        for proc in psutil.process_iter(['name']):
+                        for proc in psutil.process_iter(['name', 'exe']):
                             try:
-                                if proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe":
+                                proc_exe = proc.info.get('exe') or ""
+                                if (proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe"
+                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path):
                                     proc.kill()
                                     killed = True
                             except Exception:
@@ -618,11 +640,12 @@ class HardwareTelemetryWorker:
                         if lhm_process:
                             try:
                                 lhm_process.kill()
+                                killed = True
                             except Exception:
                                 pass
                             lhm_process = None
                         if killed:
-                            print("[⚠️ 硬件探针] LHM Web 服务连续无响应，已强制重启以恢复真实采集(非降级)。")
+                            schedule_lhm_retry("Web 服务连续无响应，已结束项目实例")
                         lhm_stuck_fails = 0
 
                 with self.wmi_lock:
