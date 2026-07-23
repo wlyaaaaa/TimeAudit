@@ -122,30 +122,143 @@ def backup_grafana_db(keep):
         log(f"清理过期二进制备份: {os.path.basename(old)}")
 
 
+class GitSyncError(RuntimeError):
+    """Git backup state is unsafe or could not be verified."""
+
+
 def git(args, check=False):
-    return subprocess.run(["git", "-C", ROOT] + args, capture_output=True, text=True, check=check)
+    env = os.environ.copy()
+    # A hidden scheduled task must fail rather than wait for an invisible
+    # Git Credential Manager or terminal prompt.
+    env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GCM_INTERACTIVE"] = "Never"
+    result = subprocess.run(
+        ["git", "-C", ROOT] + args,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+    )
+    if check and result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        suffix = f": {detail}" if detail else ""
+        raise GitSyncError(
+            f"git {' '.join(args)} failed with exit code {result.returncode}{suffix}"
+        )
+    return result
+
+
+def current_branch():
+    branch = git(["branch", "--show-current"], check=True).stdout.strip()
+    if not branch:
+        raise GitSyncError("detached HEAD or unborn branch cannot be synchronized")
+    return branch
+
+
+def git_remote_state():
+    """Fetch the configured upstream and reject remote-newer/diverged history."""
+    branch = current_branch()
+    remote = git(["config", "--get", f"branch.{branch}.remote"], check=True).stdout.strip()
+    merge_ref = git(["config", "--get", f"branch.{branch}.merge"], check=True).stdout.strip()
+    if not remote or not merge_ref.startswith("refs/heads/"):
+        raise GitSyncError(f"branch {branch} has no usable upstream configuration")
+
+    remote_branch = merge_ref.removeprefix("refs/heads/")
+    tracking_ref = f"refs/remotes/{remote}/{remote_branch}"
+    fetch_refspec = f"+{merge_ref}:{tracking_ref}"
+    git(["fetch", "--quiet", "--prune", remote, fetch_refspec], check=True)
+
+    counts = git(
+        ["rev-list", "--left-right", "--count", f"HEAD...{tracking_ref}"],
+        check=True,
+    ).stdout.split()
+    if len(counts) != 2:
+        raise GitSyncError(f"unexpected git divergence output: {' '.join(counts)}")
+    ahead, behind = (int(value) for value in counts)
+    if behind:
+        kind = "diverged" if ahead else "behind"
+        raise GitSyncError(
+            f"local branch {branch} is {kind} relative to "
+            f"{remote}/{remote_branch} (ahead={ahead}, behind={behind}); "
+            "refusing automatic backup commit/push"
+        )
+    return {
+        "branch": branch,
+        "remote": remote,
+        "remote_branch": remote_branch,
+        "remote_ref": merge_ref,
+        "tracking_ref": tracking_ref,
+        "ahead": ahead,
+        "behind": behind,
+    }
+
+
+def assert_fresh_remote_oid(remote, remote_branch):
+    """Read the remote directly and require its branch OID to equal local HEAD."""
+    local_oid = git(["rev-parse", "HEAD"], check=True).stdout.strip()
+    remote_ref = f"refs/heads/{remote_branch}"
+    result = git(["ls-remote", "--exit-code", remote, remote_ref], check=True)
+    rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
+    matches = [row for row in rows if len(row) >= 2 and row[1] == remote_ref]
+    if not matches:
+        raise GitSyncError(f"fresh remote readback did not return {remote}/{remote_branch}")
+    remote_oid = matches[0][0]
+    if local_oid.lower() != remote_oid.lower():
+        raise GitSyncError(
+            f"fresh remote OID mismatch for {remote}/{remote_branch} "
+            f"(local={local_oid}, remote={remote_oid})"
+        )
+    return remote_oid
+
+
+def verified_git_push():
+    """Push only when ahead, then independently verify the remote branch OID."""
+    state = git_remote_state()
+    pushed = False
+    if state["ahead"] > 0:
+        git(
+            [
+                "push",
+                "--quiet",
+                state["remote"],
+                f"HEAD:{state['remote_ref']}",
+            ],
+            check=True,
+        )
+        pushed = True
+    remote_oid = assert_fresh_remote_oid(state["remote"], state["remote_branch"])
+    return {**state, "pushed": pushed, "verified": True, "remote_oid": remote_oid}
 
 
 def git_commit_and_push(do_push):
-    """只把 grafana_dashboards/*.json 的变化提交（隔离其它改动），有变化才提交。"""
+    """只提交仪表盘暂存变化；默认还会补推并回读验证远端。"""
     rel = "grafana_dashboards"
-    status = git(["status", "--porcelain", "--", rel]).stdout.strip()
-    if not status:
-        log("仪表盘 JSON 无变化，无需提交。")
-        return
-    git(["add", "--", rel])
-    msg = "chore(grafana): 自动备份仪表盘快照 " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-    r = git(["commit", "-m", msg, "--", rel])
-    if r.returncode != 0:
-        log(f"git commit 跳过/失败: {r.stdout.strip()} {r.stderr.strip()}")
-        return
-    log("已本地提交仪表盘变更。")
+    # Fetch before committing so a remote-newer/diverged branch is never
+    # extended by unattended automation.
     if do_push:
-        p = git(["push"])
-        if p.returncode == 0:
-            log("已 push 到 GitHub。")
+        git_remote_state()
+
+    git(["add", "--", rel], check=True)
+    staged = git(["diff", "--cached", "--quiet", "--exit-code", "--", rel])
+    if staged.returncode not in (0, 1):
+        detail = (staged.stderr or staged.stdout).strip()
+        raise GitSyncError(f"git staged-diff check failed: {detail}")
+
+    if staged.returncode == 1:
+        msg = "chore(grafana): 自动备份仪表盘快照 " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        git(["commit", "-m", msg, "--", rel], check=True)
+        log("已本地提交仪表盘变更。")
+    else:
+        log("仪表盘 JSON 无暂存变化，不创建提交。")
+
+    # This still runs for a clean worktree, repairing a prior unpushed commit.
+    if do_push:
+        sync = verified_git_push()
+        if sync["pushed"]:
+            log("已 push 到 GitHub，远端 OID 回读一致。")
         else:
-            log(f"git push 失败(不影响本地备份，稍后可手动 push): {p.stderr.strip()[:200]}")
+            log("GitHub 已是最新，远端 OID 回读一致。")
 
 
 def main():
@@ -176,7 +289,8 @@ def main():
         try:
             git_commit_and_push(do_push=not args.no_push)
         except Exception as e:
-            log(f"⚠️ git 操作异常: {e}")
+            log(f"❌ git 云备份失败，任务返回非零以触发调度重试: {e}")
+            return 1
 
     log("✅ 完成。")
     return 0

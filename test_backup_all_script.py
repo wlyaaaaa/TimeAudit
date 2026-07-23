@@ -17,6 +17,13 @@ class BackupAllScriptTests(unittest.TestCase):
         self.assertNotIn("exit 0", script)
         self.assertIn("exit $exitCode", script)
 
+    def test_hidden_wrapper_waits_and_propagates_exit_code(self):
+        wrapper = Path(__file__).with_name("backup_all_hidden.vbs").read_text(encoding="utf-8")
+
+        self.assertIn(", 0, True)", wrapper)
+        self.assertNotIn(", 0, False)", wrapper)
+        self.assertIn("WScript.Quit exitCode", wrapper)
+
 
 if __name__ == "__main__":
     unittest.main()
