@@ -32,3 +32,9 @@ time_audit_perfect_archive.sql
 
 # JetBrains IDE 本地配置（窗口布局/运行配置等，仅本地，不进版本库）
 .idea/
+
+# Clipboard sidecar private runtime payloads must stay outside the PUBLIC repo.
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+clipboard_history/runtime/

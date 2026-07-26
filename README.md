@@ -11,6 +11,7 @@
 
 > 想直接装起来 / 换电脑 / 灾后恢复？看 **[快速部署.md](快速部署.md)**。
 > 想看懂 6 张仪表盘的**每一个面板**、学会用数据判断电脑性能与问题？看 **[使用手册.md](使用手册.md)**（面向完全小白，78 个面板逐个精讲）。
+> PersonalOS 电脑剪贴板历史是完全解耦的用户态 sidecar，见 **[clipboard_history/README.md](clipboard_history/README.md)**；它不把剪贴板内容写入 PostgreSQL/Grafana。
 
 ---
 
