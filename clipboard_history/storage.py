@@ -157,6 +157,18 @@ class ClipboardStore:
         ).fetchone()
         return int(row[0])
 
+    def register_source_instance(self, source_instance_id: str) -> None:
+        if not source_instance_id.startswith("windows:"):
+            raise ValueError("invalid_source_instance")
+        with self._connection():
+            self._connection().execute(
+                """
+                INSERT OR REPLACE INTO meta(key,value)
+                VALUES('source_instance_id',?)
+                """,
+                (source_instance_id,),
+            )
+
     def record_capture(
         self,
         *,
@@ -371,3 +383,42 @@ class ReadOnlyClipboardStore:
             """
         ).fetchone()
         return dict(row)
+
+    def source_instance_id(self) -> str | None:
+        row = self.connection.execute(
+            "SELECT value FROM meta WHERE key='source_instance_id'"
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    def export_after(
+        self,
+        *,
+        checkpoint_observed_at_utc: str | None,
+        checkpoint_event_id: str | None,
+        limit: int,
+    ) -> tuple[list[dict[str, Any]], bool]:
+        if limit < 1 or limit > 500:
+            raise ValueError("invalid_limit")
+        if (checkpoint_observed_at_utc is None) != (checkpoint_event_id is None):
+            raise ValueError("invalid_checkpoint")
+        clauses: list[str] = []
+        params: list[Any] = []
+        if checkpoint_observed_at_utc is not None:
+            clauses.append("(observed_at_utc,event_id)>(?,?)")
+            params.extend((checkpoint_observed_at_utc, checkpoint_event_id))
+        where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+        params.append(limit + 1)
+        rows = [
+            dict(row)
+            for row in self.connection.execute(
+                f"""
+                SELECT *
+                FROM adapter_events_v1
+                {where}
+                ORDER BY observed_at_utc,event_id
+                LIMIT ?
+                """,
+                params,
+            )
+        ]
+        return rows[:limit], len(rows) > limit

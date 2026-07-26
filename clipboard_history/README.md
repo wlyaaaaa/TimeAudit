@@ -19,6 +19,7 @@
 
 - `collector.pyw`：隐藏 Win32 消息窗口采集器；
 - `viewer.pyw`：Tkinter 桌面查看器；
+- `adapter_stdio.py`：显式调用的版本化 JSON/stdio 只读增量出口；
 - `backup.py`：SQLite Online Backup、一致性验证和空目录恢复；
 - `smoke_test.py`：只输出 marker SHA-256/计数的真机回环测试。
 
@@ -32,3 +33,5 @@ python -m compileall -q clipboard_history
 ```
 
 真机测试必须先启动 collector 形成 baseline，再运行 `python -m clipboard_history.smoke_test --data-root <private-root>`。该测试主动写入唯一合成内容，验证普通 observation 与一次带 lineage 的历史恢复，不读取或输出测试前已有剪贴板。
+
+跨 owner 消费只使用 `adapter_stdio.py` 的 `timeaudit.clipboard-export.request.v1` / `response.v1` 合同和 `(observed_at_utc,event_id)` checkpoint，不直接写 spool。source profile 固定为 `src.timeaudit.windows_clipboard`，明确不同于电脑活动来源 `src.timeaudit.pc_activity`。当 `include_payload=true` 时 stdout 是获准调用方的瞬时私密运输面，调用方必须直接管道消费，不得终端展示、写日志或缓存。

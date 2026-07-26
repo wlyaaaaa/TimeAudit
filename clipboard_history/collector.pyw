@@ -149,6 +149,7 @@ class Collector:
         self.boot_id = _boot_id()
         self.session_id = _session_id()
         self.source_instance_id = _source_instance_id()
+        self.store.register_source_instance(self.source_instance_id)
         self.formats = register_formats()
         self.last_sequence = sequence_number()
         self.control = read_control_state(self.paths.control)

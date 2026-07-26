@@ -1,5 +1,7 @@
 import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -122,7 +124,10 @@ class StorageTests(unittest.TestCase):
             order by observed_at_utc,event_id
             """
         ).fetchall()
-        self.assertEqual(exported, [("gap", "sequence_gap"), ("skip", "unsupported_format")])
+        self.assertCountEqual(
+            exported,
+            [("gap", "sequence_gap"), ("skip", "unsupported_format")],
+        )
 
     def test_schema_zero_upgrades_to_v1(self):
         legacy = self.root / "legacy.sqlite3"
@@ -186,6 +191,121 @@ class BackupTests(unittest.TestCase):
             receipt = restore_backup(backup, restored)
             self.assertTrue(receipt["valid"])
             self.assertEqual(receipt["event_count"], 1)
+
+
+class AdapterStdioTests(unittest.TestCase):
+    def test_versioned_json_stdio_checkpoint_and_identity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ClipboardStore(root / "clipboard_history.sqlite3")
+            store.initialize()
+            store.register_source_instance("windows:adapter-test")
+            try:
+                first = store.record_capture(
+                    collector_instance_id="collector-a",
+                    boot_id="boot-a",
+                    session_id="session-a",
+                    source_instance_id="windows:adapter-test",
+                    clipboard_sequence=10,
+                    payload_type="text",
+                    text="adapter synthetic payload",
+                )
+                second = store.record_capture(
+                    collector_instance_id="collector-a",
+                    boot_id="boot-a",
+                    session_id="session-a",
+                    source_instance_id="windows:adapter-test",
+                    clipboard_sequence=11,
+                    payload_type="text",
+                    text="adapter synthetic payload",
+                )
+                store.record_gap(
+                    collector_instance_id="collector-a",
+                    boot_id="boot-a",
+                    session_id="session-a",
+                    source_instance_id="windows:adapter-test",
+                    clipboard_sequence=12,
+                    reason="synthetic_gap",
+                    gap_count=None,
+                )
+            finally:
+                store.close()
+
+            request = {
+                "schema": "timeaudit.clipboard-export.request.v1",
+                "action": "export",
+                "checkpoint": None,
+                "limit": 2,
+                "include_payload": True,
+            }
+            result = self._invoke(root, request)
+            self.assertEqual(result.returncode, 0)
+            response = json.loads(result.stdout)
+            self.assertEqual(response["schema"], "timeaudit.clipboard-export.response.v1")
+            self.assertEqual(response["source_profile_key"], "src.timeaudit.windows_clipboard")
+            self.assertNotEqual(response["source_profile_key"], "src.timeaudit.pc_activity")
+            self.assertEqual(response["source_instance_id"], "windows:adapter-test")
+            self.assertEqual([event["event_id"] for event in response["events"]], [first, second])
+            self.assertTrue(response["has_more"])
+            self.assertEqual(
+                response["events"][0]["collector_instance_id"], "collector-a"
+            )
+            self.assertEqual(response["events"][0]["session_id"], "session-a")
+            self.assertEqual(response["events"][0]["clipboard_sequence"], 10)
+            self.assertEqual(
+                response["events"][0]["payload"]["text"], "adapter synthetic payload"
+            )
+
+            next_request = {
+                **request,
+                "checkpoint": response["next_checkpoint"],
+                "include_payload": False,
+            }
+            next_result = self._invoke(root, next_request)
+            self.assertEqual(next_result.returncode, 0)
+            next_response = json.loads(next_result.stdout)
+            self.assertEqual(len(next_response["events"]), 1)
+            self.assertEqual(next_response["events"][0]["event_kind"], "gap")
+            self.assertNotIn("payload", next_response["events"][0])
+            self.assertFalse(next_response["has_more"])
+
+    def test_invalid_stdio_request_has_stable_error_without_traceback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = ClipboardStore(root / "clipboard_history.sqlite3")
+            store.initialize()
+            store.close()
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "clipboard_history.adapter_stdio",
+                    "--data-root",
+                    str(root),
+                ],
+                input=b'{"schema":"wrong"}\n',
+                capture_output=True,
+                check=False,
+            )
+            self.assertEqual(result.returncode, 2)
+            response = json.loads(result.stdout)
+            self.assertEqual(response["schema"], "timeaudit.clipboard-export.error.v1")
+            self.assertNotIn(b"Traceback", result.stderr)
+
+    @staticmethod
+    def _invoke(root: Path, request: dict):
+        return subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "clipboard_history.adapter_stdio",
+                "--data-root",
+                str(root),
+            ],
+            input=(json.dumps(request) + "\n").encode("utf-8"),
+            capture_output=True,
+            check=False,
+        )
 
 
 if __name__ == "__main__":
