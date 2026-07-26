@@ -13,8 +13,9 @@ TimeAudit 优化与修复回归测试
   5. PostgreSQL 性能调优生效 (shared_buffers/work_mem/effective_cache_size/NVMe planner)
   6. 采集器存活 & is_not_responding 正常落库 (反证未被 pool.close 卡死)
 """
-import sys, os, json, glob, time, base64, subprocess, urllib.request, asyncio
+import sys, os, json, glob, time, re, subprocess, urllib.request, asyncio
 import asyncpg
+from db_config import local_dsn
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -22,7 +23,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DSN = local_dsn()
 ROOT = os.path.dirname(os.path.abspath(__file__))
 GRAFANA = "http://127.0.0.1:53000"
 
@@ -56,14 +57,18 @@ def test_hung_detection():
 def test_grafana_pool():
     print("\n[2] Grafana 数据源连接池封顶")
     try:
-        req = urllib.request.Request(GRAFANA + "/api/datasources/uid/bfoc1vymtgni8a")
-        req.add_header("Authorization", "Basic " + base64.b64encode(b"admin:admin").decode())
-        with urllib.request.urlopen(req, timeout=10) as r:
-            jd = json.loads(r.read().decode("utf-8", "replace")).get("jsonData", {})
-        moc = jd.get("maxOpenConns")
+        with urllib.request.urlopen(GRAFANA + "/api/health", timeout=10) as response:
+            health = json.loads(response.read().decode("utf-8", "replace"))
+        source = open(
+            os.path.join(ROOT, "grafana_provisioning", "datasources", "datasource.yml"),
+            encoding="utf-8",
+        ).read()
+        match = re.search(r"maxOpenConns:\s*(\d+)", source)
+        moc = int(match.group(1)) if match else None
+        check("Grafana 健康端点可查询", health.get("database") == "ok")
         check("maxOpenConns ≤ 20 (防耗尽 PG 连接)", moc is not None and moc <= 20, f"maxOpenConns={moc}")
     except Exception as e:
-        check("Grafana 数据源可查询", False, str(e))
+        check("Grafana 健康与数据源配置可查询", False, type(e).__name__)
 
 
 def test_main_reconnect_guard():
@@ -92,7 +97,7 @@ def test_dashboards():
     check("空 WebShell/宏面板已删除", not webshell)
 
 
-async def test_async():
+async def run_database_checks():
     conn = await asyncpg.connect(DSN)
     try:
         print("\n[5] PostgreSQL 性能调优生效")
@@ -131,7 +136,7 @@ def main():
     test_grafana_pool()
     test_main_reconnect_guard()
     test_dashboards()
-    asyncio.run(test_async())
+    asyncio.run(run_database_checks())
     print("\n" + "=" * 60)
     ok, total = sum(results), len(results)
     print(f"  结果: {ok}/{total} 通过" + ("  🎉 全部通过" if ok == total else f"  ⚠️ {total-ok} 项未过"))

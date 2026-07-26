@@ -12,6 +12,7 @@ import psutil
 import ctypes
 import threading
 import re
+from db_config import local_dsn
 
 # ==========================================
 # 【保留】：全局日志路径定义
@@ -78,7 +79,7 @@ from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
 from runtime_health import command_line_targets_script, write_telemetry_heartbeat
 
-DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
 # 【数据保留 / 三年可行性】高频明细 fact_process_activity 约 2GB/周，三年约 312GB；E 盘 2.3TB 余量充足，
 # 故运行三年完全可行、且无需中途清理。RETENTION_DAYS 仅作超长期 7x24 运行的"防磁盘爆满"兜底底线：

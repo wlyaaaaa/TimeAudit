@@ -11,6 +11,7 @@ global startTime := A_Now           ; 统一采用最直观的本地时间
 global lastFiredTime := A_Now       ; 现实世界绝对时间心跳锚点
 global isScreenOff := false         ; 显式时区与显示器物理信号标志位
 global logPath := "E:\Projects\Tools\TimeAudit\log\buffer.csv"
+global ahkHeartbeatPath := "E:\Projects\Tools\TimeAudit\log\ahk_heartbeat"
 global maxUnwrittenDuration := 300  ; 最大未写入缓冲时间（秒）
 global maxIdleTime := 60000         ; 【优化】：用户暂离判定阈值，已修改为 60000 毫秒（60秒 / 1分钟）
 global hPowerNotify := 0            ; 显式固化电源通知句柄存根，防止内存与内核句柄泄漏
@@ -43,6 +44,9 @@ SetTimer(CaptureActiveWindow, -2000, 1)
 CaptureActiveWindow() {
     global lastProcess, lastTitle, startTime, lastFiredTime, isScreenOff, maxIdleTime, maxUnwrittenDuration
     static ProcessCache := Map() ; 窗口句柄进程名高速本地缓存，避免高频跨进程内核调用
+
+    ; 仅更新时间戳文件，不包含窗口标题或其他 payload。watchdog 因此可以识别进程活着但消息循环卡死。
+    WriteAhkHeartbeat()
     
     ; 1. 【最高优先级】真硬件睡眠/挂起打捞算法
     actualElapsed := DateDiff(A_Now, lastFiredTime, "Seconds")
@@ -156,6 +160,22 @@ CaptureActiveWindow() {
     }
 
     SetTimer(CaptureActiveWindow, -2000, 1) ; 动态排队，完全消除多轮心跳并发重叠隐患
+}
+
+WriteAhkHeartbeat() {
+    global ahkHeartbeatPath
+    heartbeatTemp := ahkHeartbeatPath . "." . DllCall("GetCurrentProcessId") . ".tmp"
+    try {
+        if FileExist(heartbeatTemp)
+            FileDelete(heartbeatTemp)
+        FileAppend(A_NowUTC, heartbeatTemp, "UTF-8-RAW")
+        FileMove(heartbeatTemp, ahkHeartbeatPath, 1)
+    } catch {
+        try {
+            if FileExist(heartbeatTemp)
+                FileDelete(heartbeatTemp)
+        }
+    }
 }
 
 ; 根据当前系统时区生成 ISO 风格 UTC offset，避免跨时区机器把本地时间误标成 +08。

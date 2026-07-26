@@ -93,6 +93,27 @@ def test_watchdog_checks_exact_script_heartbeat_with_resume_grace():
     )
     assert missing_position < startup_wait_position < auto_start_grace_position
     assert "Find-Proc 'pythonw.exe' 'main\\.py'" not in source
+    assert "$ahkHeartbeat" in source
+    assert "Restart-Ahk 'heartbeat stale after resume grace'" in source
+    assert "$ingesterHeartbeat" in source
+    assert "function Test-IngesterRunning" in source
+    assert "Restart-Ingester 'heartbeat stale after resume grace'" in source
+
+
+def test_ahk_emits_payload_free_progress_heartbeat():
+    source = (ROOT / "TimeAudit.ahk").read_text(encoding="utf-8-sig")
+
+    assert 'global ahkHeartbeatPath := "E:\\Projects\\Tools\\TimeAudit\\log\\ahk_heartbeat"' in source
+    assert "WriteAhkHeartbeat()" in source
+    assert 'FileAppend(A_NowUTC, heartbeatTemp, "UTF-8-RAW")' in source
+
+
+def test_screen_time_dashboard_has_no_grafana_13_style_field_parser():
+    dashboard_path = DASHBOARD_DIR / "adfkm96__📊 屏幕使用时间.json"
+    dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+    serialized = json.dumps(dashboard, ensure_ascii=False)
+
+    assert '"styleField"' not in serialized
 
 
 def test_backup_payloads_default_to_g_drive():
@@ -122,6 +143,8 @@ def test_lhm_uses_non_excluded_port_and_bounded_restart_backoff():
     assert 'schedule_lhm_retry("process exited")' in worker
     assert 'schedule_lhm_retry("launch failed")' in worker
     assert "else 18085" in health_test
+    assert "py_cmdline_ok or py_heartbeat_ok" in health_test
+    assert 'os.path.join(ROOT, "log", "telemetry_heartbeat")' in health_test
 
 
 def test_manual_uses_generic_dashboard_titles():
@@ -140,6 +163,8 @@ if __name__ == "__main__":
         test_heartbeat_is_written_atomically(Path(directory))
     test_main_updates_heartbeat_and_releases_singleton_mutex()
     test_watchdog_checks_exact_script_heartbeat_with_resume_grace()
+    test_ahk_emits_payload_free_progress_heartbeat()
+    test_screen_time_dashboard_has_no_grafana_13_style_field_parser()
     test_backup_payloads_default_to_g_drive()
     test_lhm_uses_non_excluded_port_and_bounded_restart_backoff()
     test_manual_uses_generic_dashboard_titles()

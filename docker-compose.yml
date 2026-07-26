@@ -35,7 +35,7 @@ services:
       - "log_timezone=Asia/Shanghai"
     environment:
       POSTGRES_USER: 'leyang'
-      POSTGRES_PASSWORD: 'SecurePassword123'
+      POSTGRES_PASSWORD: '${TIMEAUDIT_DB_PASSWORD:?TIMEAUDIT_DB_PASSWORD is required}'
       POSTGRES_DB: 'time_audit'
     ports:
       - "55432:5432"
@@ -54,13 +54,22 @@ services:
     restart: always
     depends_on:
       - audit-db
+    environment:
+      TIMEAUDIT_DB_PASSWORD: '${TIMEAUDIT_DB_PASSWORD:?TIMEAUDIT_DB_PASSWORD is required}'
     volumes:
       - ./log:/log                     
-      - ./ingest.py:/app/ingest.py     
+      - ./ingest.py:/app/ingest.py:ro
+      - ./ingester_healthcheck.py:/app/ingester_healthcheck.py:ro
+    healthcheck:
+      test: ["CMD", "python", "/app/ingester_healthcheck.py"]
+      interval: 20s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   # 📊 天花板级前端：Grafana 仪表盘
   audit-dashboard:
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:13.0.2
     container_name: audit-grafana
     restart: always
     ports:
@@ -68,6 +77,7 @@ services:
     environment:
       - GF_USERS_DEFAULT_THEME=light
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
+      - TIMEAUDIT_DB_PASSWORD=${TIMEAUDIT_DB_PASSWORD:?TIMEAUDIT_DB_PASSWORD is required}
     volumes:
       - ./grafana_data:/var/lib/grafana
       # 🟢 【新增核心挂载】：将本地脱水的纯文本卡片配置无感注入容器内部

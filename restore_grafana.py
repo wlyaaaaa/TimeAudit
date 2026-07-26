@@ -50,13 +50,17 @@ def api_post(base_url, path, auth_header, body, timeout=15):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:53000"))
-    ap.add_argument("--user", default=os.environ.get("GRAFANA_USER", "admin"))
-    ap.add_argument("--password", default=os.environ.get("GRAFANA_PASSWORD", "admin"))
+    ap.add_argument("--user", default=os.environ.get("GRAFANA_USER"))
     ap.add_argument("--file", default=None, help="只恢复这一个 JSON 文件")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-
-    auth_header = "Basic " + base64.b64encode(f"{args.user}:{args.password}".encode()).decode()
+    password = os.environ.get("GRAFANA_PASSWORD")
+    auth_header = None
+    if not args.dry_run:
+        if not args.user or not password:
+            log("GRAFANA_USER / GRAFANA_PASSWORD 未在私密运行环境中配置。")
+            return 2
+        auth_header = "Basic " + base64.b64encode(f"{args.user}:{password}".encode()).decode()
 
     if args.file:
         files = [args.file]

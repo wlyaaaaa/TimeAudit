@@ -296,7 +296,6 @@
               "reducers": []
             },
             "inspect": false,
-            "styleField": "活动归属",
             "tooltip": {
               "field": "持续总秒数",
               "placement": "top"

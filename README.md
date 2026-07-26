@@ -96,7 +96,7 @@
 - 每 3 秒一拍驱动所有采集。
 - **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
 - **崩溃自愈（两层，注意盲区）**：① 主循环抛 **Python 异常**时，外层 `while True` 等 5 秒重启它；② 但若进程被 **native 崩溃**整个带走（实测 2026-06-22：psutil 的 `_psutil_windows.pyd` 触发 `0xc0000005` 访问冲突，整个 `pythonw` 段错误退出），外层 `while` 也一起死、**兜不住**——曾因此静默停摆 17 小时。这种由下面的「外部进程守护」兜底。
-- **外部进程守护**（补 native 崩溃和“进程活着但采集卡死”盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 5 分钟 + 登录触发、提权）**独立于引擎**运行。`main.py` 每次成功落库后原子更新本地 heartbeat；watchdog 同时检查本项目进程和 heartbeat，新启动或睡眠恢复时先宽限 45 秒再复查，仍陈旧才拉起新实例，由单例锁安全接管。`TimeAudit.ahk` 继续按精确脚本路径检查进程。两个采集器整进程死亡都能 ≤5 分钟自愈，日志见 `telemetry_watchdog.log`。
+- **外部进程守护**（补 native 崩溃和“进程活着但采集卡死”盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 1 分钟 + 登录触发、提权、任务失败最多重试 3 次）**独立于引擎**运行。`main.py`、`TimeAudit.ahk` 和 `audit-ingester` 都写无 payload heartbeat；watchdog 先给睡眠恢复留出宽限，再按精确进程/容器身份分别恢复。进程只是 Running 但消息循环或入库循环已经卡死，也会因 heartbeat 陈旧被识别。任务定义由 PCConfig 的 `Install-TimeAuditRuntimeWatchdog.ps1` 恢复，日志见 `telemetry_watchdog.log`。
 - **睡眠/唤醒处理**（重点，见第 7 节）：用"墙上时间"判断系统是否刚从睡眠/休眠醒来，醒来后把跨睡眠的脏数据截断掉。
 - **冷启动清理**：每次启动先把上次"关机时没来得及收尾"的前台会话补上结束时间（否则会留下永远不结束的"幽灵行"）。
 - **分区预热**：每 12 小时（按墙上时间）提前把"下一周/下一月"的数据库分区建好，免得到了周一零点没表可写而丢数据。
@@ -165,12 +165,12 @@
 | 容器 | 镜像 | 端口 | 干嘛 |
 | :--- | :--- | :--- | :--- |
 | `audit-postgres` | postgres:15-alpine | `55432→5432` | 数据仓库。数据存在宿主机 `./postgres_data` 目录。 |
-| `audit-ingester` | 本地 Dockerfile 构建 | 无 | 跑 `ingest.py`，每 10 秒把 `log/buffer.csv` 搬进 `app_usage_logs`。 |
-| `audit-grafana` | grafana-oss:latest | `53000→3000` | 网页大盘。配置从 `./grafana_provisioning` 注入，数据存 `./grafana_data`。 |
+| `audit-ingester` | 本地 Dockerfile 构建 | 无 | 每 10 秒轮转唯一 spool 段并入库；有限连接/语句超时、幂等事件 ID、无 payload heartbeat 和 Docker healthcheck 防止整批静默卡死。 |
+| `audit-grafana` | grafana-oss:13.0.2 | `53000→3000` | 网页大盘。版本固定，避免 `latest` 自动升级再次破坏已验证的面板配置。 |
 
 **账号/端口速查**：
 
-- PostgreSQL：`localhost:55432`，用户 `leyang`，密码 `SecurePassword123`，库 `time_audit`。
+- PostgreSQL：`localhost:55432`，库 `time_audit`；本机口令只从当前用户环境变量 `TIMEAUDIT_DB_PASSWORD` 注入，不进入 Git、日志或命令行。
 - Grafana：浏览器开 `http://localhost:53000`。
 
 **PostgreSQL 性能配置写在 `docker-compose.yml` 的 `command:` 里**（不是 postgresql.conf）：`shared_buffers=2GB`、`work_mem=16MB`、`effective_cache_size=8GB`，以及 NVMe 友好的 `random_page_cost=1.1` / `effective_io_concurrency=200`；外加 `shm_size: '512mb'`（并行查询大分区时 `/dev/shm` 的上限，防 "could not resize shared memory segment ... No space left on device"）。改这些要编辑 compose 后 `docker compose up -d audit-db` 重建容器才生效。
@@ -297,6 +297,8 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 
 **看大盘**：浏览器开 `http://localhost:53000`。
 
+**“屏幕使用时间突然近段无数据”的倒查顺序**：先比对 `log/buffer.csv` / `buffer.csv.*.processing` 的文件级元数据、`ingester_heartbeat.json`、容器 health 与 `app_usage_logs` 最新区间结束时间。不要读取或打印窗口标题。AHK 最长 300 秒才强制结算同一前台区间，因此健康状态允许数据库尾部约 5 分钟自然滞后；超过该边界且 heartbeat 陈旧才属于管道异常。`window_title` 使用 `TEXT`，超长标题不会再阻塞整批；spool 只有在事务提交后才删除，重试由 `source_event_id` 去重。
+
 ---
 
 ## 9. 审计这个项目的几个方向
@@ -304,7 +306,7 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 如果要系统审计 TimeAudit，不建议只做普通代码走读。它的风险主要在“长期 7×24 写入 + Windows 本机权限 + 时序数据口径 + Grafana SQL”这几个交叉点。推荐按下面几条线推进：
 
 1. **采集链路与自愈审计**
-   重点看 `main.py` 的 3 秒主循环、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明 `main.py`、`TimeAudit.ahk`、`LibreHardwareMonitor.exe`、`PresentMonConsole.exe` 任一掉线后能恢复，且不会因多实例导致重复写库。入口脚本：`python E:\Projects\Tools\TimeAudit\test_telemetry_health.py`，再对照 `telemetry.log` / `telemetry_watchdog.log`。
+   重点看 `main.py` 的 3 秒主循环、`TimeAudit.ahk`、`audit-ingester`、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明三个主链组件任一死亡或假活后能恢复，唯一 spool 不丢不覆盖，数据库重试不会重复写库。入口脚本：`python -m pytest -q test_ingest_resilience.py test_runtime_hardening.py` 和 `python E:\Projects\Tools\TimeAudit\test_telemetry_health.py`，再对照无 payload heartbeat 与 `telemetry_watchdog.log`。
 
 2. **数据正确性与时序边界审计**
    重点看睡眠/唤醒、锁屏、系统时间回拨、跨周/月分区边界、前台会话闭合、`duration_ms` 是否为负、硬件数值是否物理越界。入口脚本：`python E:\Projects\Tools\TimeAudit\db_audit.py`。这里尤其要盯 `time.time()` 与 `time.monotonic()` 的分工，别把“落库时间戳”和“速率差分分母”混在一起。

@@ -17,7 +17,7 @@ TimeAudit — Grafana 仪表盘自动备份
     --no-push          只本地 commit，不 push 到 GitHub
     --no-git           只导出文件，不碰 git
     --url   http://127.0.0.1:53000     Grafana 地址
-    --user  admin      --password admin                Grafana 账号(默认 admin/admin)
+    GRAFANA_USER / GRAFANA_PASSWORD                     从本机私密环境注入 API 认证
     --keep-db 14       grafana.db 二进制备份保留份数(默认 14)
 
 恢复方法见《快速部署.md》"Grafana 仪表盘备份与恢复"一节。
@@ -264,20 +264,23 @@ def git_commit_and_push(do_push):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:53000"))
-    ap.add_argument("--user", default=os.environ.get("GRAFANA_USER", "admin"))
-    ap.add_argument("--password", default=os.environ.get("GRAFANA_PASSWORD", "admin"))
+    ap.add_argument("--user", default=os.environ.get("GRAFANA_USER"))
     ap.add_argument("--keep-db", type=int, default=14)
     ap.add_argument("--no-git", action="store_true")
     ap.add_argument("--no-push", action="store_true")
     args = ap.parse_args()
+    password = os.environ.get("GRAFANA_PASSWORD")
+    if not args.user or not password:
+        log("❌ GRAFANA_USER / GRAFANA_PASSWORD 未在私密运行环境中配置。")
+        return 2
 
-    auth_header = "Basic " + base64.b64encode(f"{args.user}:{args.password}".encode()).decode()
+    auth_header = "Basic " + base64.b64encode(f"{args.user}:{password}".encode()).decode()
 
     try:
         export_dashboards(args.url, auth_header)
     except Exception as e:
         log(f"❌ 仪表盘导出失败: {e}")
-        log("  常见原因: Grafana 没起(docker compose up -d) / 账号密码不对(--user --password)。")
+        log("  常见原因: Grafana 没起，或私密 Grafana API 认证已失效。")
         return 1
 
     try:

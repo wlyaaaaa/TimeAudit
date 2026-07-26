@@ -18,6 +18,7 @@ import datetime
 import re
 import asyncio
 import asyncpg
+from db_config import local_dsn
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -25,7 +26,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DB_DSN = local_dsn()
 DASHBOARD_DIR = r"E:\Projects\Tools\TimeAudit\grafana_dashboards"
 
 # 动态计算北京时间 (UTC+8) 的当前周、月后缀

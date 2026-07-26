@@ -84,10 +84,16 @@ try {
     # 4. 🚀 强效修正：利用宿主机 Python + asyncpg 原生穿透网络流进行心跳实测
     # 彻底抛弃受阻的 docker ps / docker exec 命令，实现 100% 鉴权级体检
     $pyCode = @'
-import asyncio, asyncpg, sys
+import asyncio, asyncpg, os, sys
 async def check():
     try:
-        c = await asyncpg.connect("postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit")
+        c = await asyncpg.connect(
+            host="127.0.0.1",
+            port=55432,
+            user="leyang",
+            password=os.environ["TIMEAUDIT_DB_PASSWORD"],
+            database="time_audit",
+        )
         v = await c.fetchval("SELECT EXTRACT(EPOCH FROM (now() - timestamp)) FROM public.fact_system_hardware ORDER BY timestamp DESC LIMIT 1;")
         if v is not None:
             print(f"SUCCESS:{v}")

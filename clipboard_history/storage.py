@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -102,16 +102,11 @@ END;
 """
 
 
-def _utc_now() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace(
-        "+00:00", "Z"
-    )
-
-
 class ClipboardStore:
     def __init__(self, database: Path):
         self.database = Path(database)
         self.connection: sqlite3.Connection | None = None
+        self._last_observed_at: datetime | None = None
 
     def initialize(self) -> None:
         self.database.parent.mkdir(parents=True, exist_ok=True)
@@ -140,6 +135,20 @@ class ClipboardStore:
                 "INSERT OR REPLACE INTO meta(key,value) VALUES('contract_version',?)",
                 (CONTRACT_VERSION,),
             )
+        latest = connection.execute(
+            "SELECT MAX(observed_at_utc) FROM events"
+        ).fetchone()[0]
+        if latest:
+            self._last_observed_at = datetime.fromisoformat(
+                str(latest).replace("Z", "+00:00")
+            )
+
+    def _next_observed_at(self) -> str:
+        current = datetime.now(timezone.utc)
+        if self._last_observed_at is not None and current <= self._last_observed_at:
+            current = self._last_observed_at + timedelta(microseconds=1)
+        self._last_observed_at = current
+        return current.isoformat(timespec="microseconds").replace("+00:00", "Z")
 
     def _connection(self) -> sqlite3.Connection:
         if self.connection is None:
@@ -187,7 +196,7 @@ class ClipboardStore:
         event_id = f"evt_{uuid.uuid4().hex}"
         digest = payload_sha256(text)
         blob_id = f"sha256:{digest}"
-        observed = _utc_now()
+        observed = self._next_observed_at()
         with connection:
             connection.execute(
                 """
@@ -253,7 +262,7 @@ class ClipboardStore:
                 """,
                 (
                     event_id,
-                    _utc_now(),
+                    self._next_observed_at(),
                     collector_instance_id,
                     boot_id,
                     session_id,

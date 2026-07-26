@@ -3,6 +3,7 @@ import asyncio
 import datetime
 import sys
 import asyncpg
+from db_config import local_dsn
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -11,7 +12,7 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 # 数据库 DSN 配置
-DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DB_DSN = local_dsn()
 
 async def check_status():
     print("=" * 70)

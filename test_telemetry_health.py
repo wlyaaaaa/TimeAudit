@@ -19,6 +19,7 @@ TimeAudit 遥测健康综合验证测试
 import sys, os, re, json, urllib.request, datetime, asyncio, warnings, subprocess
 import psutil
 import asyncpg
+from db_config import local_dsn
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -26,7 +27,7 @@ for _s in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DSN = local_dsn()
 ROOT = os.path.dirname(os.path.abspath(__file__))
 
 PASS, FAIL = "✅ PASS", "❌ FAIL"
@@ -72,6 +73,12 @@ def proc_alive(name):
             pass
     return None
 
+def heartbeat_fresh(path, max_age_seconds):
+    try:
+        return (datetime.datetime.now().timestamp() - os.path.getmtime(path)) <= max_age_seconds
+    except OSError:
+        return False
+
 def part_name_week(d, parent):
     iso = d.isocalendar()
     return f"{parent}_y{iso[0]}w{iso[1]:02d}"
@@ -105,9 +112,15 @@ async def main():
     print("\n[1] 组件存活")
     lhm_pid = proc_alive("LibreHardwareMonitor.exe")
     pm_pid = proc_alive("PresentMonConsole.exe")
-    py_ok = any('main.py' in ' '.join(p.info['cmdline'] or []) for p in psutil.process_iter(['cmdline'])
-                if _safe(lambda: p.info['cmdline']))
-    check("python 遥测引擎在运行", py_ok)
+    py_cmdline_ok = any('main.py' in ' '.join(p.info['cmdline'] or []) for p in psutil.process_iter(['cmdline'])
+                        if _safe(lambda: p.info['cmdline']))
+    py_heartbeat_ok = heartbeat_fresh(os.path.join(ROOT, "log", "telemetry_heartbeat"), 90)
+    py_ok = py_cmdline_ok or py_heartbeat_ok
+    check(
+        "python 遥测引擎在运行",
+        py_ok,
+        "exact process visible" if py_cmdline_ok else "fresh payload-free heartbeat",
+    )
     check("LibreHardwareMonitor 在运行 (看门狗保活)", lhm_pid is not None, f"PID={lhm_pid}")
     pm_ok, pm_detail = evaluate_presentmon_process_status(pm_pid)
     check("PresentMonConsole 按需门控状态正常", pm_ok, pm_detail)

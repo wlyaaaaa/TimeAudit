@@ -8,12 +8,13 @@ import sys
 import io
 import warnings
 from datetime import datetime, timezone
+from db_config import local_dsn
 
 # 强制标准输出使用 UTF-8
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
 sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace')
 
-DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DB_DSN = local_dsn()
 
 
 def gpu_total_vram_gb():

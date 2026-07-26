@@ -1,9 +1,9 @@
 # TimeAudit telemetry watchdog
-# Restarts a collector if its process has crashed/disappeared. Guards TWO engines:
+# Restarts a collector if its process has crashed/disappeared. Guards THREE engines:
 #   1. main.py            -> the Python hardware/process telemetry engine (writes fact_* tables)
 #   2. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
-#                            i.e. the 屏幕使用时间 dashboard). Previously UNGUARDED: if it died,
-#                            the entire screen-time data source went silent with nobody to revive it.
+#                            i.e. the 屏幕使用时间 dashboard).
+#   3. audit-ingester     -> the bounded CSV-to-PostgreSQL sidecar.
 # main.py also writes a local heartbeat only after a successful database batch. If that heartbeat is
 # stale, the watchdog waits through a resume/startup grace period and checks again before relaunching.
 # This catches a live-but-stuck collector without false-restarting immediately after system sleep.
@@ -14,8 +14,15 @@ $script    = 'E:\Projects\Tools\TimeAudit\main.py'
 $ahkExe    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
 $ahkScript = 'E:\Projects\Tools\TimeAudit\TimeAudit.ahk'
 $heartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_heartbeat'
+$ahkHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ahk_heartbeat'
+$ingesterHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ingester_heartbeat.json'
+$docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
+$compose = 'E:\Projects\Tools\TimeAudit\docker-compose.yml'
 $heartbeatMaxAgeSeconds = 90
 $heartbeatGraceSeconds = 45
+$ahkHeartbeatMaxAgeSeconds = 20
+$ingesterHeartbeatMaxAgeSeconds = 45
+$sidecarGraceSeconds = 15
 $startupGraceSeconds = 15
 $autoStartMaxGraceSeconds = 240
 $mainScriptPattern = '(?i)(?:^|\s|")' + [regex]::Escape($script) + '(?:"|\s|$)'
@@ -116,18 +123,67 @@ if (-not $mainProc) {
 }
 
 # === 2. TimeAudit.ahk (AutoHotkey screen-time engine) ===
-# #SingleInstance Force inside the script makes a relaunch idempotent: any stale instance is
-# silently replaced and flushes its pending buffer via SafeExitHandler, so a race cannot duplicate data.
-if (Find-Proc 'AutoHotkey64.exe' $ahkScriptPattern) {
-    # healthy
-} else {
-    Log "TimeAudit.ahk NOT running - attempting restart"
+function Restart-Ahk($reason) {
+    Log ("TimeAudit.ahk {0} - attempting restart" -f $reason)
     if (-not (Test-Path $ahkScript)) { Log "ABORT: TimeAudit.ahk path missing" }
     else {
+        $existing = Find-Proc 'AutoHotkey64.exe' $ahkScriptPattern
+        if ($existing) {
+            Stop-Process -Id $existing.ProcessId -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
+        }
         Restart-ViaTask 'TimeAudit_WatchdogAhkRestart_tmp' $ahkExe ('"{0}"' -f $ahkScript) 'E:\Projects\Tools\TimeAudit'
         $now = Find-Proc 'AutoHotkey64.exe' $ahkScriptPattern
-        if ($now) { Log ("RESTART OK - TimeAudit.ahk PID {0}" -f $now.ProcessId) }
+        if ($now -and (Test-HeartbeatFresh $ahkHeartbeat $ahkHeartbeatMaxAgeSeconds)) {
+            Log ("RESTART OK - TimeAudit.ahk PID {0}" -f $now.ProcessId)
+        }
         else      { Log "RESTART FAILED - TimeAudit.ahk still down" }
+    }
+}
+
+# #SingleInstance Force inside the script makes a relaunch idempotent. A fresh payload-free
+# heartbeat additionally proves that the AHK message loop is making progress.
+$ahkProc = Find-Proc 'AutoHotkey64.exe' $ahkScriptPattern
+if (-not $ahkProc) {
+    Restart-Ahk 'NOT running'
+} elseif (-not (Test-HeartbeatFresh $ahkHeartbeat $ahkHeartbeatMaxAgeSeconds)) {
+    Start-Sleep -Seconds $sidecarGraceSeconds
+    if (-not (Test-HeartbeatFresh $ahkHeartbeat $ahkHeartbeatMaxAgeSeconds)) {
+        Restart-Ahk 'heartbeat stale after resume grace'
+    }
+}
+
+# === 3. audit-ingester (CSV -> PostgreSQL sidecar) ===
+function Test-IngesterRunning {
+    if (-not (Test-Path -LiteralPath $docker)) { return $false }
+    $state = & $docker inspect --format '{{.State.Running}}' audit-ingester 2>$null
+    return ($LASTEXITCODE -eq 0 -and "$state".Trim() -eq 'true')
+}
+
+function Restart-Ingester($reason) {
+    Log ("audit-ingester {0} - attempting restart" -f $reason)
+    if (-not (Test-Path -LiteralPath $docker)) {
+        Log "ABORT: Docker CLI missing"
+        return
+    }
+    & $docker restart audit-ingester 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        & $docker compose -f $compose up -d audit-ingest 2>&1 | Out-Null
+    }
+    Start-Sleep -Seconds 12
+    if ((Test-IngesterRunning) -and (Test-HeartbeatFresh $ingesterHeartbeat $ingesterHeartbeatMaxAgeSeconds)) {
+        Log "RESTART OK - audit-ingester heartbeat fresh"
+    } else {
+        Log "RESTART FAILED - audit-ingester unavailable or heartbeat stale"
+    }
+}
+
+if (-not (Test-IngesterRunning)) {
+    Restart-Ingester 'NOT running'
+} elseif (-not (Test-HeartbeatFresh $ingesterHeartbeat $ingesterHeartbeatMaxAgeSeconds)) {
+    Start-Sleep -Seconds $sidecarGraceSeconds
+    if (-not (Test-HeartbeatFresh $ingesterHeartbeat $ingesterHeartbeatMaxAgeSeconds)) {
+        Restart-Ingester 'heartbeat stale after resume grace'
     }
 }
 

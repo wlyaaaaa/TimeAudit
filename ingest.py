@@ -1,103 +1,272 @@
-print("==================================================")
-print("🔥 警告：Python 解释器已成功捕获源码，正在全力初始化...")
-print("==================================================")
+"""Lossless CSV-to-PostgreSQL sidecar for TimeAudit screen-time events.
 
+The AHK collector owns the source CSV.  This process only rotates immutable
+spool segments, validates a whole segment, and removes it after a committed
+database transaction.  Heartbeats contain operational metadata only.
+"""
+
+from __future__ import annotations
+
+import csv
+import hashlib
+import json
 import os
 import time
-import csv
-import psycopg  
+from pathlib import Path
 
-# === 🔒 容器网络连接配置 ===
-DB_HOST = "audit-db"
-DB_USER = "leyang"
-DB_PASS = "SecurePassword123"
-DB_NAME = "time_audit"
-CSV_PATH = "/log/buffer.csv"
+
+DB_HOST = os.environ.get("TIMEAUDIT_DB_HOST", "audit-db")
+DB_USER = os.environ.get("TIMEAUDIT_DB_USER", "leyang")
+DB_PASS = os.environ["TIMEAUDIT_DB_PASSWORD"]
+DB_NAME = os.environ.get("TIMEAUDIT_DB_NAME", "time_audit")
+CSV_PATH = Path(os.environ.get("TIMEAUDIT_CSV_PATH", "/log/buffer.csv"))
+HEARTBEAT_PATH = Path(
+    os.environ.get("TIMEAUDIT_INGEST_HEARTBEAT", "/log/ingester_heartbeat.json")
+)
+LOOP_SECONDS = 10
+
+
+class CsvPayloadError(ValueError):
+    """A spool segment is not fully parseable and must remain untouched."""
+
+
+def source_event_id(row: tuple[str, int, str, str]) -> str:
+    canonical = json.dumps(
+        [row[0], row[1], row[2], row[3]],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
 
 def connect_db():
-    """死守数据库连接，直到容器完全初始化完毕"""
-    while True:
-        try:
-            return psycopg.connect(
-                host=DB_HOST, 
-                user=DB_USER, 
-                password=DB_PASS, 
-                dbname=DB_NAME
-            )
-        except Exception:
-            time.sleep(2)
+    import psycopg
 
-def init_db():
-    """初始化数据库表结构与高频索引"""
+    return psycopg.connect(
+        host=DB_HOST,
+        user=DB_USER,
+        password=DB_PASS,
+        dbname=DB_NAME,
+        connect_timeout=5,
+        options="-c statement_timeout=15000 -c lock_timeout=5000",
+        application_name="timeaudit_screen_ingester",
+    )
+
+
+def init_db() -> None:
     with connect_db() as conn:
         with conn.cursor() as cur:
-            cur.execute("""
+            cur.execute(
+                """
                 CREATE TABLE IF NOT EXISTS app_usage_logs (
                     id BIGSERIAL PRIMARY KEY,
                     start_time TIMESTAMP WITH TIME ZONE NOT NULL,
                     duration_seconds INT NOT NULL,
                     process_name VARCHAR(100) NOT NULL,
-                    window_title VARCHAR(500)
+                    window_title TEXT,
+                    source_event_id CHAR(64)
                 );
-                CREATE INDEX IF NOT EXISTS idx_logs_start_time ON app_usage_logs (start_time);
-            """)
-            conn.commit()
+                ALTER TABLE app_usage_logs
+                    ALTER COLUMN window_title TYPE TEXT;
+                ALTER TABLE app_usage_logs
+                    ADD COLUMN IF NOT EXISTS source_event_id CHAR(64);
+                CREATE INDEX IF NOT EXISTS idx_logs_start_time
+                    ON app_usage_logs (start_time);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_logs_source_event_id
+                    ON app_usage_logs (source_event_id)
+                    WHERE source_event_id IS NOT NULL;
+                """
+            )
 
-def sync_pipeline():
-    """增量无损同步核心管道"""
-    if not os.path.exists(CSV_PATH) or os.path.getsize(CSV_PATH) == 0:
-        return
-    
-    processing_tmp_path = CSV_PATH + ".processing"
-    
+
+def processing_path(csv_path: Path = CSV_PATH) -> Path:
+    return csv_path.with_name(
+        f"{csv_path.name}.{time.time_ns()}.{os.getpid()}.processing"
+    )
+
+
+def rotate_source(csv_path: Path = CSV_PATH) -> Path | None:
     try:
-        if os.path.exists(processing_tmp_path):
-            os.remove(processing_tmp_path)
-        os.rename(CSV_PATH, processing_tmp_path)
-    except Exception:
-        return 
-        
-    if not os.path.exists(processing_tmp_path):
-        return
-        
-    rows_to_insert = []
-    with open(processing_tmp_path, 'r', encoding='utf-8-sig') as f:
-        reader = csv.reader(f)
-        for row in reader:
-            if len(row) < 4: 
-                continue
-            try:
-                rows_to_insert.append((row[0], int(row[1]), row[2], row[3]))
-            except ValueError:
-                continue
-                
-    if rows_to_insert:
-        # ⚡ 核心修正：利用 with 上下文管理器包盘，任何 SQL 崩溃都会自动回滚并 close 释放连接，绝不泄漏
-        try:
-            with connect_db() as conn:
-                with conn.cursor() as cur:
-                    cur.executemany(
-                        "INSERT INTO app_usage_logs (start_time, duration_seconds, process_name, window_title) VALUES (%s, %s, %s, %s);",
-                        rows_to_insert
-                    )
-                conn.commit()
-            print(f"成功无感同步 {len(rows_to_insert)} 条工时区间数据至本地 PostgreSQL 数据库。")
-            
-            # ⚡ 核心修正：只有成功入库的数据，才配被物理删除
-            if os.path.exists(processing_tmp_path):
-                os.remove(processing_tmp_path)
-        except Exception as db_err:
-            # 如果入库失败，还原现场，把文件名改回去，留给下个周期重试，死守数据不丢失！
-            print(f"📡 数仓写入发生抖动(已启动保护机制还原现场): {db_err}")
-            if os.path.exists(processing_tmp_path) and not os.path.exists(CSV_PATH):
-                os.rename(processing_tmp_path, CSV_PATH)
+        if not csv_path.exists() or csv_path.stat().st_size == 0:
+            return None
+        target = processing_path(csv_path)
+        csv_path.rename(target)
+        return target
+    except (FileNotFoundError, PermissionError, OSError):
+        return None
 
-if __name__ == "__main__":
-    init_db()
-    print("🚀 数据同步管道常驻线程已就位，开启 10 秒周期性无锁扫描...")
+
+def pending_segments(csv_path: Path = CSV_PATH) -> list[Path]:
+    legacy = csv_path.with_name(f"{csv_path.name}.processing")
+    pending = list(csv_path.parent.glob(f"{csv_path.name}.*.processing"))
+    if legacy.exists():
+        pending.append(legacy)
+    return sorted(set(pending), key=lambda path: path.name)
+
+
+def parse_segment(path: Path) -> list[tuple[str, int, str, str]]:
+    rows: list[tuple[str, int, str, str]] = []
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        for row_number, row in enumerate(csv.reader(handle), start=1):
+            if len(row) != 4:
+                raise CsvPayloadError(f"invalid_column_count_at_row_{row_number}")
+            try:
+                duration = int(row[1])
+            except ValueError as exc:
+                raise CsvPayloadError(
+                    f"invalid_duration_at_row_{row_number}"
+                ) from exc
+            if duration < 0:
+                raise CsvPayloadError(f"negative_duration_at_row_{row_number}")
+            rows.append((row[0], duration, row[2], row[3]))
+    return rows
+
+
+def insert_segment(path: Path) -> int:
+    rows = parse_segment(path)
+    if not rows:
+        path.unlink()
+        return 0
+
+    values = [(*row, source_event_id(row)) for row in rows]
+    with connect_db() as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO app_usage_logs (
+                    start_time,
+                    duration_seconds,
+                    process_name,
+                    window_title,
+                    source_event_id
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (source_event_id)
+                    WHERE source_event_id IS NOT NULL
+                    DO NOTHING
+                """,
+                values,
+            )
+    path.unlink()
+    return len(rows)
+
+
+def pending_metadata(csv_path: Path = CSV_PATH) -> tuple[int, int]:
+    files = pending_segments(csv_path)
+    total_bytes = 0
+    for path in files:
+        try:
+            total_bytes += path.stat().st_size
+        except OSError:
+            pass
+    try:
+        if csv_path.exists():
+            total_bytes += csv_path.stat().st_size
+    except OSError:
+        pass
+    return len(files), total_bytes
+
+
+def write_heartbeat(
+    *,
+    state: str,
+    last_batch_rows: int,
+    error_kind: str | None = None,
+    heartbeat_path: Path = HEARTBEAT_PATH,
+    csv_path: Path = CSV_PATH,
+) -> None:
+    pending_files, pending_bytes = pending_metadata(csv_path)
+    payload = {
+        "schema": "timeaudit.ingester-heartbeat.v1",
+        "updated_at_unix_ms": int(time.time() * 1000),
+        "state": state,
+        "pending_files": pending_files,
+        "pending_bytes": pending_bytes,
+        "last_batch_rows": last_batch_rows,
+        "error_kind": error_kind,
+    }
+    heartbeat_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = heartbeat_path.with_name(
+        f"{heartbeat_path.name}.{os.getpid()}.tmp"
+    )
+    temporary.write_text(
+        json.dumps(payload, ensure_ascii=True, separators=(",", ":")),
+        encoding="ascii",
+    )
+    os.replace(temporary, heartbeat_path)
+
+
+def sync_pipeline(csv_path: Path = CSV_PATH) -> tuple[int, str | None]:
+    rotate_source(csv_path)
+    inserted = 0
+    first_error: str | None = None
+    for path in pending_segments(csv_path):
+        try:
+            inserted += insert_segment(path)
+        except Exception as exc:
+            if first_error is None:
+                first_error = type(exc).__name__
+            # Keep the immutable segment for a later bounded retry.  Do not
+            # print exception text because drivers can include private fields.
+    return inserted, first_error
+
+
+def run_once(*, initialized: bool) -> bool:
+    state = "healthy"
+    error_kind = None
+    inserted = 0
+    try:
+        if not initialized:
+            init_db()
+            initialized = True
+        inserted, error_kind = sync_pipeline()
+        if error_kind:
+            state = "degraded"
+    except Exception as exc:
+        state = "degraded"
+        error_kind = type(exc).__name__
+        initialized = False
+    write_heartbeat(
+        state=state,
+        last_batch_rows=inserted,
+        error_kind=error_kind,
+    )
+    print(
+        json.dumps(
+            {
+                "component": "timeaudit_screen_ingester",
+                "state": state,
+                "rows": inserted,
+                "error_kind": error_kind,
+            },
+            ensure_ascii=True,
+            separators=(",", ":"),
+        ),
+        flush=True,
+    )
+    return initialized
+
+
+def main() -> None:
+    initialized = False
     while True:
         try:
-            sync_pipeline()
-        except Exception as e:
-            print(f"管道未知异常(已捕获): {e}")
-        time.sleep(10)
+            initialized = run_once(initialized=initialized)
+        except Exception as exc:
+            # Heartbeat write failures must not terminate the sidecar.
+            print(
+                json.dumps(
+                    {
+                        "component": "timeaudit_screen_ingester",
+                        "state": "heartbeat_error",
+                        "error_kind": type(exc).__name__,
+                    },
+                    separators=(",", ":"),
+                ),
+                flush=True,
+            )
+        time.sleep(LOOP_SECONDS)
+
+
+if __name__ == "__main__":
+    main()

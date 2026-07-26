@@ -143,6 +143,13 @@ class GitSyncTests(unittest.TestCase):
 
     def test_main_returns_nonzero_when_git_cloud_backup_fails(self):
         with (
+            mock.patch.dict(
+                os.environ,
+                {
+                    "GRAFANA_USER": "test-user",
+                    "GRAFANA_PASSWORD": "test-only-secret",
+                },
+            ),
             mock.patch.object(backup, "export_dashboards", return_value=set()),
             mock.patch.object(backup, "backup_grafana_db", return_value=None),
             mock.patch.object(

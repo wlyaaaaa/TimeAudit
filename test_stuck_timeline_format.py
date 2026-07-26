@@ -4,6 +4,7 @@ import os
 import asyncio
 import sys
 import asyncpg
+from db_config import local_dsn
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -13,9 +14,9 @@ for _s in (sys.stdout, sys.stderr):
 
 DASHBOARD_PATH = r"E:\Projects\Tools\TimeAudit\grafana_dashboards\addrd7x__🐀 资源大户与后台内鬼.json"
 
-DB_DSN = "postgresql://leyang:SecurePassword123@127.0.0.1:55432/time_audit"
+DB_DSN = local_dsn()
 
-async def test_dashboard_json():
+async def check_dashboard_json():
     print("[Test] 1. 验证仪表盘 JSON 配置...")
     assert os.path.exists(DASHBOARD_PATH), f"找不到文件: {DASHBOARD_PATH}"
     
@@ -41,7 +42,7 @@ async def test_dashboard_json():
     print("  ✓ 仪表盘 JSON 配置校验通过！")
     return raw_sql
 
-async def test_sql_execution(raw_sql):
+async def check_sql_execution(raw_sql):
     print("[Test] 2. 验证 SQL 执行与哑行兜底逻辑...")
     conn = await asyncpg.connect(DB_DSN)
     try:
@@ -83,8 +84,8 @@ async def test_sql_execution(raw_sql):
 
 async def main():
     try:
-        raw_sql = await test_dashboard_json()
-        await test_sql_execution(raw_sql)
+        raw_sql = await check_dashboard_json()
+        await check_sql_execution(raw_sql)
         print("\n🎉 ALL TESTS PASSED! 软件测试全部成功！")
         return 0
     except AssertionError as e:

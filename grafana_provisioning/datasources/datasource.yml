@@ -6,7 +6,7 @@ datasources:
     url: audit-db:5432        # 内部网络物理对齐 docker-compose 中的服务名
     user: leyang
     secureJsonData:
-      password: 'SecurePassword123'
+      password: '${TIMEAUDIT_DB_PASSWORD}'
     jsonData:
       database: time_audit
       sslmode: disable
