@@ -51,82 +51,68 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "平均 CPU (%)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "mode": "gradient",
                   "type": "gauge"
                 }
               },
               {
-                "id": "max",
                 "value": 100
               },
               {
-                "id": "min",
                 "value": 0
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "平均 GPU (%)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "mode": "gradient",
                   "type": "gauge"
                 }
               },
               {
-                "id": "max",
                 "value": 100
               },
               {
-                "id": "min",
                 "value": 0
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "平均内存 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "峰值内存 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "平均显存 (GB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "gbytes"
               }
             ]
@@ -139,7 +125,6 @@
         "x": 0,
         "y": 0
       },
-      "id": 1,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -201,27 +186,22 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "CPU 均值 (%)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "mode": "gradient",
                   "type": "gauge"
                 }
               },
               {
-                "id": "max",
                 "value": 30
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -248,24 +228,20 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "签名状态"
             },
             "properties": [
               {
-                "id": "custom.width",
                 "value": 100
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "内存均值 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
@@ -278,7 +254,6 @@
         "x": 0,
         "y": 12
       },
-      "id": 2,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -340,24 +315,20 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "累计写入 (GB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "gbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "累计读取 (GB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "gbytes"
               }
             ]
@@ -370,7 +341,6 @@
         "x": 0,
         "y": 24
       },
-      "id": 3,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -437,7 +407,6 @@
         "x": 12,
         "y": 24
       },
-      "id": 4,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -499,36 +468,30 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "共享显存均值 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "共享显存峰值 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "专用显存均值 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
@@ -541,7 +504,6 @@
         "x": 0,
         "y": 35
       },
-      "id": 5,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -625,7 +587,6 @@
         "x": 0,
         "y": 45
       },
-      "id": 6,
       "options": {
         "alignValue": "left",
         "annotations": {
@@ -695,12 +656,10 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "内存增幅 (%)"
             },
             "properties": [
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -724,30 +683,25 @@
                 }
               },
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "mode": "gradient",
                   "type": "gauge"
                 }
               },
               {
-                "id": "max",
                 "value": 200
               },
               {
-                "id": "min",
                 "value": 0
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "内存增量 (MB)"
             },
             "properties": [
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -767,82 +721,68 @@
                 }
               },
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "mode": "gradient",
                   "type": "gauge"
                 }
               },
               {
-                "id": "max",
                 "value": 500
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "起始内存 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "结束内存 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "起始显存 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "结束显存 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "显存增量 (MB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "mbytes"
               }
             ]
@@ -855,7 +795,6 @@
         "x": 0,
         "y": 53
       },
-      "id": 7,
       "options": {
         "cellHeight": "sm",
         "footer": {
@@ -948,12 +887,10 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "前台进程 CPU (%)"
             },
             "properties": [
               {
-                "id": "color",
                 "value": {
                   "fixedColor": "semi-dark-green",
                   "mode": "fixed"
@@ -963,12 +900,10 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "后台总 CPU (%)"
             },
             "properties": [
               {
-                "id": "color",
                 "value": {
                   "fixedColor": "semi-dark-red",
                   "mode": "fixed"
@@ -978,12 +913,10 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "前台进程 GPU (%)"
             },
             "properties": [
               {
-                "id": "color",
                 "value": {
                   "fixedColor": "semi-dark-blue",
                   "mode": "fixed"
@@ -993,12 +926,10 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "后台总 GPU (%)"
             },
             "properties": [
               {
-                "id": "color",
                 "value": {
                   "fixedColor": "semi-dark-orange",
                   "mode": "fixed"
@@ -1014,7 +945,6 @@
         "x": 0,
         "y": 63
       },
-      "id": 8,
       "options": {
         "legend": {
           "calcs": [],

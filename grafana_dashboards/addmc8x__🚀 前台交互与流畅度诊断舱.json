@@ -87,7 +87,6 @@
         "x": 0,
         "y": 0
       },
-      "id": 4,
       "options": {
         "alignValue": "left",
         "annotations": {
@@ -143,7 +142,6 @@
       "title": "用户使用电脑状态时间轴",
       "transformations": [
         {
-          "id": "organize",
           "options": {
             "excludeByName": {
               "持续秒数": true
@@ -216,33 +214,26 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "单帧渲染时间",
               "scope": "series"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "ms"
               },
               {
-                "id": "custom.axisPlacement",
                 "value": "right"
               },
               {
-                "id": "max",
                 "value": null
               },
               {
-                "id": "custom.fillOpacity",
                 "value": 0
               },
               {
-                "id": "custom.gradientMode",
                 "value": "opacity"
               },
               {
-                "id": "custom.scaleDistribution",
                 "value": {
                   "log": 2,
                   "type": "log"
@@ -258,7 +249,6 @@
         "x": 0,
         "y": 5
       },
-      "id": 1,
       "interval": "3s",
       "maxDataPoints": 10000,
       "options": {
@@ -375,13 +365,11 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "帧时微观抖动率",
               "scope": "series"
             },
             "properties": [
               {
-                "id": "color",
                 "value": {
                   "fixedColor": "purple",
                   "mode": "fixed"
@@ -397,7 +385,6 @@
         "x": 0,
         "y": 25
       },
-      "id": 3,
       "interval": "3s",
       "maxDataPoints": 10000,
       "options": {
@@ -492,7 +479,6 @@
         "x": 0,
         "y": 33
       },
-      "id": 2,
       "interval": "3s",
       "maxDataPoints": 10000,
       "options": {
@@ -610,28 +596,23 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "前台 显存占用 (GB)",
               "scope": "series"
             },
             "properties": [
               {
-                "id": "custom.axisPlacement",
                 "value": "right"
               },
               {
-                "id": "unit",
                 "value": "gbytes"
               },
               {
-                "id": "custom.stacking",
                 "value": {
                   "group": "A",
                   "mode": "none"
                 }
               },
               {
-                "id": "custom.scaleDistribution",
                 "value": {
                   "type": "linear"
                 }
@@ -640,21 +621,17 @@
           },
           {
             "matcher": {
-              "id": "byRegexp",
               "options": "/.*\\(GB\\)/",
               "scope": "series"
             },
             "properties": [
               {
-                "id": "custom.axisPlacement",
                 "value": "right"
               },
               {
-                "id": "unit",
                 "value": "gbytes"
               },
               {
-                "id": "custom.stacking",
                 "value": {
                   "group": "A",
                   "mode": "none"
@@ -670,7 +647,6 @@
         "x": 0,
         "y": 48
       },
-      "id": 5,
       "interval": "3s",
       "maxDataPoints": 10000,
       "options": {
@@ -780,7 +756,6 @@
         "x": 0,
         "y": 57
       },
-      "id": 6,
       "options": {
         "alignValue": "center",
         "annotations": {
@@ -857,7 +832,6 @@
         "x": 0,
         "y": 65
       },
-      "id": 7,
       "options": {
         "cellHeight": "sm",
         "enablePagination": true,
@@ -942,7 +916,6 @@
         "x": 12,
         "y": 65
       },
-      "id": 8,
       "options": {
         "alignValue": "center",
         "annotations": {
@@ -1018,30 +991,24 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "平均帧率 (FPS)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "type": "basic-gauge"
                 }
               },
               {
-                "id": "unit",
                 "value": "fps"
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "max",
                 "value": 200
               },
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -1068,30 +1035,24 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "10% 低帧率"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "type": "basic-gauge"
                 }
               },
               {
-                "id": "unit",
                 "value": "fps"
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "max",
                 "value": 120
               },
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -1118,30 +1079,24 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "卡顿率 (FT >= 50ms)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "type": "basic-gauge"
                 }
               },
               {
-                "id": "unit",
                 "value": "percent"
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "max",
                 "value": 30
               },
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -1168,30 +1123,24 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "严重卡顿率 (FT >= 100ms)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "type": "basic-gauge"
                 }
               },
               {
-                "id": "unit",
                 "value": "percent"
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "max",
                 "value": 15
               },
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -1218,26 +1167,21 @@
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "累计运行时长 (分钟)"
             },
             "properties": [
               {
-                "id": "custom.cellOptions",
                 "value": {
                   "type": "basic-gauge"
                 }
               },
               {
-                "id": "unit",
                 "value": "m"
               },
               {
-                "id": "min",
                 "value": 0
               },
               {
-                "id": "thresholds",
                 "value": {
                   "mode": "absolute",
                   "steps": [
@@ -1258,7 +1202,6 @@
         "x": 0,
         "y": 73
       },
-      "id": 9,
       "options": {
         "cellHeight": "sm",
         "enablePagination": false,

@@ -48,7 +48,6 @@
         "x": 0,
         "y": 0
       },
-      "id": 1,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -111,7 +110,6 @@
         "x": 4,
         "y": 0
       },
-      "id": 2,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -169,24 +167,20 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "累计碳排放 (kg CO2)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "masskg"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "相当于种植绿植 (棵)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "short"
               }
             ]
@@ -199,7 +193,6 @@
         "x": 8,
         "y": 0
       },
-      "id": 3,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -257,36 +250,30 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "⚡ 估算墙上输入功耗"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "watt"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "🔌 1000W电源负载率"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "percent"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "🔌 220V输入电流估算"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "amp"
               }
             ]
@@ -299,7 +286,6 @@
         "x": 12,
         "y": 0
       },
-      "id": 8,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -357,36 +343,30 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "⚡ +12V 轨总电流 (CPU/GPU/风扇)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "amp"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "🌈 +5V 轨估算电流 (USB/RGB)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "amp"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "💾 +3.3V 轨估算电流 (主板/M.2)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "amp"
               }
             ]
@@ -399,7 +379,6 @@
         "x": 16,
         "y": 0
       },
-      "id": 9,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -457,48 +436,40 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "🌈 5V 轨电流 (A)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "amp"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "🔌 5V 轨负载率 (%)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "percent"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "🛡️ 5V 剩余电流余量 (A)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "amp"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "💚 供电状态"
             },
             "properties": [
               {
-                "id": "mappings",
                 "value": [
                   {
                     "options": {
@@ -529,7 +500,6 @@
         "x": 20,
         "y": 0
       },
-      "id": 11,
       "options": {
         "colorMode": "value",
         "graphMode": "none",
@@ -626,23 +596,19 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "实时整机总功耗 (W)"
             },
             "properties": [
               {
-                "id": "custom.stacking",
                 "value": {
                   "group": "B",
                   "mode": "none"
                 }
               },
               {
-                "id": "custom.fillOpacity",
                 "value": 0
               },
               {
-                "id": "custom.lineWidth",
                 "value": 2
               }
             ]
@@ -655,7 +621,6 @@
         "x": 0,
         "y": 6
       },
-      "id": 4,
       "options": {
         "annotations": {
           "clustering": -1,
@@ -731,48 +696,40 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "累计能耗 (kWh)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "kwh"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "平均功耗 (W)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "watt"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "前台运行时长 (分钟)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "m"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "电费花费 (元)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "currency:CNY"
               }
             ]
@@ -785,7 +742,6 @@
         "x": 0,
         "y": 18
       },
-      "id": 6,
       "options": {
         "cellHeight": "sm",
         "showHeader": true
@@ -868,40 +824,32 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "每日总能耗 (kWh)"
             },
             "properties": [
               {
-                "id": "custom.drawStyle",
                 "value": "bar"
               },
               {
-                "id": "unit",
                 "value": "kwh"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "游戏能效比 (帧/千焦耳)"
             },
             "properties": [
               {
-                "id": "custom.axisPlacement",
                 "value": "right"
               },
               {
-                "id": "custom.fillOpacity",
                 "value": 0
               },
               {
-                "id": "custom.lineWidth",
                 "value": 2.5
               },
               {
-                "id": "unit",
                 "value": "short"
               }
             ]
@@ -914,7 +862,6 @@
         "x": 12,
         "y": 18
       },
-      "id": 7,
       "options": {
         "annotations": {
           "clustering": -1,
@@ -976,7 +923,6 @@
         "x": 12,
         "y": 25
       },
-      "id": 5,
       "options": {
         "displayLabels": [],
         "legend": {
@@ -1039,48 +985,40 @@
         "overrides": [
           {
             "matcher": {
-              "id": "byName",
               "options": "⚡ 峰电用量 (kWh)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "kwh"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "💰 峰电电费 (元)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "currency:CNY"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "🌙 谷电用量 (kWh)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "kwh"
               }
             ]
           },
           {
             "matcher": {
-              "id": "byName",
               "options": "💰 谷电电费 (元)"
             },
             "properties": [
               {
-                "id": "unit",
                 "value": "currency:CNY"
               }
             ]
@@ -1093,7 +1031,6 @@
         "x": 16,
         "y": 25
       },
-      "id": 10,
       "options": {
         "colorMode": "value",
         "graphMode": "area",
