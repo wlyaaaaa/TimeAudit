@@ -143,14 +143,7 @@ class GitSyncTests(unittest.TestCase):
 
     def test_main_returns_nonzero_when_git_cloud_backup_fails(self):
         with (
-            mock.patch.dict(
-                os.environ,
-                {
-                    "GRAFANA_USER": "test-user",
-                    "GRAFANA_PASSWORD": "test-only-secret",
-                },
-            ),
-            mock.patch.object(backup, "export_dashboards", return_value=set()),
+            mock.patch.object(backup, "export_dashboards_from_db", return_value=set()),
             mock.patch.object(backup, "backup_grafana_db", return_value=None),
             mock.patch.object(
                 backup,
@@ -170,6 +163,37 @@ class GitSyncTests(unittest.TestCase):
         env = run.call_args.kwargs["env"]
         self.assertEqual(env["GIT_TERMINAL_PROMPT"], "0")
         self.assertEqual(env["GCM_INTERACTIVE"], "Never")
+
+    def test_network_retry_is_bounded_and_transport_only(self):
+        failed = subprocess.CompletedProcess(
+            args=["git"], returncode=128, stdout="", stderr="TLS connect error"
+        )
+        passed = subprocess.CompletedProcess(
+            args=["git"], returncode=0, stdout="", stderr=""
+        )
+        with (
+            mock.patch("backup_grafana.git", side_effect=[failed, passed]) as run,
+            mock.patch("backup_grafana.time.sleep") as sleep,
+        ):
+            result = backup.git_network(["fetch", "origin"], delays=(1,))
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_called_once_with(1)
+
+        rejected = subprocess.CompletedProcess(
+            args=["git"],
+            returncode=1,
+            stdout="",
+            stderr="non-fast-forward update rejected",
+        )
+        with (
+            mock.patch("backup_grafana.git", return_value=rejected) as run,
+            mock.patch("backup_grafana.time.sleep") as sleep,
+            self.assertRaises(backup.GitSyncError),
+        ):
+            backup.git_network(["push", "origin"], delays=(1, 2))
+        self.assertEqual(run.call_count, 1)
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

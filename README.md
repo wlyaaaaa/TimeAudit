@@ -291,7 +291,8 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 ```
 > 数据库和 Grafana 仪表盘每天 20:40 会由计划任务 `TimeAudit_DailyBackup` 自动备份，
 > PostgreSQL dump 和 `grafana.db` 分别写到 `G:\80_Backup\TimeAudit\postgresql` 与
-> `G:\80_Backup\TimeAudit\grafana_db`；仪表盘 JSON 仍在仓库内自动 commit + push。即使
+> `G:\80_Backup\TimeAudit\grafana_db`；仪表盘从本机 SQLite 一致快照只读导出，无需无人值守口令，
+> JSON 仍在仓库内自动 commit + push。即使
 > JSON 无变化也会检查 upstream 和遗留的本地 ahead commit；远端领先/分叉会阻断，
 > push 后必须回读确认远端 OID 等于本地 `HEAD`，否则任务返回失败。详见[快速部署.md](快速部署.md)。
 

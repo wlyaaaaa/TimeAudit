@@ -17,7 +17,9 @@ TimeAudit — Grafana 仪表盘自动备份
     --no-push          只本地 commit，不 push 到 GitHub
     --no-git           只导出文件，不碰 git
     --url   http://127.0.0.1:53000     Grafana 地址
-    GRAFANA_USER / GRAFANA_PASSWORD                     从本机私密环境注入 API 认证
+    --source sqlite     默认；只读本机 grafana.db，不需要无人值守凭据
+    --source api        远程/手动 API 模式；认证从本机私密环境注入
+    GRAFANA_USER / GRAFANA_PASSWORD                     仅 API 模式使用
     --keep-db 14       grafana.db 二进制备份保留份数(默认 14)
 
 恢复方法见《快速部署.md》"Grafana 仪表盘备份与恢复"一节。
@@ -30,8 +32,10 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
+import time
 import urllib.request
 
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
@@ -53,6 +57,65 @@ def log(msg):
     print(f"[grafana-backup] {msg}", flush=True)
 
 
+def resolve_proxy_settings(proxy_server):
+    if not proxy_server or not proxy_server.strip():
+        return None
+    raw = proxy_server.strip()
+    by_scheme = {}
+    for part in raw.split(";"):
+        if "=" in part:
+            scheme, endpoint = part.split("=", 1)
+            by_scheme[scheme.strip().lower()] = endpoint.strip()
+
+    if by_scheme:
+        http_endpoint = by_scheme.get("http") or by_scheme.get("https")
+        https_endpoint = by_scheme.get("https") or by_scheme.get("http")
+    else:
+        http_endpoint = raw
+        https_endpoint = raw
+
+    def normalize(endpoint):
+        if not endpoint:
+            return None
+        if re.match(r"^[a-z][a-z0-9+.-]*://", endpoint, re.IGNORECASE):
+            return endpoint
+        return "http://" + endpoint
+
+    return {"http": normalize(http_endpoint), "https": normalize(https_endpoint)}
+
+
+def initialize_windows_user_proxy():
+    """Apply the currently enabled HKCU proxy to this scheduled process."""
+    if os.name != "nt":
+        return False
+    try:
+        import winreg
+
+        key_path = r"Software\Microsoft\Windows\CurrentVersion\Internet Settings"
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+            enabled = int(winreg.QueryValueEx(key, "ProxyEnable")[0])
+            server = str(winreg.QueryValueEx(key, "ProxyServer")[0])
+        if enabled != 1:
+            return False
+        settings = resolve_proxy_settings(server)
+        if not settings:
+            return False
+        for name in ("HTTP_PROXY", "http_proxy"):
+            os.environ[name] = settings["http"]
+        for name in ("HTTPS_PROXY", "https_proxy"):
+            os.environ[name] = settings["https"]
+        existing_no_proxy = os.environ.get("NO_PROXY", "")
+        no_proxy = [part.strip() for part in existing_no_proxy.split(",") if part.strip()]
+        for local in ("127.0.0.1", "localhost"):
+            if local not in no_proxy:
+                no_proxy.append(local)
+        os.environ["NO_PROXY"] = ",".join(no_proxy)
+        os.environ["no_proxy"] = os.environ["NO_PROXY"]
+        return True
+    except (OSError, ValueError):
+        return False
+
+
 def api_get(base_url, path, auth_header, timeout=15):
     """调 Grafana REST API，返回解析后的 JSON。"""
     req = urllib.request.Request(base_url.rstrip("/") + path)
@@ -68,25 +131,36 @@ def safe_filename(name):
     return (name or "untitled")[:80]
 
 
-def export_dashboards(base_url, auth_header):
-    """导出所有仪表盘为 JSON 文件。返回写出的文件名集合。"""
-    os.makedirs(DASH_DIR, exist_ok=True)
-    items = api_get(base_url, "/api/search?type=dash-db", auth_header)
-    if not isinstance(items, list):
-        raise RuntimeError(f"/api/search 返回异常: {items}")
-    log(f"发现 {len(items)} 个仪表盘，开始导出 ...")
+HARDWARE_SKU_IN_PARENS = re.compile(
+    r"\s*\((?:RTX\s*\d{4}|\d{4}X3D)\)",
+    re.IGNORECASE,
+)
 
+
+def normalize_dashboard_for_public_backup(dashboard):
+    """Remove instance ids and machine-specific SKU labels from public snapshots."""
+    if isinstance(dashboard, list):
+        return [normalize_dashboard_for_public_backup(item) for item in dashboard]
+    if not isinstance(dashboard, dict):
+        return dashboard
+    normalized = {}
+    for key, value in dashboard.items():
+        if key == "id":
+            continue
+        if key == "title" and isinstance(value, str):
+            value = HARDWARE_SKU_IN_PARENS.sub("", value).strip()
+        normalized[key] = normalize_dashboard_for_public_backup(value)
+    return normalized
+
+
+def write_dashboard_documents(documents):
+    """Write normalized dashboard documents and remove obsolete snapshots."""
+    os.makedirs(DASH_DIR, exist_ok=True)
     written = set()
-    for it in items:
-        uid = it.get("uid")
-        if not uid:
+    for uid, dash in documents:
+        if not uid or not isinstance(dash, dict):
             continue
-        full = api_get(base_url, f"/api/dashboards/uid/{uid}", auth_header)
-        dash = full.get("dashboard")
-        if not dash:
-            continue
-        # 去掉实例相关的内部数字 id，让备份可移植（换机重导入时由新实例重新分配）。
-        dash.pop("id", None)
+        dash = normalize_dashboard_for_public_backup(dash)
         title = dash.get("title", uid)
         fname = f"{uid}__{safe_filename(title)}.json"
         fpath = os.path.join(DASH_DIR, fname)
@@ -105,15 +179,111 @@ def export_dashboards(base_url, auth_header):
     return written
 
 
+def export_dashboards(base_url, auth_header):
+    """Export dashboards through the Grafana API for remote/manual use."""
+    items = api_get(base_url, "/api/search?type=dash-db", auth_header)
+    if not isinstance(items, list):
+        raise RuntimeError(f"/api/search 返回异常: {items}")
+    log(f"通过 API 发现 {len(items)} 个仪表盘，开始导出 ...")
+
+    documents = []
+    for item in items:
+        uid = item.get("uid")
+        if not uid:
+            continue
+        full = api_get(base_url, f"/api/dashboards/uid/{uid}", auth_header)
+        dash = full.get("dashboard")
+        if dash:
+            documents.append((uid, dash))
+    return write_dashboard_documents(documents)
+
+
+def _sqlite_table_exists(connection, table):
+    row = connection.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+        (table,),
+    ).fetchone()
+    return row is not None
+
+
+def _dashboard_documents_from_sqlite(connection):
+    """Read both Grafana legacy and unified-storage dashboard schemas."""
+    documents = []
+    if _sqlite_table_exists(connection, "resource"):
+        rows = connection.execute(
+            """
+            SELECT name, value
+              FROM resource
+             WHERE "group" = ? AND resource = ?
+             ORDER BY name
+            """,
+            ("dashboard.grafana.app", "dashboards"),
+        ).fetchall()
+        for uid, value in rows:
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            resource = json.loads(value)
+            dash = dict(resource.get("spec") or {})
+            metadata = resource.get("metadata") or {}
+            dash["uid"] = uid
+            dash["version"] = int(metadata.get("generation") or 0)
+            documents.append((uid, dash))
+        if documents:
+            return documents
+
+    if _sqlite_table_exists(connection, "dashboard"):
+        rows = connection.execute(
+            """
+            SELECT uid, data
+              FROM dashboard
+             WHERE is_folder = 0 AND deleted IS NULL
+             ORDER BY uid
+            """
+        ).fetchall()
+        for uid, value in rows:
+            if isinstance(value, bytes):
+                value = value.decode("utf-8")
+            dash = json.loads(value)
+            dash["uid"] = uid
+            documents.append((uid, dash))
+    return documents
+
+
+def export_dashboards_from_db(database_path=None):
+    """Export a consistent read-only snapshot without unattended credentials."""
+    if database_path is None:
+        database_path = GRAFANA_DB
+    absolute = os.path.abspath(database_path)
+    connection = sqlite3.connect(f"file:{absolute}?mode=ro", uri=True)
+    try:
+        connection.execute("BEGIN")
+        documents = _dashboard_documents_from_sqlite(connection)
+        connection.commit()
+    finally:
+        connection.close()
+    log(f"从本机 Grafana SQLite 一致快照发现 {len(documents)} 个仪表盘，开始导出 ...")
+    return write_dashboard_documents(documents)
+
+
 def backup_grafana_db(keep):
-    """复制 grafana.db（完整二进制库）并按份数轮转。"""
+    """Create a consistent SQLite backup and rotate old snapshots."""
     if not os.path.exists(GRAFANA_DB):
         log(f"未找到 {GRAFANA_DB}，跳过二进制库备份。")
         return
     os.makedirs(DB_BACKUP_DIR, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     dst = os.path.join(DB_BACKUP_DIR, f"grafana_{ts}.db")
-    shutil.copy2(GRAFANA_DB, dst)
+    source = sqlite3.connect(f"file:{os.path.abspath(GRAFANA_DB)}?mode=ro", uri=True)
+    target = sqlite3.connect(dst)
+    try:
+        source.backup(target)
+        result = target.execute("PRAGMA quick_check").fetchone()
+        if not result or result[0] != "ok":
+            raise RuntimeError("grafana.db 快照 quick_check 未通过")
+    finally:
+        target.close()
+        source.close()
+    shutil.copystat(GRAFANA_DB, dst)
     size_mb = round(os.path.getsize(dst) / (1024 * 1024), 2)
     log(f"已复制 grafana.db → {os.path.basename(dst)} ({size_mb} MB)")
     backups = sorted(glob.glob(os.path.join(DB_BACKUP_DIR, "grafana_*.db")))
@@ -149,6 +319,44 @@ def git(args, check=False):
     return result
 
 
+def retryable_git_network_failure(result):
+    if result.returncode == 0:
+        return False
+    detail = ((result.stderr or "") + "\n" + (result.stdout or "")).lower()
+    markers = (
+        "could not connect",
+        "failed to connect",
+        "tls connect error",
+        "ssl routines",
+        "unexpected eof",
+        "connection reset",
+        "connection timed out",
+        "operation timed out",
+        "the requested url returned error: 502",
+        "the requested url returned error: 503",
+        "the requested url returned error: 504",
+    )
+    return any(marker in detail for marker in markers)
+
+
+def git_network(args, delays=(5, 15, 30)):
+    """Retry only transport failures; repository-state failures stay fail-closed."""
+    attempts = len(delays) + 1
+    for attempt in range(1, attempts + 1):
+        result = git(args)
+        if result.returncode == 0:
+            return result
+        if not retryable_git_network_failure(result) or attempt == attempts:
+            detail = (result.stderr or result.stdout).strip()
+            suffix = f": {detail}" if detail else ""
+            raise GitSyncError(
+                f"git {' '.join(args)} failed with exit code {result.returncode}{suffix}"
+            )
+        log(f"Git 网络瞬态失败，{delays[attempt - 1]} 秒后重试 ({attempt}/{attempts})。")
+        time.sleep(delays[attempt - 1])
+    raise AssertionError("unreachable")
+
+
 def current_branch():
     branch = git(["branch", "--show-current"], check=True).stdout.strip()
     if not branch:
@@ -167,7 +375,7 @@ def git_remote_state():
     remote_branch = merge_ref.removeprefix("refs/heads/")
     tracking_ref = f"refs/remotes/{remote}/{remote_branch}"
     fetch_refspec = f"+{merge_ref}:{tracking_ref}"
-    git(["fetch", "--quiet", "--prune", remote, fetch_refspec], check=True)
+    git_network(["fetch", "--quiet", "--prune", remote, fetch_refspec])
 
     counts = git(
         ["rev-list", "--left-right", "--count", f"HEAD...{tracking_ref}"],
@@ -198,7 +406,7 @@ def assert_fresh_remote_oid(remote, remote_branch):
     """Read the remote directly and require its branch OID to equal local HEAD."""
     local_oid = git(["rev-parse", "HEAD"], check=True).stdout.strip()
     remote_ref = f"refs/heads/{remote_branch}"
-    result = git(["ls-remote", "--exit-code", remote, remote_ref], check=True)
+    result = git_network(["ls-remote", "--exit-code", remote, remote_ref])
     rows = [line.split() for line in result.stdout.splitlines() if line.strip()]
     matches = [row for row in rows if len(row) >= 2 and row[1] == remote_ref]
     if not matches:
@@ -217,14 +425,13 @@ def verified_git_push():
     state = git_remote_state()
     pushed = False
     if state["ahead"] > 0:
-        git(
+        git_network(
             [
                 "push",
                 "--quiet",
                 state["remote"],
                 f"HEAD:{state['remote_ref']}",
             ],
-            check=True,
         )
         pushed = True
     remote_oid = assert_fresh_remote_oid(state["remote"], state["remote_branch"])
@@ -264,23 +471,30 @@ def git_commit_and_push(do_push):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:53000"))
+    ap.add_argument("--source", choices=("sqlite", "api"), default="sqlite")
     ap.add_argument("--user", default=os.environ.get("GRAFANA_USER"))
     ap.add_argument("--keep-db", type=int, default=14)
     ap.add_argument("--no-git", action="store_true")
     ap.add_argument("--no-push", action="store_true")
     args = ap.parse_args()
-    password = os.environ.get("GRAFANA_PASSWORD")
-    if not args.user or not password:
-        log("❌ GRAFANA_USER / GRAFANA_PASSWORD 未在私密运行环境中配置。")
-        return 2
-
-    auth_header = "Basic " + base64.b64encode(f"{args.user}:{password}".encode()).decode()
+    if initialize_windows_user_proxy():
+        log("已应用当前用户 Windows 代理设置。")
 
     try:
-        export_dashboards(args.url, auth_header)
+        if args.source == "sqlite":
+            export_dashboards_from_db()
+        else:
+            password = os.environ.get("GRAFANA_PASSWORD")
+            if not args.user or not password:
+                log("❌ API 模式需要私密 GRAFANA_USER / GRAFANA_PASSWORD。")
+                return 2
+            auth_header = "Basic " + base64.b64encode(
+                f"{args.user}:{password}".encode()
+            ).decode()
+            export_dashboards(args.url, auth_header)
     except Exception as e:
         log(f"❌ 仪表盘导出失败: {e}")
-        log("  常见原因: Grafana 没起，或私密 Grafana API 认证已失效。")
+        log("  SQLite 模式请检查本机 grafana.db；API 模式请检查服务与认证。")
         return 1
 
     try:
