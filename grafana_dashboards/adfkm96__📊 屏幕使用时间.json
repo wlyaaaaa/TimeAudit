@@ -18,6 +18,7 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
+  "links": [],
   "liveNow": false,
   "panels": [
     {
@@ -46,7 +47,8 @@
             ]
           },
           "unit": "dthms"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 3,
@@ -133,7 +135,8 @@
             ]
           },
           "unit": "dthms"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 3,
@@ -215,7 +218,8 @@
             ]
           },
           "unit": "dthms"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 3,
@@ -686,7 +690,8 @@
             ]
           },
           "unit": "dthms"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 5,
@@ -966,7 +971,8 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 7,
@@ -1069,7 +1075,8 @@
             ]
           },
           "unit": "dthms"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 7,
@@ -1153,7 +1160,8 @@
               "viz": false
             }
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -1218,7 +1226,8 @@
               "type": "linear"
             }
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 17,
@@ -1326,7 +1335,8 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 9,
@@ -1383,6 +1393,9 @@
     "时间审计",
     "系统监控"
   ],
+  "templating": {
+    "list": []
+  },
   "time": {
     "from": "now/y",
     "to": "now"
@@ -1404,5 +1417,6 @@
   "timezone": "browser",
   "title": "📊 屏幕使用时间",
   "uid": "adfkm96",
-  "version": 65
+  "version": 66,
+  "weekStart": ""
 }

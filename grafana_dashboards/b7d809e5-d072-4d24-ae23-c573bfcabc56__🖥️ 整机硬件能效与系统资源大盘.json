@@ -361,7 +361,7 @@
           "refId": "A"
         }
       ],
-      "title": "CPU 频率与双 CCD 负载",
+      "title": "CPU 频率与双 CCD 负载 (9950X3D)",
       "type": "timeseries"
     },
     {
@@ -527,7 +527,7 @@
           "refId": "A"
         }
       ],
-      "title": "GPU 温度与功率",
+      "title": "GPU 温度与功率 (RTX5080)",
       "type": "timeseries"
     },
     {
@@ -2516,7 +2516,7 @@
           "refId": "A"
         }
       ],
-      "title": "整机显存总占用",
+      "title": "整机显存总占用 (RTX5080)",
       "type": "timeseries"
     },
     {
