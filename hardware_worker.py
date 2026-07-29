@@ -7,6 +7,7 @@ import datetime
 import asyncio
 import subprocess
 import threading
+import logging
 import re
 import time
 import socket
@@ -93,12 +94,19 @@ class HardwareTelemetryWorker:
     # 既省资源、又规避其 24x7 系统级 ETW present 捕获对 DWM 合成(窗口化呈现)的潜在扰动(灰屏嫌疑)。
     RENDER_GPU_THRESHOLD = 18.0
     RENDER_HYSTERESIS_SEC = 75.0
+    PRESENTMON_SESSION_NAME = "TimeAuditPresentMon"
 
     def __init__(self):
         self._last_render_ts = 0.0   # 最近一次检测到活跃渲染的 monotonic 时刻
         self.nvml_initialized = False
         self.gpu_handle = None
         self.presentmon_process = None
+        self._presentmon_process_lock = threading.Lock()
+        self._presentmon_process_condition = threading.Condition(
+            self._presentmon_process_lock
+        )
+        self._presentmon_claims_inflight = 0
+        self.presentmon_thread = None
         
         self.active_foreground_app = ""
         self.last_ctx_switches = None
@@ -301,6 +309,163 @@ class HardwareTelemetryWorker:
         """是否处于活跃渲染期(游戏/3D 在跑)。GPU 占用近期超阈值即为真，含 RENDER_HYSTERESIS_SEC 滞回。"""
         return (time.monotonic() - self._last_render_ts) < self.RENDER_HYSTERESIS_SEC
 
+    @classmethod
+    def _presentmon_command(cls, presentmon_path):
+        return [
+            presentmon_path,
+            "--session_name",
+            cls.PRESENTMON_SESSION_NAME,
+            "--output_stdout",
+            "--stop_existing_session",
+            "--no_console_stats",
+        ]
+
+    def _begin_presentmon_launch(self):
+        """预约一次启动事务，使 terminate 能等待 Popen/claim/拒绝清理全部收束。"""
+        with self._presentmon_process_condition:
+            if (
+                self.stop_event.is_set()
+                or self.presentmon_process is not None
+                or self._presentmon_claims_inflight
+            ):
+                return False
+            self._presentmon_claims_inflight += 1
+            return True
+
+    def _finish_presentmon_claim(self):
+        with self._presentmon_process_condition:
+            self._presentmon_claims_inflight -= 1
+            self._presentmon_process_condition.notify_all()
+
+    def _claim_presentmon_process(self, process, launch_reserved=False):
+        """原子接管新进程；停止已开始时拒绝，并在事务完成前回收或发布重试句柄。"""
+        if not launch_reserved:
+            with self._presentmon_process_condition:
+                self._presentmon_claims_inflight += 1
+
+        try:
+            with self._presentmon_process_condition:
+                if not self.stop_event.is_set() and self.presentmon_process is None:
+                    self.presentmon_process = process
+                    return True
+
+            stopped = self._terminate_presentmon_process_tree(process, timeout=1.0)
+            if not stopped:
+                # 先发布失败句柄，再结束事务；terminate 因此不会错过最终重试。
+                with self._presentmon_process_condition:
+                    if self.presentmon_process is None:
+                        self.presentmon_process = process
+                logging.getLogger("PresentMon_Debugger").warning(
+                    "拒绝接管的 PresentMon 未确认退出，已保留可重试句柄（pid=%s）",
+                    getattr(process, "pid", "?"),
+                )
+            return False
+        finally:
+            self._finish_presentmon_claim()
+
+    @staticmethod
+    def _terminate_presentmon_process_tree(process, timeout=2.0):
+        """停止给定 Popen 的进程树；只有根进程和子进程均确认退出才返回 True。"""
+        pm_logger = logging.getLogger("PresentMon_Debugger")
+        children = []
+        tree_confirmed = True
+
+        try:
+            root_running = process.poll() is None
+        except Exception as exc:
+            root_running = True
+            tree_confirmed = False
+            pm_logger.warning("无法读取 PresentMon 状态（pid=%s）: %s", getattr(process, "pid", "?"), exc)
+
+        if root_running:
+            try:
+                children = psutil.Process(process.pid).children(recursive=True)
+            except Exception as exc:
+                tree_confirmed = False
+                pm_logger.warning(
+                    "无法枚举 PresentMon 进程树（pid=%s）: %s",
+                    getattr(process, "pid", "?"),
+                    exc,
+                )
+
+        for child in children:
+            try:
+                child.terminate()
+            except Exception as exc:
+                pm_logger.warning("终止 PresentMon 子进程失败（pid=%s）: %s", getattr(child, "pid", "?"), exc)
+
+        try:
+            process.terminate()
+        except Exception as exc:
+            pm_logger.warning("终止 PresentMon 根进程失败（pid=%s）: %s", getattr(process, "pid", "?"), exc)
+
+        alive_children = []
+        if children:
+            try:
+                _, alive_children = psutil.wait_procs(children, timeout=timeout)
+            except Exception as exc:
+                alive_children = children
+                pm_logger.warning("等待 PresentMon 子进程失败: %s", exc)
+
+        for child in alive_children:
+            try:
+                child.kill()
+            except Exception as exc:
+                pm_logger.warning("强制结束 PresentMon 子进程失败（pid=%s）: %s", getattr(child, "pid", "?"), exc)
+
+        if alive_children:
+            try:
+                _, alive_children = psutil.wait_procs(alive_children, timeout=timeout)
+            except Exception as exc:
+                tree_confirmed = False
+                pm_logger.warning("确认 PresentMon 子进程退出失败: %s", exc)
+
+        try:
+            process.wait(timeout=timeout)
+        except Exception as exc:
+            pm_logger.warning("等待 PresentMon 根进程失败（pid=%s）: %s", getattr(process, "pid", "?"), exc)
+            try:
+                process.kill()
+                process.wait(timeout=timeout)
+            except Exception as kill_exc:
+                pm_logger.warning(
+                    "强制结束 PresentMon 根进程失败（pid=%s）: %s",
+                    getattr(process, "pid", "?"),
+                    kill_exc,
+                )
+
+        try:
+            root_exited = process.poll() is not None
+        except Exception as exc:
+            root_exited = False
+            pm_logger.warning("无法确认 PresentMon 根进程状态（pid=%s）: %s", getattr(process, "pid", "?"), exc)
+
+        stopped = tree_confirmed and not alive_children and root_exited
+        if not stopped:
+            pm_logger.warning(
+                "PresentMon 进程树未确认退出，保留句柄以便重试（pid=%s）",
+                getattr(process, "pid", "?"),
+            )
+        return stopped
+
+    def _stop_owned_presentmon_process(self, expected_process=None, timeout=2.0):
+        """只停止本 worker 通过 Popen 持有的 PresentMon 进程树，绝不按进程名扫描全机。"""
+        with self._presentmon_process_lock:
+            process = self.presentmon_process
+            if process is None or (
+                expected_process is not None and process is not expected_process
+            ):
+                return False
+
+        stopped = self._terminate_presentmon_process_tree(process, timeout=timeout)
+        if not stopped:
+            return False
+
+        with self._presentmon_process_lock:
+            if self.presentmon_process is process:
+                self.presentmon_process = None
+        return True
+
     def _start_presentmon_listener(self):
         import queue
         import logging
@@ -321,13 +486,7 @@ class HardwareTelemetryWorker:
             while not self.stop_event.is_set():
                 # 【门控】非活跃渲染期(桌面/窗口化轻载)不运行 PresentMon：确保其已被杀掉后等待重判。
                 if not self._render_active():
-                    for proc in psutil.process_iter(['name']):
-                        try:
-                            if proc.info['name'] and proc.info['name'].lower() in ['presentmonconsole.exe', 'presentmon.exe']:
-                                proc.kill()
-                        except Exception:
-                            pass
-                    self.presentmon_process = None
+                    self._stop_owned_presentmon_process()
                     time.sleep(3.0)
                     continue
                 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -336,15 +495,23 @@ class HardwareTelemetryWorker:
                     pm_logger.error(f"未找到可执行文件 {pm_path}")
                     pm_path = "PresentMonConsole.exe"
 
-                for proc in psutil.process_iter(['name']):
-                    try:
-                        if proc.info['name'] and proc.info['name'].lower() in ['presentmonconsole.exe', 'presentmon.exe']:
-                            proc.kill()
-                    except Exception:
-                        pass
-                time.sleep(0.5)
+                if (
+                    self.presentmon_process is not None
+                    and not self._stop_owned_presentmon_process()
+                ):
+                    if self.stop_event.wait(3.0):
+                        break
+                    continue
+                if self.stop_event.wait(0.5):
+                    break
 
-                cmd = [pm_path, "--output_stdout", "--stop_existing_session", "--no_console_stats"]
+                cmd = self._presentmon_command(pm_path)
+                if not self._begin_presentmon_launch():
+                    if self.stop_event.wait(0.1):
+                        break
+                    continue
+
+                launch_handed_off = False
                 try:
                     # 🟢 核心修复：强行注入隐藏窗体配置，彻底切断 PresentMon 与 DWM 缓冲区的视口纠缠
                     startupinfo = subprocess.STARTUPINFO()
@@ -357,8 +524,14 @@ class HardwareTelemetryWorker:
                         creationflags=subprocess.CREATE_NO_WINDOW,  # 彻底杜绝控制台窗体一闪而过抢焦点
                         cwd=script_dir
                     )
-                    self.presentmon_process = process
+                    launch_handed_off = True
+                    if not self._claim_presentmon_process(
+                        process, launch_reserved=True
+                    ):
+                        break
                 except Exception as e:
+                    if not launch_handed_off:
+                        self._finish_presentmon_claim()
                     # 【健壮性修复】此前只接住 FileNotFoundError；但 PresentMon 启动还会抛其它 OSError——
                     # 如非提权环境下的 WinError 740(需要提升)、ETW 会话被占用等。这些异常会击穿 except、
                     # 让整个看门狗线程永久死亡，再不重启 PresentMon。改为兜底退避重试，绝不让守护线程崩溃。
@@ -438,22 +611,16 @@ class HardwareTelemetryWorker:
                             break
                         if not self._render_active():
                             # 【门控】渲染已停止(退出游戏/回到桌面) → 杀掉 PresentMon，回到外层门控等待。
-                            try:
-                                process.kill()
-                            except Exception:
-                                pass
+                            self._stop_owned_presentmon_process(process)
                             break
                         continue
                     except Exception:
                         break
 
-                try:
-                    process.kill()
-                    process.wait(timeout=2)
-                except Exception:
-                    pass
+                self._stop_owned_presentmon_process(process)
 
         t = threading.Thread(target=monitor_loop, daemon=True)
+        self.presentmon_thread = t
         t.start()
 
     def _auto_prepare_lhm_async(self):
@@ -1042,15 +1209,21 @@ class HardwareTelemetryWorker:
             )
 
     def terminate(self):
-        self.stop_event.set()
+        with self._presentmon_process_condition:
+            self.stop_event.set()
         self.dpc_checker.stop()
-        if hasattr(self, 'presentmon_process') and self.presentmon_process:
+        if hasattr(self, 'presentmon_thread') and self.presentmon_thread:
             try:
-                self.presentmon_process.terminate()
-                self.presentmon_process.wait(timeout=1.0)
+                self.presentmon_thread.join(timeout=2.0)
             except Exception:
                 pass
-            self.presentmon_process = None
+        # join 只用于尽快回收线程，不作为安全门。真正的门是启动/claim 事务归零：
+        # stop 已在同一 Condition 下发布，因此不会再产生新的合法启动预约。
+        with self._presentmon_process_condition:
+            while self._presentmon_claims_inflight:
+                self._presentmon_process_condition.wait()
+        if hasattr(self, 'presentmon_process'):
+            self._stop_owned_presentmon_process(timeout=1.0)
         
         if hasattr(self, 'pdh_thread') and self.pdh_thread:
             try:
