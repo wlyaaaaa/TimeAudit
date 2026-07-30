@@ -12,6 +12,7 @@
 > 想直接装起来 / 换电脑 / 灾后恢复？看 **[快速部署.md](快速部署.md)**。
 > 想看懂 6 张仪表盘的**每一个面板**、学会用数据判断电脑性能与问题？看 **[使用手册.md](使用手册.md)**（面向完全小白，78 个面板逐个精讲）。
 > PersonalOS 电脑剪贴板历史是完全解耦的用户态 sidecar，见 **[clipboard_history/README.md](clipboard_history/README.md)**；它不把剪贴板内容写入 PostgreSQL/Grafana。
+> PCConfig 只读消费的聚合硬件异常增量接口见 **[PCCONFIG_ANOMALY_DIGEST_CONTRACT.md](PCCONFIG_ANOMALY_DIGEST_CONTRACT.md)**；它不输出 raw samples、进程/窗口活动或机器标识。
 
 ---
 
