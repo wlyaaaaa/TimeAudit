@@ -138,13 +138,28 @@ def test_lhm_uses_non_excluded_port_and_bounded_restart_backoff():
     assert "return 18085" in worker
     assert "lhm_restart_not_before" in worker
     assert "bounded_backoff_seconds" in worker
-    assert "psutil.process_iter(['name', 'exe'])" in worker
+    assert "psutil.process_iter(['name', 'exe', 'num_threads'])" in worker
+    assert "int(proc.info.get('num_threads') or 0) > 0" in worker
     assert re.search(r"lhm_process\.kill\(\)\s+killed = True", worker)
     assert 'schedule_lhm_retry("process exited")' in worker
     assert 'schedule_lhm_retry("launch failed")' in worker
     assert "else 18085" in health_test
     assert "py_cmdline_ok or py_heartbeat_ok" in health_test
     assert 'os.path.join(ROOT, "log", "telemetry_heartbeat")' in health_test
+
+
+def test_external_watchdog_recovers_lhm_dead_endpoint_and_crash_ghost():
+    source = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
+
+    assert "$lhmEndpoint = 'http://127.0.0.1:18085/data.json'" in source
+    assert "function Test-LhmEndpoint" in source
+    assert "function Restart-Lhm" in source
+    assert "Start-Sleep -Seconds $lhmGraceSeconds" in source
+    assert "Get-ScheduledTask -TaskName $lhmTaskName" in source
+    assert "Start-ScheduledTask -TaskName $lhmTaskName" in source
+    assert "num_threads" not in source.lower()
+    assert "Threads.Count -gt 0" in source
+    assert "Test-LhmEndpoint" in source[source.index("function Restart-Lhm") :]
 
 
 def test_manual_uses_generic_dashboard_titles():
@@ -167,4 +182,5 @@ if __name__ == "__main__":
     test_screen_time_dashboard_has_no_grafana_13_style_field_parser()
     test_backup_payloads_default_to_g_drive()
     test_lhm_uses_non_excluded_port_and_bounded_restart_backoff()
+    test_external_watchdog_recovers_lhm_dead_endpoint_and_crash_ghost()
     test_manual_uses_generic_dashboard_titles()

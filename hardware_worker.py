@@ -735,11 +735,12 @@ class HardwareTelemetryWorker:
                             schedule_lhm_retry("process exited")
                     if not is_alive:
                         lhm_running = False
-                        for proc in psutil.process_iter(['name', 'exe']):
+                        for proc in psutil.process_iter(['name', 'exe', 'num_threads']):
                             try:
                                 proc_exe = proc.info.get('exe') or ""
                                 if (proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe"
-                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path):
+                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path
+                                        and int(proc.info.get('num_threads') or 0) > 0):
                                     lhm_running = True
                                     break
                             except Exception:
@@ -795,11 +796,12 @@ class HardwareTelemetryWorker:
                     lhm_stuck_fails = min(15, lhm_stuck_fails + 1)
                     if lhm_stuck_fails >= 15 and time.monotonic() >= lhm_restart_not_before:
                         killed = False
-                        for proc in psutil.process_iter(['name', 'exe']):
+                        for proc in psutil.process_iter(['name', 'exe', 'num_threads']):
                             try:
                                 proc_exe = proc.info.get('exe') or ""
                                 if (proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe"
-                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path):
+                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path
+                                        and int(proc.info.get('num_threads') or 0) > 0):
                                     proc.kill()
                                     killed = True
                             except Exception:

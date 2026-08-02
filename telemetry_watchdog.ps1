@@ -1,9 +1,10 @@
-# TimeAudit telemetry watchdog
-# Restarts a collector if its process has crashed/disappeared. Guards THREE engines:
+﻿# TimeAudit telemetry watchdog
+# Restarts a collector if its process has crashed/disappeared. Guards FOUR engines:
 #   1. main.py            -> the Python hardware/process telemetry engine (writes fact_* tables)
-#   2. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
+#   2. LibreHardwareMonitor -> CPU temperature/clock/power/voltage source; endpoint health is authoritative.
+#   3. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
 #                            i.e. the 屏幕使用时间 dashboard).
-#   3. audit-ingester     -> the bounded CSV-to-PostgreSQL sidecar.
+#   4. audit-ingester     -> the bounded CSV-to-PostgreSQL sidecar.
 # main.py also writes a local heartbeat only after a successful database batch. If that heartbeat is
 # stale, the watchdog waits through a resume/startup grace period and checks again before relaunching.
 # This catches a live-but-stuck collector without false-restarting immediately after system sleep.
@@ -13,6 +14,9 @@ $py        = 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe
 $script    = 'E:\Projects\Tools\TimeAudit\main.py'
 $ahkExe    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
 $ahkScript = 'E:\Projects\Tools\TimeAudit\TimeAudit.ahk'
+$lhmExe = 'E:\Projects\Tools\TimeAudit\LibreHardwareMonitor.exe'
+$lhmTaskName = 'LibreHardwareMonitor'
+$lhmEndpoint = 'http://127.0.0.1:18085/data.json'
 $heartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_heartbeat'
 $ahkHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ahk_heartbeat'
 $ingesterHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ingester_heartbeat.json'
@@ -20,6 +24,9 @@ $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $compose = 'E:\Projects\Tools\TimeAudit\docker-compose.yml'
 $heartbeatMaxAgeSeconds = 90
 $heartbeatGraceSeconds = 45
+$lhmGraceSeconds = 15
+$lhmProbeTimeoutSeconds = 3
+$lhmStartupTimeoutSeconds = 20
 $ahkHeartbeatMaxAgeSeconds = 20
 $ingesterHeartbeatMaxAgeSeconds = 45
 $sidecarGraceSeconds = 15
@@ -68,6 +75,7 @@ function Remove-StaleTask($taskName) {
 
 Remove-StaleTask 'TimeAudit_WatchdogRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogAhkRestart_tmp'
+Remove-StaleTask 'TimeAudit_WatchdogLhmRestart_tmp'
 
 # Restart a target via a one-shot elevated, interactive-session scheduled task. This is the same
 # method proven to bring up main.py / LHM / PresentMon with proper elevation AND inside the user's
@@ -85,6 +93,72 @@ function Restart-ViaTask($taskName, $exe, $arg, $workDir) {
     Start-ScheduledTask -TaskName $taskName
     Start-Sleep -Seconds 6
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+}
+
+function Test-LhmEndpoint {
+    try {
+        $response = Invoke-WebRequest -Uri $lhmEndpoint -UseBasicParsing -TimeoutSec $lhmProbeTimeoutSeconds -ErrorAction Stop
+        if ($response.StatusCode -ne 200) { return $false }
+        $payload = $response.Content | ConvertFrom-Json -ErrorAction Stop
+        return ($null -ne $payload -and $payload.PSObject.Properties.Name -contains 'Children')
+    } catch {
+        return $false
+    }
+}
+
+# A crashed WinForms/.NET process can remain visible briefly with zero handles and zero threads.
+# Such a crash ghost must never suppress recovery merely because its image name still exists.
+function Get-LhmLiveProjectProcesses {
+    $expectedPath = [IO.Path]::GetFullPath($lhmExe)
+    $matches = @()
+    foreach ($candidate in @(Get-CimInstance Win32_Process -Filter "Name='LibreHardwareMonitor.exe'" -ErrorAction SilentlyContinue)) {
+        $process = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
+        $hasThreads = $process -and $process.Threads.Count -gt 0
+        if (-not $hasThreads) { continue }
+        if ([string]::IsNullOrWhiteSpace($candidate.ExecutablePath)) { continue }
+        $candidatePath = [IO.Path]::GetFullPath($candidate.ExecutablePath)
+        if ([string]::Equals($candidatePath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+            $matches += $candidate
+        }
+    }
+    return $matches
+}
+
+function Wait-LhmEndpoint($timeoutSeconds) {
+    $deadline = (Get-Date).AddSeconds($timeoutSeconds)
+    do {
+        if (Test-LhmEndpoint) { return $true }
+        Start-Sleep -Seconds 1
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
+function Restart-Lhm($reason) {
+    Log ("LibreHardwareMonitor {0} - attempting endpoint recovery" -f $reason)
+    if (-not (Test-Path -LiteralPath $lhmExe)) {
+        Log "ABORT: LibreHardwareMonitor path missing"
+        return
+    }
+
+    foreach ($process in @(Get-LhmLiveProjectProcesses)) {
+        Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue
+    }
+    Start-Sleep -Seconds 2
+
+    $task = Get-ScheduledTask -TaskName $lhmTaskName -ErrorAction SilentlyContinue
+    if ($task) {
+        Start-ScheduledTask -TaskName $lhmTaskName
+    } else {
+        Restart-ViaTask 'TimeAudit_WatchdogLhmRestart_tmp' $lhmExe '' 'E:\Projects\Tools\TimeAudit'
+    }
+
+    if (Wait-LhmEndpoint $lhmStartupTimeoutSeconds) {
+        $process = @(Get-LhmLiveProjectProcesses) | Select-Object -First 1
+        if ($process) { Log ("RECOVERY OK - LibreHardwareMonitor PID {0}, endpoint fresh" -f $process.ProcessId) }
+        else { Log "RECOVERY OK - LibreHardwareMonitor endpoint fresh" }
+    } else {
+        Log "RECOVERY FAILED - LibreHardwareMonitor endpoint still unavailable"
+    }
 }
 
 # === 1. main.py (Python telemetry engine) ===
@@ -122,7 +196,16 @@ if (-not $mainProc) {
     }
 }
 
-# === 2. TimeAudit.ahk (AutoHotkey screen-time engine) ===
+# === 2. LibreHardwareMonitor (hardware sensor source) ===
+if (-not (Test-LhmEndpoint)) {
+    Log ("LibreHardwareMonitor endpoint unavailable - waiting {0}s for startup/resume recovery" -f $lhmGraceSeconds)
+    Start-Sleep -Seconds $lhmGraceSeconds
+    if (-not (Test-LhmEndpoint)) {
+        Restart-Lhm 'endpoint unavailable after grace period'
+    }
+}
+
+# === 3. TimeAudit.ahk (AutoHotkey screen-time engine) ===
 function Restart-Ahk($reason) {
     Log ("TimeAudit.ahk {0} - attempting restart" -f $reason)
     if (-not (Test-Path $ahkScript)) { Log "ABORT: TimeAudit.ahk path missing" }
@@ -153,7 +236,7 @@ if (-not $ahkProc) {
     }
 }
 
-# === 3. audit-ingester (CSV -> PostgreSQL sidecar) ===
+# === 4. audit-ingester (CSV -> PostgreSQL sidecar) ===
 function Test-IngesterRunning {
     if (-not (Test-Path -LiteralPath $docker)) { return $false }
     $state = & $docker inspect --format '{{.State.Running}}' audit-ingester 2>$null
