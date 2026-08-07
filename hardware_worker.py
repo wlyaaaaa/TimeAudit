@@ -9,6 +9,7 @@ import subprocess
 import threading
 import logging
 import re
+import math
 import time
 import socket
 import ctypes
@@ -95,6 +96,12 @@ class HardwareTelemetryWorker:
     RENDER_GPU_THRESHOLD = 18.0
     RENDER_HYSTERESIS_SEC = 75.0
     PRESENTMON_SESSION_NAME = "TimeAuditPresentMon"
+    # PresentMon reports frame intervals in milliseconds.  Values outside this
+    # broad, physically useful range are malformed/overflow samples rather than
+    # a meaningful current frame interval (0.1 ms = 10,000 FPS; 2 s = 0.5 FPS).
+    PRESENTMON_FRAME_TIME_MIN_MS = 0.1
+    PRESENTMON_FRAME_TIME_MAX_MS = 2000.0
+    PRESENTMON_FRAME_FRESH_SECONDS = 5.0
 
     def __init__(self):
         self._last_render_ts = 0.0   # 最近一次检测到活跃渲染的 monotonic 时刻
@@ -109,6 +116,7 @@ class HardwareTelemetryWorker:
         self.presentmon_thread = None
         
         self.active_foreground_app = ""
+        self.active_foreground_pid = None
         self.last_ctx_switches = None
         self.last_ts = time.monotonic()
         
@@ -319,6 +327,139 @@ class HardwareTelemetryWorker:
             "--stop_existing_session",
             "--no_console_stats",
         ]
+
+    @staticmethod
+    def _normalize_presentmon_application(value):
+        """Normalize PresentMon's application field to a basename without .exe."""
+        text = str(value or "").strip().strip('"')
+        if not text:
+            return ""
+        # PresentMon normally emits a basename, but accepting a path here keeps
+        # the ownership key stable across versions that include the executable
+        # path in the Application column.
+        text = text.replace("\\", "/").rsplit("/", 1)[-1]
+        if text.lower().endswith(".exe"):
+            text = text[:-4]
+        return text.casefold()
+
+    @staticmethod
+    def _parse_presentmon_process_id(value):
+        try:
+            numeric = float(str(value or "").strip())
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric) or numeric <= 0 or not numeric.is_integer():
+            return None
+        return int(numeric)
+
+    @classmethod
+    def _valid_presentmon_frame_time(cls, value):
+        try:
+            frame_time = float(value)
+        except (TypeError, ValueError):
+            return False
+        return math.isfinite(frame_time) and (
+            cls.PRESENTMON_FRAME_TIME_MIN_MS
+            <= frame_time
+            <= cls.PRESENTMON_FRAME_TIME_MAX_MS
+        )
+
+    def _record_presentmon_sample(
+        self,
+        parts,
+        header_map,
+        app_col_name="application",
+        ft_idx=None,
+        observed_at=None,
+    ):
+        """Record one PresentMon CSV row under its exact process/application key.
+
+        Rows without a usable ProcessID or frame interval are discarded.  The
+        parser intentionally does not keep an application-name-only bucket:
+        selecting one would allow DWM/other applications (or a reused name) to
+        masquerade as the current foreground process.
+        """
+        try:
+            app_idx = header_map.get(app_col_name)
+            pid_idx = header_map.get("processid")
+            if (
+                app_idx is None
+                or pid_idx is None
+                or ft_idx is None
+                or app_idx >= len(parts)
+                or pid_idx >= len(parts)
+                or ft_idx >= len(parts)
+            ):
+                return False
+
+            application = self._normalize_presentmon_application(parts[app_idx])
+            process_id = self._parse_presentmon_process_id(parts[pid_idx])
+            if not application or process_id is None:
+                return False
+
+            raw_frame_time = str(parts[ft_idx]).strip()
+            if raw_frame_time.upper() == "NA":
+                return False
+            frame_time = float(raw_frame_time)
+            if not self._valid_presentmon_frame_time(frame_time):
+                return False
+
+            timestamp = time.time() if observed_at is None else float(observed_at)
+            key = (process_id, application)
+            with self.lock:
+                window = self.app_windows[key]
+                previous = self.app_last_update.get(key)
+                if (
+                    previous is not None
+                    and timestamp - previous > self.PRESENTMON_FRAME_FRESH_SECONDS
+                ):
+                    # A gap can be a PM restart or PID reuse.  Do not let the
+                    # next process inherit the previous 200-frame average.
+                    window.clear()
+                window.append(frame_time)
+                if len(window) > 200:
+                    window.pop(0)
+                self.app_last_update[key] = timestamp
+            return True
+        except (AttributeError, TypeError, ValueError, OverflowError):
+            return False
+
+    def _select_presentmon_window(self, foreground_app_name, foreground_pid, now=None):
+        """Return a copy of the fresh PresentMon window for the exact foreground PID.
+
+        There is deliberately no newest-app fallback.  A missing PID match is
+        represented by ``None`` and the caller reports an idle/unknown sample.
+        """
+        application = self._normalize_presentmon_application(foreground_app_name)
+        process_id = self._parse_presentmon_process_id(foreground_pid)
+        if not application or process_id is None:
+            return None
+        current_time = time.time() if now is None else float(now)
+        key = (process_id, application)
+        with self.lock:
+            last_update = self.app_last_update.get(key)
+            window = self.app_windows.get(key)
+            if (
+                last_update is None
+                or current_time - last_update > self.PRESENTMON_FRAME_FRESH_SECONDS
+                or not window
+            ):
+                return None
+            return list(window)
+
+    @staticmethod
+    def _read_foreground_pid():
+        """Read the current Win32 foreground PID without changing focus/state."""
+        try:
+            user32 = ctypes.windll.user32
+            hwnd = user32.GetForegroundWindow()
+            if not hwnd:
+                return None
+            pid = wintypes.DWORD()
+            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            return int(pid.value) if pid.value else None
+        except Exception:
+            return None
 
     def _begin_presentmon_launch(self):
         """预约一次启动事务，使 terminate 能等待 Popen/claim/拒绝清理全部收束。"""
@@ -586,23 +727,12 @@ class HardwareTelemetryWorker:
                         if not header_map or app_col_name not in header_map: 
                             continue
                             
-                        try:
-                            app_idx = header_map[app_col_name]
-                            if app_idx < len(parts):
-                                stream_app_name = parts[app_idx].lower().replace('.exe', '').strip()
-                                
-                                if ft_idx is not None and ft_idx < len(parts):
-                                    raw_ft = parts[ft_idx]
-                                    if raw_ft.upper() != "NA":
-                                        ft = float(raw_ft)
-                                        with self.lock:
-                                            window = self.app_windows[stream_app_name]
-                                            window.append(ft)
-                                            if len(window) > 200: 
-                                                window.pop(0)
-                                            self.app_last_update[stream_app_name] = time.time()
-                        except Exception: 
-                            pass
+                        self._record_presentmon_sample(
+                            parts,
+                            header_map,
+                            app_col_name=app_col_name,
+                            ft_idx=ft_idx,
+                        )
 
                     except queue.Empty:
                         if process.poll() is not None:
@@ -1046,8 +1176,13 @@ class HardwareTelemetryWorker:
             pass
         return 0.0
 
-    def collect_hardware_snapshot(self, foreground_app_name):
+    def collect_hardware_snapshot(self, foreground_app_name, foreground_pid=None):
         self.active_foreground_app = foreground_app_name if foreground_app_name else ""
+        self.active_foreground_pid = (
+            self._parse_presentmon_process_id(foreground_pid)
+            if foreground_pid is not None
+            else self._read_foreground_pid()
+        )
         now_ts = time.monotonic()
         dt = max(0.001, now_ts - self.last_ts)
         self.last_ts = now_ts
@@ -1121,29 +1256,20 @@ class HardwareTelemetryWorker:
         system_dpc_latency = self.dpc_checker.get_latency_us()
 
         current_fps = average_fps = one_percent_low_fps = frametime_ms = frametime_jitter = None
-        target_app = self.active_foreground_app.lower().replace('.exe', '').strip()
-        now_curr = time.time()
-        chosen_app = None
+        frametimes = self._select_presentmon_window(
+            self.active_foreground_app,
+            self.active_foreground_pid,
+        )
+        if frametimes:
+            sorted_ft = sorted(frametimes)
+            low_99_idx = min(len(sorted_ft) - 1, int(len(sorted_ft) * 0.99))
+            ft = frametimes[-1]
 
-        with self.lock:
-            if target_app and (now_curr - self.app_last_update.get(target_app, 0) <= 5.0):
-                chosen_app = target_app
-            else:
-                active_apps = [app for app, l_time in self.app_last_update.items() if now_curr - l_time <= 5.0]
-                if active_apps:
-                    chosen_app = max(active_apps, key=lambda x: self.app_last_update[x])
-
-            if chosen_app and chosen_app in self.app_windows and self.app_windows[chosen_app]:
-                frametimes = self.app_windows[chosen_app]
-                sorted_ft = sorted(frametimes)
-                low_99_idx = int(len(sorted_ft) * 0.99)
-                ft = frametimes[-1]
-                
-                current_fps = 1000.0 / ft if ft > 0 else 0.0
-                one_percent_low_fps = 1000.0 / sorted_ft[low_99_idx] if sorted_ft[low_99_idx] > 0 else 0.0
-                average_fps = 1000.0 / (sum(frametimes) / len(frametimes))
-                frametime_ms = ft
-                frametime_jitter = abs(frametimes[-1] - frametimes[-2]) if len(frametimes) > 1 else 0.0
+            current_fps = 1000.0 / ft
+            one_percent_low_fps = 1000.0 / sorted_ft[low_99_idx]
+            average_fps = 1000.0 / (sum(frametimes) / len(frametimes))
+            frametime_ms = ft
+            frametime_jitter = abs(frametimes[-1] - frametimes[-2]) if len(frametimes) > 1 else 0.0
 
         return {
             "current_fps": current_fps if current_fps is not None else 0.0,

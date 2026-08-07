@@ -379,7 +379,14 @@ async def _run_collector():
                 # 避免这段同步 sleep 冻结整个 asyncio 事件循环(否则会阻塞 lifecycle 事件处理与连接自愈)。
                 # 其访问的跨线程缓存已由 cache_lock 保护；主线程独占缓存仍按 await 序列访问、无并发风险。
                 active_procs = await asyncio.to_thread(activity_worker.collect_active_processes)
-                hw_data = hardware_worker.collect_hardware_snapshot(fg_app_name)
+                # Keep PresentMon ownership bound to the same foreground PID/name
+                # pair captured by ContextTracker. Re-reading focus inside the
+                # hardware worker can race with an Alt-Tab and safely suppress a
+                # valid game sample for this collection tick.
+                hw_data = hardware_worker.collect_hardware_snapshot(
+                    fg_app_name,
+                    tracker.last_pid,
+                )
                 
                 await asyncio.gather(
                     hardware_worker.write_to_db(pool, hw_data, batch_timestamp),
