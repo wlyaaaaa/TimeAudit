@@ -26,6 +26,7 @@ TimeAudit — Grafana 仪表盘自动备份
 """
 import argparse
 import base64
+import contextlib
 import datetime
 import glob
 import json
@@ -35,6 +36,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.request
 
@@ -153,8 +155,50 @@ def normalize_dashboard_for_public_backup(dashboard):
     return normalized
 
 
-def write_dashboard_documents(documents):
-    """Write normalized dashboard documents and remove obsolete snapshots."""
+def _dashboard_version(dashboard):
+    """Return Grafana's monotonic dashboard generation, or None if invalid."""
+    value = dashboard.get("version") if isinstance(dashboard, dict) else None
+    if type(value) is int and value >= 0:
+        return value
+    return None
+
+
+def _assert_dashboard_export_is_not_stale(path, previous, incoming, content):
+    """Never let an older or ambiguous live copy replace repository work."""
+    if previous is None or previous == content:
+        return
+    try:
+        repository = json.loads(previous)
+    except (TypeError, ValueError) as exc:
+        raise GitSyncError(
+            f"repository dashboard snapshot is invalid JSON: {os.path.basename(path)}"
+        ) from exc
+
+    repository_version = _dashboard_version(repository)
+    incoming_version = _dashboard_version(incoming)
+    if repository_version is None or incoming_version is None:
+        raise GitSyncError(
+            "dashboard version is missing or invalid; refusing ambiguous overwrite: "
+            f"{os.path.basename(path)}"
+        )
+    if incoming_version < repository_version:
+        raise GitSyncError(
+            "live dashboard is older than repository snapshot; refusing rollback: "
+            f"{os.path.basename(path)} "
+            f"(live={incoming_version}, repository={repository_version})"
+        )
+    if incoming_version == repository_version:
+        raise GitSyncError(
+            "dashboard same-version divergence detected; refusing ambiguous overwrite: "
+            f"{os.path.basename(path)} (version={incoming_version})"
+        )
+
+
+def write_dashboard_documents(documents, changed_paths=None, before_write=None):
+    """Write normalized dashboard documents and remove obsolete snapshots safely."""
+    if before_write is None:
+        before_write = assert_dashboard_worktree_clean
+    before_write()
     os.makedirs(DASH_DIR, exist_ok=True)
     written = set()
     for uid, dash in documents:
@@ -165,9 +209,20 @@ def write_dashboard_documents(documents):
         fname = f"{uid}__{safe_filename(title)}.json"
         fpath = os.path.join(DASH_DIR, fname)
         # sort_keys + indent + ensure_ascii=False：稳定排序、缩进、保留中文 —— git diff 干净可读。
-        with open(fpath, "w", encoding="utf-8", newline="\n") as f:
-            json.dump(dash, f, ensure_ascii=False, indent=2, sort_keys=True)
-            f.write("\n")
+        content = json.dumps(dash, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+        previous = None
+        if os.path.exists(fpath):
+            with open(fpath, "r", encoding="utf-8", newline="") as f:
+                previous = f.read()
+        if previous != content:
+            _assert_dashboard_export_is_not_stale(
+                fpath,
+                previous,
+                dash,
+                content,
+            )
+            _write_dashboard_json_atomically(fpath, content)
+            _record_dashboard_change(changed_paths, fpath)
         written.add(fname)
         log(f"  ✓ {fname}  (面板 {len(dash.get('panels', []))} 个)")
 
@@ -175,11 +230,12 @@ def write_dashboard_documents(documents):
     for old in glob.glob(os.path.join(DASH_DIR, "*.json")):
         if os.path.basename(old) not in written:
             os.remove(old)
+            _record_dashboard_change(changed_paths, old)
             log(f"  ✗ 删除已不存在的仪表盘备份: {os.path.basename(old)}")
     return written
 
 
-def export_dashboards(base_url, auth_header):
+def export_dashboards(base_url, auth_header, changed_paths=None, before_write=None):
     """Export dashboards through the Grafana API for remote/manual use."""
     items = api_get(base_url, "/api/search?type=dash-db", auth_header)
     if not isinstance(items, list):
@@ -195,7 +251,11 @@ def export_dashboards(base_url, auth_header):
         dash = full.get("dashboard")
         if dash:
             documents.append((uid, dash))
-    return write_dashboard_documents(documents)
+    return write_dashboard_documents(
+        documents,
+        changed_paths=changed_paths,
+        before_write=before_write,
+    )
 
 
 def _sqlite_table_exists(connection, table):
@@ -249,7 +309,7 @@ def _dashboard_documents_from_sqlite(connection):
     return documents
 
 
-def export_dashboards_from_db(database_path=None):
+def export_dashboards_from_db(database_path=None, changed_paths=None, before_write=None):
     """Export a consistent read-only snapshot without unattended credentials."""
     if database_path is None:
         database_path = GRAFANA_DB
@@ -262,7 +322,11 @@ def export_dashboards_from_db(database_path=None):
     finally:
         connection.close()
     log(f"从本机 Grafana SQLite 一致快照发现 {len(documents)} 个仪表盘，开始导出 ...")
-    return write_dashboard_documents(documents)
+    return write_dashboard_documents(
+        documents,
+        changed_paths=changed_paths,
+        before_write=before_write,
+    )
 
 
 def backup_grafana_db(keep):
@@ -317,6 +381,174 @@ def git(args, check=False):
             f"git {' '.join(args)} failed with exit code {result.returncode}{suffix}"
         )
     return result
+
+
+def _managed_dashboard_directory():
+    """Return the repository-relative dashboard directory when it is in this checkout."""
+    expected = os.path.normcase(os.path.abspath(os.path.join(ROOT, "grafana_dashboards")))
+    actual = os.path.normcase(os.path.abspath(DASH_DIR))
+    if actual != expected:
+        # Tests and callers may deliberately export to a temporary directory.
+        # Only the checkout's managed directory participates in Git safety checks.
+        return None
+    return "grafana_dashboards"
+
+
+def _normalize_dashboard_paths(paths):
+    """Reject anything outside the generated JSON snapshot allowlist."""
+    normalized = set()
+    prefix = "grafana_dashboards/"
+    for raw_path in paths:
+        if not isinstance(raw_path, str):
+            raise GitSyncError("dashboard staging allowlist contains a non-string path")
+        path = raw_path.replace("\\", "/")
+        parts = path.split("/")
+        if (
+            not path.startswith(prefix)
+            or not path.endswith(".json")
+            or any(part in ("", ".", "..") for part in parts)
+        ):
+            raise GitSyncError(
+                "dashboard staging allowlist must contain only grafana_dashboards/*.json"
+            )
+        normalized.add(path)
+    return normalized
+
+
+def _dashboard_relative_path(path):
+    relative = os.path.relpath(path, ROOT).replace(os.sep, "/")
+    return next(iter(_normalize_dashboard_paths([relative])))
+
+
+def _record_dashboard_change(changed_paths, path):
+    if changed_paths is not None:
+        changed_paths.add(_dashboard_relative_path(path))
+
+
+def _write_dashboard_json_atomically(path, content):
+    """Replace one snapshot atomically, leaving no half-written JSON on failure."""
+    fd, temporary = tempfile.mkstemp(
+        prefix=f".{os.path.basename(path)}.",
+        suffix=".tmp",
+        dir=os.path.dirname(path),
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.remove(temporary)
+
+
+def assert_dashboard_worktree_clean():
+    """Fail before an unattended export can replace or delete manual dashboard work."""
+    relative = _managed_dashboard_directory()
+    if relative is None:
+        return
+    status = git(
+        [
+            "status",
+            "--porcelain=v1",
+            "-z",
+            "--untracked-files=all",
+            "--ignored=matching",
+            "--",
+            relative,
+        ],
+        check=True,
+    )
+    if status.stdout:
+        raise GitSyncError(
+            "uncommitted dashboard changes detected; refusing automatic export/deletion"
+        )
+
+
+def _git_nul_paths(args):
+    output = git(args, check=True).stdout
+    return {path.replace("\\", "/") for path in output.split("\0") if path}
+
+
+def dashboard_json_paths():
+    """Return every dashboard change Git currently sees, rejecting non-JSON entries."""
+    relative = _managed_dashboard_directory()
+    if relative is None:
+        return set()
+    observed = set()
+    for args in (
+        ["diff", "--no-renames", "--name-only", "-z", "--", relative],
+        ["diff", "--cached", "--no-renames", "--name-only", "-z", "--", relative],
+        ["ls-files", "--others", "--exclude-standard", "-z", "--", relative],
+        [
+            "ls-files",
+            "--others",
+            "--ignored",
+            "--exclude-standard",
+            "-z",
+            "--",
+            relative,
+        ],
+    ):
+        observed.update(_git_nul_paths(args))
+    return _normalize_dashboard_paths(observed)
+
+
+def assert_dashboard_change_allowlist(expected_paths):
+    """Ensure post-export Git changes are exactly the files this run generated/deleted."""
+    expected = _normalize_dashboard_paths(expected_paths)
+    observed = dashboard_json_paths()
+    if observed != expected:
+        raise GitSyncError(
+            "dashboard changes no longer match this export's JSON allowlist; "
+            "refusing Git staging"
+        )
+    return expected
+
+
+@contextlib.contextmanager
+def grafana_backup_lock():
+    """Use a non-blocking checkout-local lock so scheduled backups cannot overlap."""
+    lock_path = git(
+        ["rev-parse", "--git-path", "timeaudit-grafana-backup.lock"], check=True
+    ).stdout.strip()
+    if not lock_path:
+        raise GitSyncError("could not resolve the Grafana backup lock path")
+    if not os.path.isabs(lock_path):
+        lock_path = os.path.join(ROOT, lock_path)
+
+    handle = open(lock_path, "a+b")
+    locked = False
+    try:
+        handle.seek(0, os.SEEK_END)
+        if handle.tell() == 0:
+            handle.write(b"0")
+            handle.flush()
+        handle.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = True
+        except OSError as exc:
+            raise GitSyncError(
+                "another Grafana backup process is running; refusing concurrent export"
+            ) from exc
+        yield
+    finally:
+        if locked:
+            handle.seek(0)
+            if os.name == "nt":
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        handle.close()
 
 
 def retryable_git_network_failure(result):
@@ -438,26 +670,45 @@ def verified_git_push():
     return {**state, "pushed": pushed, "verified": True, "remote_oid": remote_oid}
 
 
-def git_commit_and_push(do_push):
-    """只提交仪表盘暂存变化；默认还会补推并回读验证远端。"""
-    rel = "grafana_dashboards"
+def git_commit_and_push(do_push, dashboard_paths):
+    """Stage and commit only this run's explicit dashboard JSON allowlist."""
+    paths = sorted(_normalize_dashboard_paths(dashboard_paths))
     # Fetch before committing so a remote-newer/diverged branch is never
     # extended by unattended automation.
     if do_push:
         git_remote_state()
 
-    git(["add", "--", rel], check=True)
-    staged = git(["diff", "--cached", "--quiet", "--exit-code", "--", rel])
-    if staged.returncode not in (0, 1):
-        detail = (staged.stderr or staged.stdout).strip()
-        raise GitSyncError(f"git staged-diff check failed: {detail}")
-
-    if staged.returncode == 1:
-        msg = "chore(grafana): 自动备份仪表盘快照 " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-        git(["commit", "-m", msg, "--", rel], check=True)
-        log("已本地提交仪表盘变更。")
-    else:
+    if not paths:
         log("仪表盘 JSON 无暂存变化，不创建提交。")
+    else:
+        git(["add", "--all", "--", *paths], check=True)
+        staged_paths = _git_nul_paths(
+            [
+                "diff",
+                "--cached",
+                "--no-renames",
+                "--name-only",
+                "-z",
+                "--",
+                "grafana_dashboards",
+            ]
+        )
+        if staged_paths != set(paths):
+            raise GitSyncError(
+                "staged dashboard paths no longer match this export's JSON allowlist; "
+                "refusing commit"
+            )
+        staged = git(["diff", "--cached", "--quiet", "--exit-code", "--", *paths])
+        if staged.returncode not in (0, 1):
+            detail = (staged.stderr or staged.stdout).strip()
+            raise GitSyncError(f"git staged-diff check failed: {detail}")
+        if staged.returncode != 1:
+            raise GitSyncError(
+                "dashboard allowlist had no staged changes after export; refusing ambiguous commit"
+            )
+        msg = "chore(grafana): 自动备份仪表盘快照 " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        git(["commit", "-m", msg, "--", *paths], check=True)
+        log("已本地提交仪表盘变更。")
 
     # This still runs for a clean worktree, repairing a prior unpushed commit.
     if do_push:
@@ -481,33 +732,54 @@ def main():
         log("已应用当前用户 Windows 代理设置。")
 
     try:
-        if args.source == "sqlite":
-            export_dashboards_from_db()
-        else:
-            password = os.environ.get("GRAFANA_PASSWORD")
-            if not args.user or not password:
-                log("❌ API 模式需要私密 GRAFANA_USER / GRAFANA_PASSWORD。")
-                return 2
-            auth_header = "Basic " + base64.b64encode(
-                f"{args.user}:{password}".encode()
-            ).decode()
-            export_dashboards(args.url, auth_header)
+        with grafana_backup_lock():
+            changed_paths = set()
+            try:
+                # Check before source extraction, then once more immediately before writes.
+                # A scheduled job must never overwrite or delete a human's dashboard work.
+                assert_dashboard_worktree_clean()
+                if args.source == "sqlite":
+                    export_dashboards_from_db(
+                        changed_paths=changed_paths,
+                        before_write=assert_dashboard_worktree_clean,
+                    )
+                else:
+                    password = os.environ.get("GRAFANA_PASSWORD")
+                    if not args.user or not password:
+                        log("❌ API 模式需要私密 GRAFANA_USER / GRAFANA_PASSWORD。")
+                        return 2
+                    auth_header = "Basic " + base64.b64encode(
+                        f"{args.user}:{password}".encode()
+                    ).decode()
+                    export_dashboards(
+                        args.url,
+                        auth_header,
+                        changed_paths=changed_paths,
+                        before_write=assert_dashboard_worktree_clean,
+                    )
+                dashboard_paths = assert_dashboard_change_allowlist(changed_paths)
+            except Exception as e:
+                log(f"❌ 仪表盘导出失败: {e}")
+                log("  SQLite 模式请检查本机 grafana.db；API 模式请检查服务与认证。")
+                return 1
+
+            try:
+                backup_grafana_db(args.keep_db)
+            except Exception as e:
+                log(f"⚠️ grafana.db 复制失败(不影响 JSON 备份): {e}")
+
+            if not args.no_git:
+                try:
+                    git_commit_and_push(
+                        do_push=not args.no_push,
+                        dashboard_paths=dashboard_paths,
+                    )
+                except Exception as e:
+                    log(f"❌ git 云备份失败，任务返回非零以触发调度重试: {e}")
+                    return 1
     except Exception as e:
-        log(f"❌ 仪表盘导出失败: {e}")
-        log("  SQLite 模式请检查本机 grafana.db；API 模式请检查服务与认证。")
+        log(f"❌ Grafana 备份互斥锁不可用: {e}")
         return 1
-
-    try:
-        backup_grafana_db(args.keep_db)
-    except Exception as e:
-        log(f"⚠️ grafana.db 复制失败(不影响 JSON 备份): {e}")
-
-    if not args.no_git:
-        try:
-            git_commit_and_push(do_push=not args.no_push)
-        except Exception as e:
-            log(f"❌ git 云备份失败，任务返回非零以触发调度重试: {e}")
-            return 1
 
     log("✅ 完成。")
     return 0

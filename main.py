@@ -81,15 +81,230 @@ from runtime_health import command_line_targets_script, write_telemetry_heartbea
 
 DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
+TELEMETRY_INTERVAL_SEC = 1.0
+ACTIVITY_INTERVAL_SEC = 3.0
+# Partition warmup/retention is maintenance work, not part of the 1 Hz fast
+# lane.  A transient DDL/DB failure must therefore retry on a bounded backoff
+# instead of re-entering both maintenance paths on every telemetry slot.
+WARMUP_RETRY_INITIAL_SEC = 30.0
+WARMUP_RETRY_MAX_SEC = 300.0
+# The external watchdog first requires a 90-second stale heartbeat and then a
+# 45-second resume grace. Stop renewing the aggregate heartbeat well before
+# that boundary when an internal lane has made no successful progress.
+ACTIVITY_HEALTH_INITIAL_GRACE_SEC = 30.0
+ACTIVITY_HEALTH_MAX_AGE_SEC = 30.0
+CONTEXT_HEALTH_INITIAL_GRACE_SEC = 15.0
+CONTEXT_HEALTH_MAX_AGE_SEC = 15.0
 # 【数据保留 / 三年可行性】高频明细 fact_process_activity 约 2GB/周，三年约 312GB；E 盘 2.3TB 余量充足，
 # 故运行三年完全可行、且无需中途清理。RETENTION_DAYS 仅作超长期 7x24 运行的"防磁盘爆满"兜底底线：
 # 自动 DROP 分区上界早于该天数的周/月子分区，并清理两张非分区表(生命周期事件、AHK 工时)的超期行。
 # 默认 1200 天(≈3.3 年) > 3 年，故运行三年内绝不触发任何删除；置 0 可彻底禁用保留清理(永久保留全史)。
 RETENTION_DAYS = 1200
-# 墙钟跨度超过此值即判定刚从系统睡眠/休眠(S3/S4)唤醒。正常节拍约 3s，故 60s 阈值不会被 GC/DB 抖动误触，
+# 墙钟跨度超过此值即判定刚从系统睡眠/休眠(S3/S4)唤醒。快速遥测节拍为 1s，故 60s 阈值不会被 GC/DB 抖动误触，
 # 而真实睡眠必远超之。用墙钟(time.time())而非 asyncio 的 monotonic 时钟——后者在系统睡眠时会暂停，
 # 旧的 monotonic 跳变侦测因此是永不触发的死代码(Bug1)。
 SLEEP_RESUME_THRESHOLD_SEC = 60
+
+
+def _advance_periodic_deadline(previous_deadline, interval, now):
+    """Advance an anchored cadence past ``now`` without replaying missed slots."""
+    if interval <= 0:
+        raise ValueError("interval must be positive")
+    if now < previous_deadline:
+        return previous_deadline
+    elapsed_slots = int((now - previous_deadline) // interval) + 1
+    return previous_deadline + elapsed_slots * interval
+
+
+def _warmup_due(last_success_wall, retry_deadline_wall, now_wall, interval):
+    """Return whether maintenance is due without spinning after a failure."""
+    if retry_deadline_wall > 0:
+        return now_wall >= retry_deadline_wall
+    return last_success_wall == 0 or now_wall - last_success_wall >= interval
+
+
+def _schedule_warmup_retry(now_wall, current_delay, initial_delay, max_delay):
+    """Return the next bounded retry deadline and exponential delay."""
+    delay = min(max(float(current_delay), float(initial_delay)), float(max_delay))
+    next_delay = min(delay * 2.0, float(max_delay))
+    return now_wall + delay, next_delay
+
+
+async def _run_maintenance_cycle(pool, warmup_runner, retention_runner):
+    """Run one serialized warmup/retention cycle in the maintenance lane."""
+    warmup_ok = False
+    try:
+        await warmup_runner(pool)
+        warmup_ok = True
+    except Exception as exc:
+        print(f"❌ 警告: 自动分区预热失败, 详情: {exc}")
+
+    # Keep retention in the same single-flight task: it may issue DROP/DELETE
+    # and must never overlap a second maintenance cycle after a slow warmup.
+    retention_ok = await retention_runner(pool)
+    return warmup_ok and retention_ok
+
+
+def _start_maintenance_task_if_due(
+    maintenance_task,
+    maintenance_due,
+    lane_available,
+    task_factory,
+):
+    """Start at most one slow maintenance task for an eligible slot."""
+    if not maintenance_due or maintenance_task is not None or not lane_available:
+        return maintenance_task
+    return task_factory()
+
+
+def _reap_finished_maintenance_task(maintenance_task):
+    """Consume a finished maintenance task without waiting on a slow one."""
+    if maintenance_task is None or not maintenance_task.done():
+        return maintenance_task, None, False, False
+    try:
+        succeeded = bool(maintenance_task.result())
+    except asyncio.CancelledError:
+        return None, None, False, True
+    except Exception as exc:
+        return None, exc, False, True
+    return None, None, succeeded, True
+
+
+async def _cancel_and_reap_maintenance_task(maintenance_task):
+    """Cancel one maintenance task and consume its terminal state."""
+    if maintenance_task is None:
+        return
+    if not maintenance_task.done():
+        maintenance_task.cancel()
+    await asyncio.gather(maintenance_task, return_exceptions=True)
+
+
+def _observe_sleep_resume(
+    last_observed_wall,
+    on_resume,
+    *,
+    wall_clock=time.time,
+    sleep_threshold=SLEEP_RESUME_THRESHOLD_SEC,
+):
+    """Advance the wall-clock anchor and synchronously report a suspend-sized gap."""
+    observed_wall = wall_clock()
+    detected = observed_wall - last_observed_wall > sleep_threshold
+    if detected:
+        on_resume(last_observed_wall, observed_wall)
+    return observed_wall, detected
+
+
+def _health_lease_is_current(
+    started_at,
+    last_success_at,
+    now,
+    initial_grace,
+    max_age,
+):
+    """Return whether a lane has made recent successful progress."""
+    anchor = started_at if last_success_at is None else last_success_at
+    allowed_age = initial_grace if last_success_at is None else max_age
+    return max(0.0, now - anchor) <= allowed_age
+
+
+def _should_refresh_telemetry_heartbeat(
+    hardware_succeeded,
+    context_lease_healthy,
+    activity_lease_healthy,
+):
+    """Only advertise whole-pipeline health when every required lane is healthy."""
+    return bool(
+        hardware_succeeded
+        and context_lease_healthy
+        and activity_lease_healthy
+    )
+
+
+def _update_health_warning(lane_label, lease_healthy, warning_active):
+    """Log one payload-free message per health transition."""
+    if lease_healthy:
+        if warning_active:
+            print(f"✅ [运行健康] {lane_label}健康租约已恢复。")
+        return False
+    if not warning_active:
+        print(f"⚠️ [运行健康] {lane_label}健康租约已过期，暂停总心跳。")
+    return True
+
+
+def _sample_current_foreground_identity(tracker, process_name_resolver):
+    """Read the foreground PID/name immediately before hardware sampling."""
+    fast_info = tracker.check_foreground_window_fast()
+    if not fast_info:
+        return None, ""
+    hardware_pid = fast_info.get("os_pid")
+    if hardware_pid is None:
+        return None, ""
+    try:
+        return hardware_pid, process_name_resolver(hardware_pid)
+    except Exception:
+        return hardware_pid, ""
+
+
+async def _collect_and_write_activity_snapshot(
+    activity_worker,
+    pool,
+    sample_timestamp,
+    hardware_committed,
+    *,
+    wall_clock=time.time,
+    sleep_threshold=SLEEP_RESUME_THRESHOLD_SEC,
+):
+    """Run one expensive process snapshot in the non-overlapping slow lane."""
+    collection_started_wall = wall_clock()
+    active_procs = await asyncio.to_thread(activity_worker.collect_active_processes)
+    if wall_clock() - collection_started_wall > sleep_threshold:
+        # The native scan crossed a suspend/resume boundary (or became so stale
+        # that its delta baselines are no longer meaningful). Never persist that
+        # mixed snapshot; the main loop will reset baselines on its next turn.
+        return False
+    await hardware_committed.wait()
+    if wall_clock() - collection_started_wall > sleep_threshold:
+        return False
+    await activity_worker.write_batch_to_db(
+        pool,
+        active_procs,
+        sample_timestamp,
+    )
+    return True
+
+
+def _start_activity_task_if_due(
+    activity_task,
+    activity_due,
+    lane_available,
+    task_factory,
+):
+    """Start one slow-lane task only when its anchored slot is due and free."""
+    if not activity_due or activity_task is not None or not lane_available:
+        return activity_task
+    return task_factory()
+
+
+def _reap_finished_activity_task(activity_task):
+    """Consume a finished task without ever waiting on a running slow lane."""
+    if activity_task is None or not activity_task.done():
+        return activity_task, None, False
+    try:
+        activity_succeeded = bool(activity_task.result())
+    except asyncio.CancelledError:
+        return None, None, False
+    except Exception as exc:
+        return None, exc, False
+    return None, None, activity_succeeded
+
+
+async def _cancel_and_reap_activity_task(activity_task):
+    """Cancel the single slow-lane task and consume its terminal state."""
+    if activity_task is None:
+        return
+    if not activity_task.done():
+        activity_task.cancel()
+    await asyncio.gather(activity_task, return_exceptions=True)
 
 def enforce_singleton():
     mutex_name = "Global\\TimeAuditTelemetryEngineMutex"
@@ -193,7 +408,7 @@ async def auto_retention_cleanup(pool):
     不产生表膨胀)，绝不误删当期/未来分区；两张非分区表则按时间戳 DELETE 超期行。RETENTION_DAYS=1200(≈3.3 年)
     时三年内绝不触发。任何异常都吞掉、绝不影响采集主循环。"""
     if RETENTION_DAYS <= 0:
-        return
+        return True
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=RETENTION_DAYS)
     try:
         async with pool.acquire() as conn:
@@ -221,8 +436,10 @@ async def auto_retention_cleanup(pool):
             await conn.execute("DELETE FROM public.app_usage_logs WHERE start_time < $1", cutoff)
             if dropped:
                 print(f"[✅ 保留策略] 本轮共回收 {dropped} 个超期分区。")
+        return True
     except Exception as e:
         print(f"[保留策略] 清理跳过(非致命): {e}")
+        return False
 
 async def cleanup_orphan_context_sessions(pool):
     """【Bug4 修复】启动时闭合上次"关机/崩溃被强杀"遗留的前台 slice：这些行 end_timestamp 永久为 NULL，
@@ -277,7 +494,11 @@ async def _run_collector():
             print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 等待数仓] {e}，5秒后重试...")
             await asyncio.sleep(5)
 
-    last_warmup_wall = 0.0
+    warmup_last_success_wall = 0.0
+    warmup_retry_deadline_wall = 0.0
+    warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
+    maintenance_task = None
+    maintenance_resume_reset_pending = False
     global_pid_key_map = {}
     
     tracker = WindowStateTracker()
@@ -299,43 +520,147 @@ async def _run_collector():
     # 冷启动闭合上次关机遗留的幽灵前台会话(end_timestamp 永久 NULL)。
     await cleanup_orphan_context_sessions(pool)
 
-    last_known_pid = None
-    fg_app_name = ""
-    wall_anchor = time.time()   # 上一拍进入休眠前记录的墙钟，用于侦测系统睡眠跨度
+    wall_anchor = time.time()   # 最近一次墙钟观测；每个潜在长等待后复核，避免漏掉本轮内睡眠
+    loop = asyncio.get_running_loop()
+    next_telemetry_deadline = loop.time()
+    next_activity_deadline = next_telemetry_deadline
+    activity_task = None
+    activity_resume_reset_pending = False
+    health_started_at = loop.time()
+    activity_last_success_at = None
+    context_last_success_at = None
+    activity_health_warning_active = False
+    context_health_warning_active = False
+
+    def _handle_sleep_resume(pre_sleep_wall, observed_wall):
+        nonlocal activity_task
+        nonlocal activity_resume_reset_pending
+        nonlocal health_started_at
+        nonlocal activity_last_success_at
+        nonlocal context_last_success_at
+        nonlocal warmup_last_success_wall
+        nonlocal warmup_retry_deadline_wall
+        nonlocal warmup_retry_delay
+        nonlocal maintenance_task
+        nonlocal maintenance_resume_reset_pending
+
+        gap = observed_wall - pre_sleep_wall
+        pre_sleep_dt = datetime.datetime.fromtimestamp(
+            pre_sleep_wall,
+            datetime.timezone.utc,
+        )
+        print(
+            f"[{datetime.datetime.now().strftime('%X')} 🔄 唤醒自愈] "
+            f"墙钟跳变 {gap:.0f}s，判定系统从睡眠/休眠唤醒，正在截断会话并重置速率基线..."
+        )
+        if activity_task is not None and not activity_task.done():
+            # asyncio.to_thread itself is not cancellable. Cancel the coroutine
+            # immediately; the collection-state lock prevents replacement work
+            # from racing its residual native thread.
+            activity_task.cancel()
+        if maintenance_task is not None and not maintenance_task.done():
+            # Maintenance uses asyncpg awaits, so cancellation is cooperative;
+            # the next slot reaps it before allowing a replacement cycle.
+            maintenance_task.cancel()
+        maintenance_resume_reset_pending = True
+        health_started_at = loop.time()
+        activity_last_success_at = None
+        context_last_success_at = None
+        activity_resume_reset_pending = True
+        try:
+            tracker.mark_sleep_boundary(pre_sleep_dt)
+        except Exception as resume_err:
+            print(f"[唤醒自愈] 前台会话截断失败: {resume_err}")
+        try:
+            hardware_worker.last_ctx_switches = None
+        except Exception as resume_err:
+            print(f"[唤醒自愈] 硬件速率基线重置失败: {resume_err}")
+        # Sleep can cross a natural partition boundary. Force the next slot to
+        # re-check partitions without delaying this recovery path.
+        warmup_last_success_wall = 0.0
+        warmup_retry_deadline_wall = 0.0
+        warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
 
     try:
         while True:
-            t0 = asyncio.get_event_loop().time()
-            now_wall = time.time()
+            now_monotonic = loop.time()
+            if now_monotonic < next_telemetry_deadline:
+                await asyncio.sleep(next_telemetry_deadline - now_monotonic)
 
-            # 【Bug1/3/5 修复】用墙钟跨度侦测系统睡眠/休眠唤醒(asyncio 的 monotonic 在睡眠时暂停，
-            # 旧的 monotonic 跳变侦测永不触发、是死代码)。唤醒后立刻：截断前台 slice 到睡前边界(杜绝把
-            # 睡眠时长注水成聚焦时长)、重置每进程速率基线、清零上下文切换基线，并强制本拍预热分区。
-            if now_wall - wall_anchor > SLEEP_RESUME_THRESHOLD_SEC:
-                gap = now_wall - wall_anchor
-                pre_sleep_dt = datetime.datetime.fromtimestamp(wall_anchor, datetime.timezone.utc)
-                print(f"[{datetime.datetime.now().strftime('%X')} 🔄 唤醒自愈] 墙钟跳变 {gap:.0f}s，判定系统从睡眠/休眠唤醒，正在截断会话并重置速率基线...")
-                try:
-                    tracker.mark_sleep_boundary(pre_sleep_dt)
-                    activity_worker.reset_on_resume()
-                    hardware_worker.last_ctx_switches = None
-                except Exception as resume_err:
-                    print(f"[唤醒自愈] 状态重置部分失败: {resume_err}")
-                last_warmup_wall = 0.0   # 睡眠可能已跨自然周/月边界，强制本拍在写库前补建分区
+            slot_started = loop.time()
+            activity_due = slot_started >= next_activity_deadline
+            resume_detected_this_slot = False
+            wall_anchor, detected_at_slot_start = _observe_sleep_resume(
+                wall_anchor,
+                _handle_sleep_resume,
+            )
+            resume_detected_this_slot |= detected_at_slot_start
+            now_wall = wall_anchor
 
             # 【Bug2 修复】分区预热按"墙钟"调度：旧版用睡眠中暂停的 monotonic，会把 12h 真实间隔拖成
             # 12 天纯活跃时长，极可能跨过自然周/月物理边界 → PostgreSQL "no partition of relation found"
             # 丢数。预热建"当期+下一档"，墙钟 12h 复检即可长期保证当期与下一档始终就绪。
-            if last_warmup_wall == 0.0 or (now_wall - last_warmup_wall) >= WARMUP_INTERVAL_SEC:
-                try:
-                    await auto_warmup_partitions(pool)
-                    last_warmup_wall = now_wall
-                except Exception as e:
-                    print(f"❌ 警告: 自动分区预热失败, 详情: {e}")
+            # Maintenance runs as a single-flight background task.  A slow DDL,
+            # retention DELETE, or a bounded retry must never occupy this 1 Hz
+            # collector slot or create a backlog of overlapping maintenance jobs.
+            (
+                maintenance_task,
+                maintenance_error,
+                maintenance_succeeded,
+                maintenance_finished,
+            ) = _reap_finished_maintenance_task(maintenance_task)
+            if maintenance_resume_reset_pending and maintenance_task is None:
+                # A task that completed concurrently with resume is discarded;
+                # its pre-sleep result must not renew the post-resume schedule.
+                maintenance_resume_reset_pending = False
+                maintenance_error = None
+                maintenance_succeeded = False
+                maintenance_finished = False
 
-                # 与分区预热同周期(12h)执行数据保留兜底清理(三年内不触发，仅超长期防磁盘爆满)
-                await auto_retention_cleanup(pool)
+            if maintenance_finished and maintenance_error is not None:
+                print(f"⚠️ 维护车道异常，进入退避重试: {maintenance_error}")
+                maintenance_succeeded = False
+            if maintenance_finished:
+                if maintenance_succeeded:
+                    warmup_last_success_wall = now_wall
+                    warmup_retry_deadline_wall = 0.0
+                    warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
+                elif not maintenance_resume_reset_pending:
+                    (
+                        warmup_retry_deadline_wall,
+                        warmup_retry_delay,
+                    ) = _schedule_warmup_retry(
+                        now_wall,
+                        warmup_retry_delay,
+                        WARMUP_RETRY_INITIAL_SEC,
+                        WARMUP_RETRY_MAX_SEC,
+                    )
 
+            if (
+                maintenance_task is None
+                and not maintenance_resume_reset_pending
+                and pool is not None
+                and _warmup_due(
+                    warmup_last_success_wall,
+                    warmup_retry_deadline_wall,
+                    now_wall,
+                    WARMUP_INTERVAL_SEC,
+                )
+            ):
+                maintenance_task = _start_maintenance_task_if_due(
+                    maintenance_task,
+                    True,
+                    True,
+                    lambda: asyncio.create_task(
+                        _run_maintenance_cycle(
+                            pool,
+                            auto_warmup_partitions,
+                            auto_retention_cleanup,
+                        )
+                    ),
+                )
+
+            if maintenance_finished:
                 try:
                     safe_logger.truncate_log(50)
                 except Exception:
@@ -351,50 +676,158 @@ async def _run_collector():
                     print("[连接池] 自愈引擎：重新构建并穿透数据库连接池成功！")
                 except Exception as reconnect_err:
                     print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 自愈重试] 重建连接池失败: {reconnect_err}，等待下次循环...")
-                    wall_anchor = time.time()
+                    wall_anchor, detected_after_reconnect = _observe_sleep_resume(
+                        wall_anchor,
+                        _handle_sleep_resume,
+                    )
+                    resume_detected_this_slot |= detected_after_reconnect
                     await asyncio.sleep(5)
                     continue
 
-            batch_timestamp = datetime.datetime.now(datetime.timezone.utc)
-            
+            context_poll_timestamp = datetime.datetime.now(datetime.timezone.utc)
+            context_poll_healthy = False
             try:
-                await tracker.poll_heartbeat(pool, batch_timestamp)
-            except Exception as worker_err:
-                print(f"⚠️ 切窗监测工作异常: {worker_err}")
-            
-            if tracker.last_process_key:
-                if tracker.last_pid != last_known_pid:
-                    try:
-                        fg_app_name = psutil.Process(tracker.last_pid).name()
-                        last_known_pid = tracker.last_pid
-                    except Exception:
-                        fg_app_name = ""
-            else:
-                fg_app_name = ""
-                last_known_pid = None
+                context_poll_healthy = bool(
+                    await tracker.poll_heartbeat(pool, context_poll_timestamp)
+                )
+            except Exception:
+                print("⚠️ 切窗监测工作异常；等待健康租约复核。")
+            if context_poll_healthy:
+                context_last_success_at = loop.time()
 
             try:
-                # 【性能/实时性优化】collect_active_processes 内部 psutil.cmdline() 对启动中/受保护进程会触发
-                # ERROR_PARTIAL_COPY 内部重试 sleep(cProfile 实测单拍累计可达 ~0.5-1s)。放到工作线程执行，
-                # 避免这段同步 sleep 冻结整个 asyncio 事件循环(否则会阻塞 lifecycle 事件处理与连接自愈)。
-                # 其访问的跨线程缓存已由 cache_lock 保护；主线程独占缓存仍按 await 序列访问、无并发风险。
-                active_procs = await asyncio.to_thread(activity_worker.collect_active_processes)
-                # Keep PresentMon ownership bound to the same foreground PID/name
-                # pair captured by ContextTracker. Re-reading focus inside the
-                # hardware worker can race with an Alt-Tab and safely suppress a
-                # valid game sample for this collection tick.
+                (
+                    activity_task,
+                    activity_error,
+                    activity_succeeded,
+                ) = _reap_finished_activity_task(activity_task)
+                if activity_succeeded:
+                    activity_last_success_at = loop.time()
+                collection_state_idle = activity_worker.is_collection_state_idle()
+                if (
+                    activity_resume_reset_pending
+                    and activity_task is None
+                    and collection_state_idle
+                ):
+                    activity_worker.reset_on_resume()
+                    activity_resume_reset_pending = False
+
+                # Context persistence can await metadata/DB work. Re-read focus
+                # immediately before the hardware/FPS sample so an Alt-Tab during
+                # that await cannot leave PresentMon bound to the previous PID.
+                hardware_pid, fg_app_name = _sample_current_foreground_identity(
+                    tracker,
+                    lambda pid: psutil.Process(pid).name(),
+                )
+                sample_timestamp = datetime.datetime.now(
+                    datetime.timezone.utc
+                )
                 hw_data = hardware_worker.collect_hardware_snapshot(
                     fg_app_name,
-                    tracker.last_pid,
+                    hardware_pid,
                 )
-                
-                await asyncio.gather(
-                    hardware_worker.write_to_db(pool, hw_data, batch_timestamp),
-                    activity_worker.write_batch_to_db(pool, active_procs, batch_timestamp)
+
+                # Start the 1-second hardware/FPS write immediately. On every third
+                # slot it progresses concurrently with the expensive process scan, so
+                # that slow process metadata cannot unnecessarily delay fresh display
+                # telemetry reaching the database.
+                hardware_write_task = asyncio.create_task(
+                    hardware_worker.write_to_db(
+                        pool,
+                        hw_data,
+                        sample_timestamp,
+                    )
                 )
-                write_telemetry_heartbeat()
+                hardware_committed = asyncio.Event()
+                if activity_error is None and not activity_resume_reset_pending:
+                    activity_task = _start_activity_task_if_due(
+                        activity_task,
+                        activity_due,
+                        activity_worker.is_collection_state_idle(),
+                        lambda: asyncio.create_task(
+                            _collect_and_write_activity_snapshot(
+                                activity_worker,
+                                pool,
+                                sample_timestamp,
+                                hardware_committed,
+                            )
+                        ),
+                    )
+                hardware_succeeded = False
+                try:
+                    await hardware_write_task
+                    hardware_succeeded = True
+                    wall_anchor, detected_after_hardware = _observe_sleep_resume(
+                        wall_anchor,
+                        _handle_sleep_resume,
+                    )
+                    resume_detected_this_slot |= detected_after_hardware
+                    if not detected_after_hardware:
+                        hardware_committed.set()
+                finally:
+                    if not hardware_write_task.done():
+                        hardware_write_task.cancel()
+                    await asyncio.gather(
+                        hardware_write_task,
+                        return_exceptions=True,
+                    )
+
+                (
+                    activity_task,
+                    completed_activity_error,
+                    completed_activity_succeeded,
+                ) = _reap_finished_activity_task(activity_task)
+                if completed_activity_succeeded:
+                    activity_last_success_at = loop.time()
+                if activity_error is None:
+                    activity_error = completed_activity_error
+
+                health_now = loop.time()
+                context_lease_healthy = _health_lease_is_current(
+                    health_started_at,
+                    context_last_success_at,
+                    health_now,
+                    CONTEXT_HEALTH_INITIAL_GRACE_SEC,
+                    CONTEXT_HEALTH_MAX_AGE_SEC,
+                )
+                activity_lease_healthy = _health_lease_is_current(
+                    health_started_at,
+                    activity_last_success_at,
+                    health_now,
+                    ACTIVITY_HEALTH_INITIAL_GRACE_SEC,
+                    ACTIVITY_HEALTH_MAX_AGE_SEC,
+                )
+                context_health_warning_active = _update_health_warning(
+                    "上下文车道",
+                    context_lease_healthy,
+                    context_health_warning_active,
+                )
+                activity_health_warning_active = _update_health_warning(
+                    "活动慢车道",
+                    activity_lease_healthy,
+                    activity_health_warning_active,
+                )
+                if (
+                    not resume_detected_this_slot
+                    and _should_refresh_telemetry_heartbeat(
+                        hardware_succeeded,
+                        context_lease_healthy,
+                        activity_lease_healthy,
+                    )
+                ):
+                    write_telemetry_heartbeat()
+
+                if activity_error is not None:
+                    raise activity_error
             except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as db_err:
                 print(f"[{datetime.datetime.now().strftime('%X')} 🚨 连接断开] 检测到连接异常: {db_err}")
+                await _cancel_and_reap_activity_task(activity_task)
+                activity_task = None
+                await _cancel_and_reap_maintenance_task(maintenance_task)
+                maintenance_task = None
+                warmup_last_success_wall = 0.0
+                warmup_retry_deadline_wall = now_wall + WARMUP_RETRY_INITIAL_SEC
+                warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
                 if pool:
                     # 【重连健壮性修复】PG 重启/掉线时连接已死，await pool.close() 会等待“未释放连接”
                     # 长达 60s+(实测刷屏 "Pool.close() is taking over 60 seconds")，把整个采集主循环卡死、
@@ -412,13 +845,30 @@ async def _run_collector():
             except Exception as loop_err:
                 print(f"⚠️ 并发遥测落库异动: {loop_err}")
                 
-            elapsed = asyncio.get_event_loop().time() - t0
-            wall_anchor = time.time()   # 进入节拍休眠前锚定墙钟；下一拍据此识别系统睡眠跨度
-            await asyncio.sleep(max(0.01, 3.0 - elapsed))
+            finished = loop.time()
+            next_telemetry_deadline = _advance_periodic_deadline(
+                next_telemetry_deadline,
+                TELEMETRY_INTERVAL_SEC,
+                finished,
+            )
+            if activity_due:
+                next_activity_deadline = _advance_periodic_deadline(
+                    next_activity_deadline,
+                    ACTIVITY_INTERVAL_SEC,
+                    finished,
+                )
+            wall_anchor, detected_at_slot_end = _observe_sleep_resume(
+                wall_anchor,
+                _handle_sleep_resume,
+            )
+            resume_detected_this_slot |= detected_at_slot_end
+            await asyncio.sleep(max(0.0, next_telemetry_deadline - loop.time()))
 
     except asyncio.CancelledError:
         print("[主控] 捕获终止信号，停机...")
     finally:
+        await _cancel_and_reap_activity_task(activity_task)
+        await _cancel_and_reap_maintenance_task(maintenance_task)
         lifecycle_worker.terminate()
         hardware_worker.terminate()
         if pool:

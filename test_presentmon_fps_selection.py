@@ -114,8 +114,27 @@ class PresentMonForegroundWiringTest(unittest.TestCase):
 
         self.assertEqual(1, len(calls))
         self.assertEqual(2, len(calls[0].args))
-        self.assertIsInstance(calls[0].args[1], ast.Attribute)
-        self.assertEqual("last_pid", calls[0].args[1].attr)
+        self.assertIsInstance(calls[0].args[1], ast.Name)
+        self.assertEqual("hardware_pid", calls[0].args[1].id)
+
+        identity_assignments = [
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and any(isinstance(target, ast.Tuple) for target in node.targets)
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and node.value.func.id == "_sample_current_foreground_identity"
+        ]
+        self.assertEqual(1, len(identity_assignments))
+        target_names = {
+            element.id
+            for target in identity_assignments[0].targets
+            for element in target.elts
+            if isinstance(element, ast.Name)
+        }
+        self.assertIn("hardware_pid", target_names)
+        self.assertLess(identity_assignments[0].lineno, calls[0].lineno)
 
 
 if __name__ == "__main__":

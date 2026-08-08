@@ -245,6 +245,49 @@ class ProcessLifecycleWorker:
         self.pool = None  
         self.pid_handles = {}
 
+    @staticmethod
+    def _instance_key(os_pid, create_time):
+        """Identify one process instance, not merely a reusable OS PID."""
+        return (int(os_pid), create_time)
+
+    def _event_instance_key(self, event):
+        key = event.get("instance_key")
+        if isinstance(key, (tuple, list)) and len(key) == 2:
+            return self._instance_key(key[0], key[1])
+        return self._instance_key(event["os_pid"], event.get("create_time"))
+
+    def _resolve_event_instance_key(self, event):
+        """Resolve an event key while accepting legacy PID-only test events."""
+        candidate = self._event_instance_key(event)
+        if (
+            candidate in self.shared_pid_key_map
+            or candidate in self.harvest_cache
+            or candidate in self.pid_start_time
+        ):
+            return candidate
+
+        # Older queued events and callers used a bare PID. Keep that format
+        # readable, but only fall back when the PID maps to one unambiguous
+        # instance. Explicit create_time/instance_key events never take this
+        # path, which is the protection against PID reuse.
+        pid = candidate[0]
+        if candidate[1] is None:
+            if pid in self.shared_pid_key_map or pid in self.harvest_cache:
+                return pid
+            candidates = {
+                key
+                for mapping in (
+                    self.shared_pid_key_map,
+                    self.harvest_cache,
+                    self.pid_start_time,
+                )
+                for key in mapping
+                if isinstance(key, tuple) and len(key) == 2 and key[0] == pid
+            }
+            if len(candidates) == 1:
+                return next(iter(candidates))
+        return candidate
+
     def update_pool(self, new_pool):
         self.pool = new_pool
 
@@ -289,8 +332,6 @@ class ProcessLifecycleWorker:
             }
 
     async def register_live_pid(self, conn, os_pid):
-        if os_pid in self.shared_pid_key_map: return self.shared_pid_key_map[os_pid]
-        
         try:
             proc = psutil.Process(os_pid)
             name = proc.name()
@@ -299,22 +340,32 @@ class ProcessLifecycleWorker:
         except Exception:
             return None
 
+        try:
+            create_time = proc.create_time()
+        except Exception:
+            create_time = None
+        instance_key = self._instance_key(os_pid, create_time)
+        if instance_key in self.shared_pid_key_map:
+            return self.shared_pid_key_map[instance_key]
+        # Keep compatibility with a caller that supplied the old PID-only map.
+        if create_time is None and os_pid in self.shared_pid_key_map:
+            return self.shared_pid_key_map[os_pid]
+
         metadata = await asyncio.to_thread(self.harvest_live_pid_metadata_sync, os_pid, name, exe)
         if not metadata: return None
         
-        try:
-            self.pid_start_time[os_pid] = proc.create_time()
-        except Exception:
-            self.pid_start_time[os_pid] = time.time()
+        self.pid_start_time[instance_key] = (
+            create_time if create_time is not None else time.time()
+        )
             
         h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, os_pid)
         if h_proc:
-            self.pid_handles[os_pid] = h_proc
+            self.pid_handles[instance_key] = h_proc
             
         p_key = await self._resolve_metadata_to_db(conn, os_pid, metadata)
         if p_key:
-            self.shared_pid_key_map[os_pid] = p_key
-            self.harvest_cache[os_pid] = metadata
+            self.shared_pid_key_map[instance_key] = p_key
+            self.harvest_cache[instance_key] = metadata
         return p_key
 
     async def _resolve_metadata_to_db(self, conn, os_pid, metadata):
@@ -386,17 +437,18 @@ class ProcessLifecycleWorker:
                     for pid, create_time in started_keys:
                         pinfo = current_snapshot[(pid, create_time)]
                         name = pinfo['name'] or "Unknown"
+                        instance_key = self._instance_key(pid, create_time)
                         try:
                             proc_obj = psutil.Process(pid)
                             exe = proc_obj.exe()
                         except Exception:
                             exe = unknown_executable_path(name)
 
-                        self.pid_start_time[pid] = create_time
+                        self.pid_start_time[instance_key] = create_time
 
                         h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
                         if h_proc:
-                            self.pid_handles[pid] = h_proc
+                            self.pid_handles[instance_key] = h_proc
 
                         metadata = self.harvest_live_pid_metadata_sync(pid, name, exe)
 
@@ -405,6 +457,8 @@ class ProcessLifecycleWorker:
                             {
                                 "type": "START",
                                 "os_pid": pid,
+                                "create_time": create_time,
+                                "instance_key": instance_key,
                                 "name": name,
                                 "exe": exe,
                                 "metadata": metadata,
@@ -413,11 +467,14 @@ class ProcessLifecycleWorker:
                         )
 
                     for pid, create_time in exited_keys:
-                        start_ts = self.pid_start_time.pop(pid, None) or create_time
+                        instance_key = self._instance_key(pid, create_time)
+                        start_ts = self.pid_start_time.pop(instance_key, None)
+                        if start_ts is None:
+                            start_ts = create_time
                         lifetime_sec = int(time.time() - start_ts) if start_ts else None
 
                         exit_code_str = "0x00000000"
-                        h_proc = self.pid_handles.pop(pid, None)
+                        h_proc = self.pid_handles.pop(instance_key, None)
                         if h_proc:
                             exit_code = wintypes.DWORD()
                             if kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)):
@@ -430,6 +487,8 @@ class ProcessLifecycleWorker:
                             {
                                 "type": "EXIT",
                                 "os_pid": pid,
+                                "create_time": create_time,
+                                "instance_key": instance_key,
                                 "lifetime_sec": lifetime_sec,
                                 "exit_code": exit_code_str,
                                 "timestamp": datetime.datetime.now(datetime.timezone.utc)
@@ -467,6 +526,7 @@ class ProcessLifecycleWorker:
         async with pool.acquire() as conn:
             if event["type"] == "START":
                 os_pid = event["os_pid"]
+                instance_key = self._resolve_event_instance_key(event)
                 
                 # 【修复】：兼容测试套件或脱机模拟中直接投递不带 metadata 结构的 START 测试事件的场景
                 metadata = event.get("metadata")
@@ -479,8 +539,8 @@ class ProcessLifecycleWorker:
                 
                 p_key = await self._resolve_metadata_to_db(conn, os_pid, metadata)
                 if p_key:
-                    self.shared_pid_key_map[os_pid] = p_key
-                    self.harvest_cache[os_pid] = metadata
+                    self.shared_pid_key_map[instance_key] = p_key
+                    self.harvest_cache[instance_key] = metadata
                     query_start = """
                         INSERT INTO public.fact_process_lifecycle_events 
                         (event_timestamp, process_key, os_pid, event_type, process_lifetime, exit_code)
@@ -494,9 +554,10 @@ class ProcessLifecycleWorker:
             
             elif event["type"] == "EXIT":
                 os_pid = event["os_pid"]
-                p_key = self.shared_pid_key_map.get(os_pid)
-                metadata = self.harvest_cache.pop(os_pid, None)
-                self.shared_pid_key_map.pop(os_pid, None)
+                instance_key = self._resolve_event_instance_key(event)
+                p_key = self.shared_pid_key_map.get(instance_key)
+                metadata = self.harvest_cache.pop(instance_key, None)
+                self.shared_pid_key_map.pop(instance_key, None)
                 
                 if not metadata:
                     metadata = {

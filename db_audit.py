@@ -76,7 +76,7 @@ async def run():
     print(f"  总记录数: {hw_count}")
     
     if hw_count > 0:
-        # 2a. 检查时间间隔是否稳定 (~3秒)
+        # 2a. 检查时间间隔是否稳定 (~1秒)
         print("\n  [2a] 采集间隔分析 (最新10个):")
         ts_rows = await conn.fetch("""
             SELECT timestamp FROM public.fact_system_hardware 
@@ -86,8 +86,8 @@ async def run():
         interval_issues = 0
         for i in range(len(timestamps)-1):
             diff = (timestamps[i] - timestamps[i+1]).total_seconds()
-            status = "✅" if 1 <= diff <= 10 else "❌ 异常"
-            if diff > 10 or diff < 1:
+            status = "✅" if 0.5 <= diff <= 2.5 else "❌ 异常"
+            if diff > 2.5 or diff < 0.5:
                 interval_issues += 1
             print(f"    {diff:.1f}s {status}")
         
@@ -512,9 +512,13 @@ async def run():
                 ) x) as overlap_count
         """)
         print(f"\n  时间戳重合度: hw={overlap['hw_ts_count']} act={overlap['act_ts_count']} 重合={overlap['overlap_count']}")
-        if overlap['hw_ts_count'] > 0:
-            pct = overlap['overlap_count'] / overlap['hw_ts_count'] * 100
-            print(f"    重合率: {pct:.1f}% {'✅' if pct > 80 else '⚠️ 活动表与硬件表时间戳不对齐'}")
+        if overlap['act_ts_count'] > 0:
+            # Hardware is sampled every second while process activity is sampled
+            # every three seconds. The invariant is therefore "every activity
+            # batch has a matching hardware row", not the reverse.
+            pct = overlap['overlap_count'] / overlap['act_ts_count'] * 100
+            exact_match = overlap['overlap_count'] == overlap['act_ts_count']
+            print(f"    活动批次匹配硬件行: {pct:.1f}% {'✅' if exact_match else '⚠️ 活动表与硬件表时间戳不对齐'}")
     
     # ============================================================
     # 8. 分区表健康

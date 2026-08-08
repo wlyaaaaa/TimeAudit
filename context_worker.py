@@ -50,11 +50,17 @@ class WindowStateTracker:
     def __init__(self):
         self.last_pid = None
         self.last_title = None
+        self.last_hwnd = None
         self.last_start_time = None
         self.active_slice = None
         self.pending_inserts = []
         self.pending_updates = []
         self.last_pid_key_map = {}
+        # Keep the shared PID -> process_key cache shape intact for the
+        # lifecycle worker.  This private companion cache is the proof that a
+        # key belongs to the currently harvested process identity, rather than
+        # merely to a PID that Windows may have reused.
+        self._last_pid_identity_map = {}
 
     @property
     def last_process_key(self):
@@ -86,6 +92,10 @@ class WindowStateTracker:
             executable_path = proc.exe()
             command_line = " ".join(proc.cmdline()) if proc.cmdline() else ""
             command_line = sanitize_command_line(process_name, command_line)
+            try:
+                process_create_time = proc.create_time()
+            except Exception:
+                process_create_time = None
             
             parent_process = None
             try:
@@ -110,7 +120,8 @@ class WindowStateTracker:
             return {
                 "process_name": process_name, "executable_path": executable_path,
                 "parent_process": parent_process, "command_line": command_line,
-                "service_name": service_name, "is_elevated": is_elevated, "signature_status": signature_status
+                "service_name": service_name, "is_elevated": is_elevated, "signature_status": signature_status,
+                "process_create_time": process_create_time
             }
         except Exception: pass
 
@@ -127,7 +138,8 @@ class WindowStateTracker:
                         return {
                             "process_name": proc_name, "executable_path": full_path,
                             "parent_process": None, "command_line": "", "service_name": None,
-                            "is_elevated": -1, "signature_status": sig_status
+                            "is_elevated": -1, "signature_status": sig_status,
+                            "process_create_time": None
                         }
                 finally:
                     kernel32.CloseHandle(handle)
@@ -137,8 +149,28 @@ class WindowStateTracker:
             "process_name": "Unknown_Protected_Process",
             "executable_path": unknown_executable_path("Unknown.exe"),
             "parent_process": None, "command_line": "", "service_name": None,
-            "is_elevated": -1, "signature_status": 0
+            "is_elevated": -1, "signature_status": 0,
+            "process_create_time": None
         }
+
+    @staticmethod
+    def _metadata_identity(metadata):
+        if not metadata:
+            return None
+
+        # create_time distinguishes two process instances that reused a PID;
+        # the registry fields keep the fallback safe when create_time cannot be
+        # read and mirror the database's process-key identity.
+        return (
+            metadata.get("process_create_time"),
+            metadata.get("process_name"),
+            metadata.get("executable_path"),
+            metadata.get("parent_process"),
+            metadata.get("command_line"),
+            metadata.get("service_name"),
+            metadata.get("is_elevated", 0),
+            metadata.get("signature_status", 0),
+        )
 
     async def get_or_register_metadata_slow(self, conn, metadata):
         if not metadata:
@@ -188,19 +220,26 @@ class WindowStateTracker:
             self.active_slice = None
         self.last_pid = None
         self.last_title = None
+        self.last_hwnd = None
         self.last_start_time = None
 
     async def poll_heartbeat(self, pool, timestamp=None):
         fast_info = self.check_foreground_window_fast()
-        if not fast_info: return
+        if not fast_info:
+            return not self.pending_inserts and not self.pending_updates
 
-        if (fast_info["os_pid"] == self.last_pid and 
-            fast_info["window_title"] == self.last_title and 
+        if (fast_info["os_pid"] == self.last_pid and
+            fast_info["window_title"] == self.last_title and
+            fast_info["hwnd"] == self.last_hwnd and
             not self.pending_inserts and 
             not self.pending_updates):
-            return
+            return True
 
-        if fast_info["os_pid"] != self.last_pid or fast_info["window_title"] != self.last_title:
+        if (
+            fast_info["os_pid"] != self.last_pid
+            or fast_info["window_title"] != self.last_title
+            or fast_info["hwnd"] != self.last_hwnd
+        ):
             now = timestamp if timestamp is not None else datetime.datetime.now(datetime.timezone.utc)
             
             if self.active_slice:
@@ -218,11 +257,21 @@ class WindowStateTracker:
                 self.active_slice = None
 
             metadata = await asyncio.to_thread(self.harvest_process_metadata, fast_info["os_pid"])
+            process_identity = self._metadata_identity(metadata)
+            process_key = None
+            if (
+                fast_info["os_pid"] == self.last_pid
+                and process_identity is not None
+                and self._last_pid_identity_map.get(fast_info["os_pid"]) == process_identity
+            ):
+                process_key = self.last_pid_key_map.get(fast_info["os_pid"])
             
             self.active_slice = {
                 "timestamp": now, "os_pid": fast_info["os_pid"],
+                "hwnd": fast_info["hwnd"],
                 "window_title": fast_info["window_title"], "window_mode": fast_info["window_mode"],
-                "metadata": metadata, "process_key": self.last_pid_key_map.get(fast_info["os_pid"])
+                "metadata": metadata, "process_identity": process_identity,
+                "process_key": process_key
             }
             self.pending_inserts.append(self.active_slice)
             
@@ -230,9 +279,11 @@ class WindowStateTracker:
             
             self.last_pid = fast_info["os_pid"]
             self.last_title = fast_info["window_title"]
+            self.last_hwnd = fast_info["hwnd"]
             self.last_start_time = now
 
         if self.pending_inserts or self.pending_updates:
+            staged_process_keys = []
             try:
                 successful_inserts = []
                 successful_updates = []
@@ -244,11 +295,7 @@ class WindowStateTracker:
                                 p_key = await self.get_or_register_metadata_slow(conn, item["metadata"])
                                 if p_key:
                                     item["process_key"] = p_key
-                                    self.last_pid_key_map[item["os_pid"]] = p_key
-                                    if (self.active_slice and 
-                                        self.active_slice["timestamp"] == item.get("timestamp") and 
-                                        self.active_slice["os_pid"] == item.get("os_pid")):
-                                        self.active_slice["process_key"] = p_key
+                                    staged_process_keys.append(item)
 
                         for item in self.pending_inserts:
                             if item.get("process_key"):
@@ -275,7 +322,20 @@ class WindowStateTracker:
                                 """
                                 await conn.execute(query, item["end_timestamp"], item["duration_ms"], item["timestamp"], item["process_key"], item["os_pid"])
                                 successful_updates.append(item)
-                
+
+                # A registry key created inside the transaction does not exist if
+                # a later context insert rolls the transaction back. Publish keys
+                # to in-memory caches only after the transaction commits.
+                for item in staged_process_keys:
+                    p_key = item["process_key"]
+                    self.last_pid_key_map[item["os_pid"]] = p_key
+                    self._last_pid_identity_map[item["os_pid"]] = item.get(
+                        "process_identity",
+                        self._metadata_identity(item.get("metadata")),
+                    )
+                    if self.active_slice is item:
+                        self.active_slice["process_key"] = p_key
+
                 for item in successful_inserts:
                     if item in self.pending_inserts:
                         self.pending_inserts.remove(item)
@@ -283,5 +343,12 @@ class WindowStateTracker:
                     if item in self.pending_updates:
                         self.pending_updates.remove(item)
                         
-            except Exception as e:
-                print(f"⚠️ [🖥️ 状态机] 数仓写入挂起: {e}")
+            except Exception:
+                for item in staged_process_keys:
+                    item["process_key"] = None
+                # Keep the health signal payload-free: exception text from a DB
+                # adapter can contain query arguments, including window metadata.
+                print("⚠️ [🖥️ 状态机] 数仓写入挂起。")
+                return False
+
+        return not self.pending_inserts and not self.pending_updates

@@ -1,3 +1,4 @@
+import ast
 import json
 import re
 import runpy
@@ -63,13 +64,40 @@ def test_heartbeat_is_written_atomically(tmp_path):
 
 def test_main_updates_heartbeat_and_releases_singleton_mutex():
     source = (ROOT / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    collector = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "_run_collector"
+    )
 
-    assert "write_telemetry_heartbeat()" in source
     assert "CloseHandle(_singleton_mutex)" in source
-    gather_position = source.index("await asyncio.gather(")
-    heartbeat_position = source.index("write_telemetry_heartbeat()", gather_position)
-    assert gather_position < heartbeat_position
     assert "async def _run_collector():" in source
+
+    heartbeat_calls = [
+        node
+        for node in ast.walk(collector)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "write_telemetry_heartbeat"
+    ]
+    assert len(heartbeat_calls) == 1
+
+    parents = {}
+    for node in ast.walk(collector):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    current = heartbeat_calls[0]
+    while current in parents and not isinstance(current, ast.If):
+        current = parents[current]
+    assert isinstance(current, ast.If)
+    assert any(
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "_should_refresh_telemetry_heartbeat"
+        for node in ast.walk(current.test)
+    )
 
 
 def test_watchdog_checks_exact_script_heartbeat_with_resume_grace():

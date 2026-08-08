@@ -132,14 +132,16 @@ class TelemetryEngineTestSuite(unittest.TestCase):
 
             print(f" 📊  性能耗时反馈 -> 平均: {avg_lat:.2f}ms | 中位: {median_lat:.2f}ms | P95: {p95_lat:.2f}ms | 最差: {worst_lat:.2f}ms")
 
-            # 以"中位拍"作为可持续吞吐 SLA：引擎实际以 3s 节拍运行。中位阈值定为 1500ms(节拍的一半)——
+            # 以"中位拍"作为 activity 慢车道的可持续吞吐 SLA：硬件/FPS/context 为独立 1Hz 快车道，
+            # 昂贵的每进程采集保持锚定 3s。中位阈值定为 1500ms(慢车道周期的一半)——
             # Windows 上对数百进程(含不断新生的瞬时 cmd/conhost 等)采集身份时，psutil.cmdline() 对启动中/
             # 受保护进程会触发 ERROR_PARTIAL_COPY 内部重试 sleep，这是固有成本(cProfile 实证)，500ms 不现实。
-            # 生产中 collect 已由 main.py 放入 to_thread 执行、绝不阻塞事件循环；另设"最差拍 < 3s 节拍上限"
-            # 硬约束防止真实退化。父进程名已改用快照 pid→name 映射，消除了旧的 ppid_map 全枚举热点。
+            # 生产中 collect 已由 main.py 放入单飞后台 lane；慢拍不会阻塞 1Hz 快车道，也不会重叠积压。
+            # 另设"最差拍 < 3s 慢车道周期"硬约束防止真实退化。父进程名已改用快照 pid→name 映射，
+            # 消除了旧的 ppid_map 全枚举热点。
             self.assertLess(median_lat, 1500.0, "性能超限：稳态中位单轮遥测耗时过长，无法支撑稳定遥测节拍。")
             self.assertLess(worst_lat, 3000.0, "性能严重退化：单轮遥测耗时逼近/超过 3s 采集节拍上限。")
-            print(" ✅  性能测试达标！稳态中位采样延迟在 3s 节拍预算内且不阻塞事件循环。")
+            print(" ✅  性能测试达标！进程采集在 3s 慢车道预算内且不阻塞 1Hz 快车道。")
         finally:
             if activity_worker is not None:
                 activity_worker.terminate()

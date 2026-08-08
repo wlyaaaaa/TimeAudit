@@ -156,7 +156,8 @@ CREATE INDEX IF NOT EXISTS idx_lifecycle_lookup
     ON public.fact_process_lifecycle_events (process_key, event_type, os_pid);
 
 -- ===================== 5. 系统硬件性能事实表（按月分区）===================
--- 每 3 秒一拍的整机硬件画像：FPS/帧时间、CPU/GPU 温度功耗电压时钟、内存、磁盘延迟、网络 Ping。
+-- 调度目标每 1 秒一拍的整机硬件画像；部分慢传感器复用最近有效缓存。
+-- 字段包括 FPS/帧时间、CPU/GPU 温度功耗电压时钟、内存、磁盘延迟、网络 Ping。
 CREATE TABLE IF NOT EXISTS public.fact_system_hardware (
     timestamp               timestamp with time zone NOT NULL PRIMARY KEY,
     current_fps             real,

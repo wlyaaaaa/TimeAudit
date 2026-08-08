@@ -1,6 +1,6 @@
 # TimeAudit — 你这台 Windows 电脑的"黑匣子"
 
-> 一个 7×24 小时在后台默默运行的个人遥测系统：每 3 秒给你的电脑拍一张"全身 X 光"，
+> 一个 7×24 小时在后台默默运行的个人遥测系统：每 1 秒记录整机硬件与游戏帧率、每 3 秒清点活跃进程，
 > 把"哪个窗口在用、每个进程吃了多少 CPU/显卡/内存/硬盘/网络、整机温度功耗帧率、
 > 哪个进程刚出生/刚崩溃"全部记进数据库，然后用网页大盘（Grafana）回放出来。
 
@@ -68,7 +68,7 @@
                   （你在这里看图）
 ```
 
-一句话总结：**采集端（Python）每 3 秒采一拍 → 直接写进 Docker 里的 PostgreSQL → 你用浏览器开 Grafana 看图。**
+一句话总结：**采集端（Python）用 1 秒硬件/FPS 快车道 + 3 秒进程慢车道采集 → 直接写进 Docker 里的 PostgreSQL → 你用浏览器开 Grafana 看图。**
 
 ---
 
@@ -90,11 +90,12 @@
 
 ## 4. 采集端：5 个 worker 各管一摊
 
-主程序 `main.py` 是"总指挥"：它建数据库连接池、把 4 个采集 worker 拉起来，然后进入一个**每 3 秒一拍**的主循环，
-每拍让各 worker 采一次数据并批量写库。下面逐个说人话。
+主程序 `main.py` 是"总指挥"：它建数据库连接池、把 4 个采集 worker 拉起来，然后进入**双节拍调度**：
+整机硬件/FPS/前台心跳每 1 秒一拍，昂贵的全进程扫描单飞且每 3 秒一拍。下面逐个说人话。
 
 ### `main.py` — 总调度 + 守护外壳
-- 每 3 秒一拍驱动所有采集。
+- 每 1 秒驱动硬件、FPS 与前台心跳；每 3 秒驱动全进程资源扫描。慢车道单飞运行，尚未完成时只跳过后续慢车道档位，不排队也不拖住快车道；健康租约超期后停止刷新总心跳，交给外部看门狗恢复。
+- “每秒落一行”表示采样与写库节拍，不表示每个底层传感器都具有原生 1 Hz 新值；LHM/WMI 等较慢来源会安全复用其最近一次有效缓存。Grafana 为控制长时间范围查询成本，仍可把原始 1 秒数据聚合成更大的时间桶。
 - **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
 - **崩溃自愈（两层，注意盲区）**：① 主循环抛 **Python 异常**时，外层 `while True` 等 5 秒重启它；② 但若进程被 **native 崩溃**整个带走（实测 2026-06-22：psutil 的 `_psutil_windows.pyd` 触发 `0xc0000005` 访问冲突，整个 `pythonw` 段错误退出），外层 `while` 也一起死、**兜不住**——曾因此静默停摆 17 小时。这种由下面的「外部进程守护」兜底。
 - **外部进程守护**（补 native 崩溃和“进程活着但采集卡死”盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 1 分钟 + 登录触发、提权、任务失败最多重试 3 次）**独立于引擎**运行。`main.py`、`TimeAudit.ahk` 和 `audit-ingester` 都写无 payload heartbeat；watchdog 先给睡眠恢复留出宽限，再按精确进程/容器身份分别恢复。进程只是 Running 但消息循环或入库循环已经卡死，也会因 heartbeat 陈旧被识别。任务定义由 PCConfig 的 `Install-TimeAuditRuntimeWatchdog.ps1` 恢复，日志见 `telemetry_watchdog.log`。
@@ -140,7 +141,7 @@
 | `dim_process_registry` | 维度表 | 每个"独一无二的程序身份"一行：进程名+路径+命令行+父进程+是否提权+签名状态。事实表用整数 `process_key` 指向它，省空间。 | 不分区 |
 | `fact_process_activity` | 事实表 | 每 3 秒 × 每个活跃进程一行：CPU/GPU/内存/显存/磁盘/网络/线程数等。 | 按**周** |
 | `fact_process_context` | 事实表 | 前台窗口会话：哪个窗口、标题、`duration_ms`（聚焦多久）。 | 按**周** |
-| `fact_system_hardware` | 事实表 | 每 3 秒一行整机硬件画像：FPS、CPU/GPU 温度功耗电压时钟、内存、磁盘延迟、Ping。 | 按**月** |
+| `fact_system_hardware` | 事实表 | 每 1 秒一行整机硬件画像：FPS、CPU/GPU 温度功耗电压时钟、内存、磁盘延迟、Ping。 | 按**月** |
 | `fact_process_lifecycle_events` | 事实表 | 进程 START/EXIT 离散事件 + 退出码 + 存活秒数。 | 不分区 |
 | `app_usage_logs` | 旧版表 | 管线 A（AHK→CSV）的简版前台工时。 | 不分区 |
 
@@ -214,7 +215,7 @@
 
 11. **进程差分扫描器的快照推进放在 `finally` 里**：即使处理某个进程时抛异常，也保证基线快照前进，不会把同一个 START/EXIT 事件重复投递。
 
-12. **PG 掉线重连别用裸 `await pool.close()`。** 连接已死时它会等待"未释放连接"挂起 60s+（实测刷屏 `Pool.close() is taking over 60 seconds`），把整个 3 秒主循环卡死、停止写库。`main.py` 已改为 `asyncio.wait_for(pool.close(), 5s)` 超时 + 失败回退 `pool.terminate()` 强制拔线，PG 重启后秒级自愈。改重连逻辑时别把这个保护去掉。
+12. **PG 掉线重连别用裸 `await pool.close()`。** 连接已死时它会等待"未释放连接"挂起 60s+（实测刷屏 `Pool.close() is taking over 60 seconds`），把采集调度卡死、停止写库。`main.py` 已改为 `asyncio.wait_for(pool.close(), 5s)` 超时 + 失败回退 `pool.terminate()` 强制拔线，PG 重启后秒级自愈。改重连逻辑时别把这个保护去掉。
 
 13. **`is_not_responding` 用 `IsHungAppWindow`（任务管理器同源）判定，不是 `psutil.STATUS_STOPPED`。** 后者是 Unix 概念、Windows 上几乎永不为真（曾导致该字段恒为 0）。现由 `activity_worker._scan_hung_pids()` 每拍 `EnumWindows` 标记消息泵卡死(>5s)的窗口属主 PID，采集时 O(1) 查表。注意它必须跑在**用户交互会话**里（EnumWindows 才看得到用户窗口），所以引擎不能用 SYSTEM 账户跑。
 
@@ -295,7 +296,9 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 > `G:\80_Backup\TimeAudit\grafana_db`；仪表盘从本机 SQLite 一致快照只读导出，无需无人值守口令，
 > JSON 仍在仓库内自动 commit + push。即使
 > JSON 无变化也会检查 upstream 和遗留的本地 ahead commit；远端领先/分叉会阻断，
-> push 后必须回读确认远端 OID 等于本地 `HEAD`，否则任务返回失败。详见[快速部署.md](快速部署.md)。
+> push 后必须回读确认远端 OID 等于本地 `HEAD`，否则任务返回失败。导出前后还会锁定并复核
+> `grafana_dashboards/`：存在人工未提交修改、运行实例版本落后于仓库，或同版本内容分叉时都会失败关闭，
+> 不会静默覆盖修复或把无关文件带入提交。详见[快速部署.md](快速部署.md)。
 
 **看大盘**：浏览器开 `http://localhost:53000`。
 
@@ -308,13 +311,13 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 如果要系统审计 TimeAudit，不建议只做普通代码走读。它的风险主要在“长期 7×24 写入 + Windows 本机权限 + 时序数据口径 + Grafana SQL”这几个交叉点。推荐按下面几条线推进：
 
 1. **采集链路与自愈审计**
-   重点看 `main.py` 的 3 秒主循环、`TimeAudit.ahk`、`audit-ingester`、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明三个主链组件任一死亡或假活后能恢复，唯一 spool 不丢不覆盖，数据库重试不会重复写库。入口脚本：`python -m pytest -q test_ingest_resilience.py test_runtime_hardening.py` 和 `python E:\Projects\Tools\TimeAudit\test_telemetry_health.py`，再对照无 payload heartbeat 与 `telemetry_watchdog.log`。
+   重点看 `main.py` 的 1 秒快车道 / 3 秒慢车道、`TimeAudit.ahk`、`audit-ingester`、`telemetry_watchdog.ps1`、`start_all.bat`、计划任务提权方式，以及 LHM/PresentMon 看门狗。目标是证明三个主链组件任一死亡或假活后能恢复，唯一 spool 不丢不覆盖，数据库重试不会重复写库。入口脚本：`python -m pytest -q test_ingest_resilience.py test_runtime_hardening.py` 和 `python E:\Projects\Tools\TimeAudit\test_telemetry_health.py`，再对照无 payload heartbeat 与 `telemetry_watchdog.log`。
 
 2. **数据正确性与时序边界审计**
    重点看睡眠/唤醒、锁屏、系统时间回拨、跨周/月分区边界、前台会话闭合、`duration_ms` 是否为负、硬件数值是否物理越界。入口脚本：`python E:\Projects\Tools\TimeAudit\db_audit.py`。这里尤其要盯 `time.time()` 与 `time.monotonic()` 的分工，别把“落库时间戳”和“速率差分分母”混在一起。
 
 3. **数据库分区、索引与 Grafana SQL 审计**
-   重点看 `schema.sql`、`auto_warmup_partitions()`、`auto_retention_cleanup()`、`docker-compose.yml` 的 PG 参数，以及 `grafana_dashboards/*.json` 里的 SQL。目标是确认所有面板都有时间条件下推、能触发分区裁剪，且新增索引不会把每 3 秒写入成本放大太多。入口脚本：`python E:\Projects\Tools\TimeAudit\test_sql_partition_explain.py`，必要时进库手动 `EXPLAIN (ANALYZE, BUFFERS)`。
+   重点看 `schema.sql`、`auto_warmup_partitions()`、`auto_retention_cleanup()`、`docker-compose.yml` 的 PG 参数，以及 `grafana_dashboards/*.json` 里的 SQL。目标是确认所有面板都有时间条件下推、能触发分区裁剪，且新增索引不会放大 1 秒硬件写入与 3 秒进程批量写入的成本。入口脚本：`python E:\Projects\Tools\TimeAudit\test_sql_partition_explain.py`，必要时进库手动 `EXPLAIN (ANALYZE, BUFFERS)`。
 
 4. **取证与安全口径审计**
    重点看 `dim_process_registry`、`fact_process_lifecycle_events`、签名校验、提权状态、系统进程仿冒、LOLBins、高危端口和敏感窗口期后台活动。目标不是“拦截恶意软件”，而是确认数据足够可靠，能在事后还原：谁启动、从哪启动、是否签名、是否管理员、何时退出、退出码是什么。采集端拿不到真实路径时必须写成 `<unknown>\进程名`，不能伪造成 `C:\Windows\System32\...`；回归入口：`python E:\Projects\Tools\TimeAudit\test_lifecycle_unknown_path.py`。
@@ -330,7 +333,7 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 
 ```
 E:\Projects\Tools\TimeAudit\
-├── main.py                  总调度 + 3 秒主循环 + 睡眠/分区/自愈
+├── main.py                  总调度 + 1 秒快车道 / 3 秒慢车道 + 睡眠/分区/自愈
 ├── context_worker.py        前台窗口上下文舱 → fact_process_context
 ├── activity_worker.py       活跃进程舱 → fact_process_activity (+ dim_process_registry)
 ├── hardware_worker.py       整机硬件舱 → fact_system_hardware
@@ -382,7 +385,7 @@ E:\Projects\Tools\TimeAudit\
 1. **先读第 7 节"关键设计 & 坑"**，那里是历史血泪，照着它就不会把修好的 bug 改回去。
 2. **改完代码先跑三件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_optimizations.py`（应 14/14 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。改 Grafana SQL 或数据库口径时，额外跑 `python db_audit.py` 和 `python test_sql_partition_explain.py`。
 3. **跑测试要用 UTF-8**：默认 GBK 控制台会因日志里的 emoji 崩；套件已自愈 stdout，但你手动跑别的脚本时记得 `PYTHONUTF8=1`。
-4. **这是写密集时序库**：每 3 秒几十行写入。加索引、改表结构前先想清楚写放大代价。
+4. **这是写密集时序库**：硬件表每秒一行，进程表每 3 秒批量写入几十行。加索引、改表结构前先想清楚写放大代价。
 5. **本机就是目标机**（RTX 5090 D + 9950X3D，PostgreSQL 跑在 55432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
 6. **测试里 mock NVML 时，假句柄(MagicMock)千万别传给真实 NVML 函数**——会在 C 层访问违例直接把进程干崩（try/except 拦不住）。所有 NVML 函数名都要 mock 到位。
 

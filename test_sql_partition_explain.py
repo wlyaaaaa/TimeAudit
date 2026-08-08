@@ -5,7 +5,7 @@ TimeAudit 大盘 SQL 分区剪裁与执行计划自动回归测试
 背景：为了支撑 3 年及更久的海量数据高频写入与低延迟检索，各大盘 SQL 必须能够正确触发
 PostgreSQL 的“分区剪裁 (Partition Pruning)”，只扫描当前周/当前月分区，避免全分区扫描。
 本测试程序自动扫描 grafana_dashboards/ 目录下的所有 JSON 文件，提取全部 SQL 查询，
-在本地 Postgres 数据库上执行 EXPLAIN，并根据当前北京时间 ISO 周数/月份断言：
+在本地 Postgres 数据库上执行有界 EXPLAIN ANALYZE，并根据当前北京时间 ISO 周数/月份断言：
   1. 过去 1 小时时间段的查询中，fact_process_activity / fact_process_context 只会扫描本周的分区。
   2. fact_system_hardware 只会扫描本月的分区。
   3. 不能有任何非当前活跃分区的多余扫描，验证分区剪裁 100% 生效！
@@ -66,6 +66,23 @@ def allowed_hardware_month_suffixes(test_sql):
         start_dt = now_cn - datetime.timedelta(days=int(match.group(1)))
         return month_suffixes_between(start_dt, now_cn)
     return [current_month_suffix]
+
+
+def collect_executed_partition_suffixes(plan_root, relation_prefix, suffix_pattern):
+    """只返回执行器真正访问过的叶子分区，忽略 runtime pruning 的零循环节点。"""
+    executed = []
+
+    def visit(node):
+        relation_name = str(node.get("Relation Name", ""))
+        if relation_name.startswith(relation_prefix) and float(node.get("Actual Loops", 0) or 0) > 0:
+            match = re.fullmatch(re.escape(relation_prefix) + suffix_pattern, relation_name, flags=re.IGNORECASE)
+            if match:
+                executed.append(match.group(1).lower())
+        for child in node.get("Plans", []):
+            visit(child)
+
+    visit(plan_root)
+    return executed
 
 
 print("=" * 60)
@@ -164,6 +181,7 @@ def clean_grafana_macros(raw_sql):
 
 async def run_explain_tests(sql_list):
     conn = await asyncpg.connect(DB_DSN)
+    await conn.execute("SET statement_timeout = '30s'")
     failed_count = 0
     passed_count = 0
     
@@ -177,19 +195,24 @@ async def run_explain_tests(sql_list):
             test_sql = clean_grafana_macros(raw_sql)
             
             # 构建 EXPLAIN
-            explain_query = f"EXPLAIN {test_sql}"
+            explain_query = f"EXPLAIN (ANALYZE, FORMAT JSON, TIMING OFF, BUFFERS OFF, SUMMARY OFF) {test_sql}"
             
             try:
                 # 执行 EXPLAIN 获取计划计划文本
-                plan_rows = await conn.fetch(explain_query)
-                plan_text = "\n".join([r[0] for r in plan_rows])
+                plan_payload = await conn.fetchval(explain_query)
+                if isinstance(plan_payload, str):
+                    plan_payload = json.loads(plan_payload)
+                plan_root = plan_payload[0]["Plan"]
                 
                 # 检查分区剪裁 (Pruning)
                 pruning_errors = []
                 
                 # 1. 活跃进程表 (周分区)
-                # 使用 on 后缀匹配防止匹配到被截断的索引名称
-                activity_matches = re.findall(r'on\s+(?:public\.)?fact_process_activity_(y\d{4}w\d{2})(?:\b|_)', plan_text, flags=re.IGNORECASE)
+                activity_matches = collect_executed_partition_suffixes(
+                    plan_root,
+                    "fact_process_activity_",
+                    r"(y\d{4}w\d{2})",
+                )
                 if activity_matches:
                     for suffix in activity_matches:
                         allowed = [current_week_suffix]
@@ -199,7 +222,11 @@ async def run_explain_tests(sql_list):
                             pruning_errors.append(f"扫描了非活跃范围分区: fact_process_activity_{suffix} (允许范围: {allowed})")
                 
                 # 2. 前台上下文表 (周分区)
-                context_matches = re.findall(r'on\s+(?:public\.)?fact_process_context_(y\d{4}w\d{2})(?:\b|_)', plan_text, flags=re.IGNORECASE)
+                context_matches = collect_executed_partition_suffixes(
+                    plan_root,
+                    "fact_process_context_",
+                    r"(y\d{4}w\d{2})",
+                )
                 if context_matches:
                     for suffix in context_matches:
                         allowed = [current_week_suffix]
@@ -210,7 +237,11 @@ async def run_explain_tests(sql_list):
 
                             
                 # 3. 整机硬件能效表 (月分区)
-                hardware_matches = re.findall(r'on\s+(?:public\.)?fact_system_hardware_(y\d{4}m\d{2})(?:\b|_)', plan_text, flags=re.IGNORECASE)
+                hardware_matches = collect_executed_partition_suffixes(
+                    plan_root,
+                    "fact_system_hardware_",
+                    r"(y\d{4}m\d{2})",
+                )
                 if hardware_matches:
                     allowed = allowed_hardware_month_suffixes(test_sql)
                     for suffix in hardware_matches:
