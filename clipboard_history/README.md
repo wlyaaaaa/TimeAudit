@@ -23,6 +23,9 @@
 - `backup.py`：SQLite Online Backup、一致性验证和空目录恢复；
 - `smoke_test.py`：只输出 marker SHA-256/计数的真机回环测试。
 
+查看器的时间列和日期筛选统一使用固定中国标准时间（UTC+8），数据库与跨 owner
+适配器仍保留规范 UTC 时间戳。
+
 当前约定的普通入口名称是 `PersonalOS 剪贴板历史`。活动库属于 E 盘持久数据层，G 盘只做近线恢复副本，查询不依赖 G。
 
 ## 验证

@@ -18,6 +18,7 @@ from clipboard_history.win32_clipboard import restore_text
 
 
 PAGE_SIZE = 50
+CHINA_TZ = timezone(timedelta(hours=8), name="UTC+08:00")
 
 
 def _date_bound(value: str, *, end: bool) -> str | None:
@@ -26,13 +27,13 @@ def _date_bound(value: str, *, end: bool) -> str | None:
     local_date = date.fromisoformat(value.strip())
     if end:
         local_date += timedelta(days=1)
-    local = datetime.combine(local_date, datetime_time.min).astimezone()
-    return local.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    china = datetime.combine(local_date, datetime_time.min, tzinfo=CHINA_TZ)
+    return china.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
 def _display_time(value: str) -> str:
     parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
-    return parsed.astimezone().strftime("%Y-%m-%d %H:%M:%S")
+    return parsed.astimezone(CHINA_TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 
 class HistoryViewer(tk.Tk):
@@ -101,7 +102,7 @@ class HistoryViewer(tk.Tk):
         self.tree = ttk.Treeview(
             list_frame, columns=columns, show="headings", selectmode="browse"
         )
-        self.tree.heading("time", text="时间（本机）")
+        self.tree.heading("time", text="时间（UTC+8）")
         self.tree.heading("type", text="类型")
         self.tree.heading("kind", text="来源")
         self.tree.heading("preview", text="内容预览")
