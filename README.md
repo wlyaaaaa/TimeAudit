@@ -179,7 +179,7 @@
 
 **容器时区锁定为 `Asia/Shanghai`**（compose `command:` 里的 `-c timezone=Asia/Shanghai`）。这是功耗大盘"今日/本周/本月"统计正确的前提——这些面板用 `date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai')` 当边界，若会话时区是 UTC，边界会整体偏移 8 小时（"今日能耗"会从早上 8 点才开始算）。**别删这行**，否则 `docker compose up -d` 重建后时区 bug 复现。
 
-> ⚠️ 所有仪表盘统一引用 Grafana 13 已实测稳定的内置 PostgreSQL 数据源 `P7A9DAD60F8AB4C18`。provisioning 还会注入同库的 `PostgreSQL` 作为恢复入口；旧 `bfoc1vymtgni8a` 只作为现有本机配置记录保留。它曾在查询取消/页面导航竞态下把错误误映射为 `plugin.notRegistered`，仪表盘不得再次引用它。
+> ⚠️ 所有仪表盘统一引用 Grafana 13 已实测稳定的内置 PostgreSQL 数据源 `P7A9DAD60F8AB4C18`，provisioning 也用这个固定 UID 注入 `TimeAudit-PostgreSQL`，保证新机 JSON 恢复不会指向不存在的数据源。旧 `bfoc1vymtgni8a` 只作为现有本机配置记录保留；它曾在查询取消/页面导航竞态下把错误误映射为 `plugin.notRegistered`，现行备份与恢复入口都会拒绝再次引入它。
 
 ---
 
@@ -298,7 +298,9 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 > JSON 无变化也会检查 upstream 和遗留的本地 ahead commit；远端领先/分叉会阻断，
 > push 后必须回读确认远端 OID 等于本地 `HEAD`，否则任务返回失败。导出前后还会锁定并复核
 > `grafana_dashboards/`：存在人工未提交修改、运行实例版本落后于仓库，或同版本内容分叉时都会失败关闭，
-> 不会静默覆盖修复或把无关文件带入提交。详见[快速部署.md](快速部署.md)。
+> 不会静默覆盖修复或把无关文件带入提交。备份写出和 JSON 恢复共用同一 fail-closed 合同：只接受固定
+> recovery datasource UID 和完整 `matcher.id`；恢复入口只发现扩展名精确为 `.json` 的现行快照，仓库中保留的
+> 历史 `.json.bak` 不会被自动或 `--file` 手工导入。详见[快速部署.md](快速部署.md)。
 
 **看大盘**：浏览器开 `http://localhost:53000`。
 
@@ -371,7 +373,7 @@ E:\Projects\Tools\TimeAudit\
 │
 ├── postgres_data/           PostgreSQL 数据卷（别手删！）
 ├── grafana_data/            Grafana 数据卷（含 grafana.db 仪表盘库）
-├── grafana_provisioning/    Grafana 数据源/大盘 provider 配置（自动注入容器）
+├── grafana_provisioning/    Grafana 数据源/provider 元配置（不自动挂载大盘 JSON）
 ├── grafana_dashboards/      Grafana 仪表盘 JSON = 前端"代码"(进 git, 每日自动导出+push)
 └── log/                     AHK 的 buffer.csv + 备份日志 backup.log
 ```

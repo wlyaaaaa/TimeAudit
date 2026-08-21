@@ -1,4 +1,6 @@
 apiVersion: 1
+# Dashboard JSON is intentionally not mounted into this provider directory.
+# Use restore_grafana.py so a container restart cannot overwrite newer UI edits.
 providers:
   - name: 'TimeAudit Automated Dashboards'
     orgId: 1

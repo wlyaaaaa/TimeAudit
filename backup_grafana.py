@@ -40,6 +40,8 @@ import tempfile
 import time
 import urllib.request
 
+from grafana_dashboard_contract import validate_dashboard_document
+
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -206,12 +208,21 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
     if before_write is None:
         before_write = assert_dashboard_worktree_clean
     before_write()
-    os.makedirs(DASH_DIR, exist_ok=True)
-    written = set()
+    normalized_documents = []
     for uid, dash in documents:
         if not uid or not isinstance(dash, dict):
             continue
         dash = normalize_dashboard_for_public_backup(dash)
+        validate_dashboard_document(
+            dash,
+            source=f"live dashboard {uid}",
+            expected_uid=uid,
+        )
+        normalized_documents.append((uid, dash))
+
+    os.makedirs(DASH_DIR, exist_ok=True)
+    written = set()
+    for uid, dash in normalized_documents:
         title = dash.get("title", uid)
         fname = f"{uid}__{safe_filename(title)}.json"
         fpath = os.path.join(DASH_DIR, fname)

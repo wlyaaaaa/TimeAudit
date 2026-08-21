@@ -275,7 +275,7 @@ class GitSyncTests(unittest.TestCase):
         changed_paths = set()
 
         backup.write_dashboard_documents(
-            [("new", {"title": "New dashboard", "panels": []})],
+            [("new", {"uid": "new", "title": "New dashboard", "panels": []})],
             changed_paths=changed_paths,
         )
 

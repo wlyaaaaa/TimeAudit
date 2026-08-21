@@ -80,5 +80,5 @@ services:
       - TIMEAUDIT_DB_PASSWORD=${TIMEAUDIT_DB_PASSWORD:?TIMEAUDIT_DB_PASSWORD is required}
     volumes:
       - ./grafana_data:/var/lib/grafana
-      # 🟢 【新增核心挂载】：将本地脱水的纯文本卡片配置无感注入容器内部
+      # 只注入 datasource/provider 元配置；dashboard JSON 走显式恢复，避免重启覆盖 UI 编辑。
       - ./grafana_provisioning:/etc/grafana/provisioning:ro
