@@ -139,20 +139,27 @@ HARDWARE_SKU_IN_PARENS = re.compile(
 )
 
 
-def normalize_dashboard_for_public_backup(dashboard):
-    """Remove instance ids and machine-specific SKU labels from public snapshots."""
-    if isinstance(dashboard, list):
-        return [normalize_dashboard_for_public_backup(item) for item in dashboard]
-    if not isinstance(dashboard, dict):
-        return dashboard
+def _normalize_dashboard_value(value, parent_key=None):
+    if isinstance(value, list):
+        return [_normalize_dashboard_value(item, parent_key) for item in value]
+    if not isinstance(value, dict):
+        return value
     normalized = {}
-    for key, value in dashboard.items():
-        if key == "id":
+    for key, child in value.items():
+        # Numeric dashboard/panel instance ids are machine-local. A matcher id,
+        # however, is semantic Grafana configuration (for example ``byName``)
+        # and Grafana 13 rejects an override when it is missing.
+        if key == "id" and parent_key != "matcher":
             continue
-        if key == "title" and isinstance(value, str):
-            value = HARDWARE_SKU_IN_PARENS.sub("", value).strip()
-        normalized[key] = normalize_dashboard_for_public_backup(value)
+        if key == "title" and isinstance(child, str):
+            child = HARDWARE_SKU_IN_PARENS.sub("", child).strip()
+        normalized[key] = _normalize_dashboard_value(child, key)
     return normalized
+
+
+def normalize_dashboard_for_public_backup(dashboard):
+    """Remove machine-local ids/SKUs while preserving semantic matcher ids."""
+    return _normalize_dashboard_value(dashboard)
 
 
 def _dashboard_version(dashboard):

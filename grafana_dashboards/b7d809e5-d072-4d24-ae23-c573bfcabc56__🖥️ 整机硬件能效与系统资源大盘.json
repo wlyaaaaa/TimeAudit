@@ -82,6 +82,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 封装温度"
             },
             "properties": [
@@ -98,6 +99,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 封装功率"
             },
             "properties": [
@@ -220,6 +222,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 频率 (MHz)"
             },
             "properties": [
@@ -242,6 +245,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CCD0 负载 (大缓存)"
             },
             "properties": [
@@ -261,6 +265,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CCD1 负载 (高频)"
             },
             "properties": [
@@ -280,6 +285,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 总负载"
             },
             "properties": [
@@ -399,6 +405,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 核心温度"
             },
             "properties": [
@@ -415,6 +422,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 热点温度"
             },
             "properties": [
@@ -431,6 +439,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 板卡功率"
             },
             "properties": [
@@ -553,6 +562,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 核心频率 (MHz)"
             },
             "properties": [
@@ -575,6 +585,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 显存频率 (MHz)"
             },
             "properties": [
@@ -597,6 +608,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 利用率"
             },
             "properties": [
@@ -616,6 +628,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "PCIe 带宽利用率"
             },
             "properties": [
@@ -735,6 +748,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 核心电压"
             },
             "properties": [
@@ -751,6 +765,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 核心电压"
             },
             "properties": [
@@ -835,6 +850,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 温度"
             },
             "properties": [
@@ -865,6 +881,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 核心"
             },
             "properties": [
@@ -895,6 +912,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 热点"
             },
             "properties": [
@@ -1135,6 +1153,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "系统上下文切换次数/秒"
             },
             "properties": [
@@ -1157,6 +1176,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "系统 调度抖动 (µs)"
             },
             "properties": [
@@ -1267,6 +1287,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "物理内存占用率 (%)"
             },
             "properties": [
@@ -1286,6 +1307,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "系统提交大小 (GB)"
             },
             "properties": [
@@ -1308,6 +1330,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "每秒硬缺页次数"
             },
             "properties": [
@@ -1430,6 +1453,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "磁盘最大延迟 (ms)"
             },
             "properties": [
@@ -1546,6 +1570,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "网络延迟 (ms)"
             },
             "properties": [
@@ -1562,6 +1587,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "网络抖动 (ms)"
             },
             "properties": [
@@ -1578,6 +1604,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "实时丢包率 (%)"
             },
             "properties": [
@@ -1666,6 +1693,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "累计磁盘读取"
             },
             "properties": [
@@ -1679,6 +1707,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "累计磁盘写入"
             },
             "properties": [
@@ -1692,6 +1721,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "累计网络上传"
             },
             "properties": [
@@ -1705,6 +1735,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "累计网络下载"
             },
             "properties": [
@@ -1817,6 +1848,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "活跃 TCP 连接数"
             },
             "properties": [
@@ -1933,6 +1965,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "磁盘 IOPS"
             },
             "properties": [
@@ -2049,6 +2082,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "活跃进程数"
             },
             "properties": [
@@ -2065,6 +2099,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "线程总数"
             },
             "properties": [
@@ -2184,6 +2219,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "磁盘读取速度"
             },
             "properties": [
@@ -2200,6 +2236,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "磁盘写入速度"
             },
             "properties": [
@@ -2316,6 +2353,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "显存总占用"
             },
             "properties": [
@@ -2432,6 +2470,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "网络发送速度"
             },
             "properties": [
@@ -2448,6 +2487,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "网络接收速度"
             },
             "properties": [
@@ -2564,6 +2604,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 核心负载温度"
             },
             "properties": [
@@ -2580,6 +2621,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 热点负载温度"
             },
             "properties": [
@@ -2596,6 +2638,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 负载功率"
             },
             "properties": [
@@ -2618,6 +2661,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 负载时钟"
             },
             "properties": [
@@ -2640,6 +2684,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "GPU 负载电压"
             },
             "properties": [
@@ -2763,6 +2808,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 负载温度"
             },
             "properties": [
@@ -2779,6 +2825,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 负载功率"
             },
             "properties": [
@@ -2801,6 +2848,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 负载主频"
             },
             "properties": [
@@ -2823,6 +2871,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "CPU 负载电压"
             },
             "properties": [

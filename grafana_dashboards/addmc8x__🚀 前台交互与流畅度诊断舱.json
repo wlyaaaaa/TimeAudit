@@ -18,12 +18,13 @@
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
+  "links": [],
   "liveNow": false,
   "panels": [
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
-        "uid": "bfoc1vymtgni8a"
+        "uid": "P7A9DAD60F8AB4C18"
       },
       "fieldConfig": {
         "defaults": {
@@ -79,7 +80,8 @@
             ]
           },
           "unit": "dthms"
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 5,
@@ -113,7 +115,7 @@
           "dataset": "time_audit",
           "datasource": {
             "type": "grafana-postgresql-datasource",
-            "uid": "bfoc1vymtgni8a"
+            "uid": "P7A9DAD60F8AB4C18"
           },
           "editorMode": "code",
           "format": "table",
@@ -214,6 +216,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "单帧渲染时间",
               "scope": "series"
             },
@@ -224,9 +227,7 @@
               {
                 "value": "right"
               },
-              {
-                "value": null
-              },
+              {},
               {
                 "value": 0
               },
@@ -365,6 +366,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "帧时微观抖动率",
               "scope": "series"
             },
@@ -471,7 +473,8 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 15,
@@ -596,6 +599,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "前台 显存占用 (GB)",
               "scope": "series"
             },
@@ -621,6 +625,7 @@
           },
           {
             "matcher": {
+              "id": "byRegexp",
               "options": "/.*\\(GB\\)/",
               "scope": "series"
             },
@@ -748,7 +753,8 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -824,7 +830,8 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -908,7 +915,8 @@
               }
             ]
           }
-        }
+        },
+        "overrides": []
       },
       "gridPos": {
         "h": 8,
@@ -991,6 +999,7 @@
         "overrides": [
           {
             "matcher": {
+              "id": "byName",
               "options": "平均帧率 (FPS)"
             },
             "properties": [
@@ -1035,6 +1044,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "10% 低帧率"
             },
             "properties": [
@@ -1079,6 +1089,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "卡顿率 (FT >= 50ms)"
             },
             "properties": [
@@ -1123,6 +1134,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "严重卡顿率 (FT >= 100ms)"
             },
             "properties": [
@@ -1167,6 +1179,7 @@
           },
           {
             "matcher": {
+              "id": "byName",
               "options": "累计运行时长 (分钟)"
             },
             "properties": [
@@ -1234,6 +1247,9 @@
     "性能诊断",
     "时间审计"
   ],
+  "templating": {
+    "list": []
+  },
   "time": {
     "from": "now-3h",
     "to": "now"
@@ -1255,5 +1271,6 @@
   "timezone": "browser",
   "title": "🚀 前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 54
+  "version": 55,
+  "weekStart": ""
 }

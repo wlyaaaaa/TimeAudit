@@ -71,6 +71,42 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         self.assertEqual(document["version"], 7)
         self.assertNotIn("id", document)
 
+    def test_public_dashboard_snapshots_keep_semantic_matcher_ids(self):
+        snapshot_dir = os.path.join(os.path.dirname(__file__), "grafana_dashboards")
+        retired_datasource_uid = "bfoc1vymtgni8a"
+
+        def assert_matchers(node, source, path="dashboard"):
+            if isinstance(node, dict):
+                matcher = node.get("matcher")
+                if isinstance(matcher, dict):
+                    self.assertIsInstance(
+                        matcher.get("id"),
+                        str,
+                        f"{source}: {path}.matcher.id is missing",
+                    )
+                    self.assertTrue(
+                        matcher["id"],
+                        f"{source}: {path}.matcher.id is empty",
+                    )
+                for key, value in node.items():
+                    assert_matchers(value, source, f"{path}.{key}")
+            elif isinstance(node, list):
+                for index, value in enumerate(node):
+                    assert_matchers(value, source, f"{path}[{index}]")
+
+        for name in sorted(os.listdir(snapshot_dir)):
+            if not name.endswith(".json"):
+                continue
+            path = os.path.join(snapshot_dir, name)
+            with open(path, encoding="utf-8") as handle:
+                document = json.load(handle)
+            self.assertNotIn(
+                retired_datasource_uid,
+                json.dumps(document, ensure_ascii=False),
+                f"{name}: retired Grafana datasource is still referenced",
+            )
+            assert_matchers(document, name)
+
     def test_older_live_dashboard_cannot_overwrite_newer_repository_snapshot(self):
         os.makedirs(backup.DASH_DIR)
         path = os.path.join(backup.DASH_DIR, "dash-1__Main Dashboard.json")
@@ -178,6 +214,16 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
                     "id": 13,
                     "title": "GPU 温度与功率 (RTX5080)",
                     "description": "RTX5080 remains in non-title content",
+                    "fieldConfig": {
+                        "overrides": [
+                            {
+                                "matcher": {
+                                    "id": "byName",
+                                    "options": "GPU 温度",
+                                }
+                            }
+                        ]
+                    },
                 },
                 {"title": "CPU 频率 (9950X3D)"},
             ],
@@ -187,6 +233,12 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
 
         self.assertNotIn("id", normalized)
         self.assertNotIn("id", normalized["panels"][0])
+        self.assertEqual(
+            normalized["panels"][0]["fieldConfig"]["overrides"][0]["matcher"][
+                "id"
+            ],
+            "byName",
+        )
         self.assertEqual(normalized["panels"][0]["title"], "GPU 温度与功率")
         self.assertEqual(normalized["panels"][1]["title"], "CPU 频率")
         self.assertIn("RTX5080", normalized["panels"][0]["description"])

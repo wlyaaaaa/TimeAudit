@@ -179,7 +179,7 @@
 
 **容器时区锁定为 `Asia/Shanghai`**（compose `command:` 里的 `-c timezone=Asia/Shanghai`）。这是功耗大盘"今日/本周/本月"统计正确的前提——这些面板用 `date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai')` 当边界，若会话时区是 UTC，边界会整体偏移 8 小时（"今日能耗"会从早上 8 点才开始算）。**别删这行**，否则 `docker compose up -d` 重建后时区 bug 复现。
 
-> ⚠️ Grafana 里有 **3 个 PostgreSQL 数据源**，全部指向同一个 `time_audit` 库：硬件大盘用 `P7A9DAD60F8AB4C18`，其余大盘用 `bfoc1vymtgni8a`，还有一个 provisioning 注入的 `PostgreSQL` 没被引用。**不同大盘用不同 UID 不是 bug**（都连同一个库），别去「统一」它们，否则现有面板会断。
+> ⚠️ 所有仪表盘统一引用 Grafana 13 已实测稳定的内置 PostgreSQL 数据源 `P7A9DAD60F8AB4C18`。provisioning 还会注入同库的 `PostgreSQL` 作为恢复入口；旧 `bfoc1vymtgni8a` 只作为现有本机配置记录保留。它曾在查询取消/页面导航竞态下把错误误映射为 `plugin.notRegistered`，仪表盘不得再次引用它。
 
 ---
 
