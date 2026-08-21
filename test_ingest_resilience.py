@@ -47,6 +47,44 @@ def test_invalid_segment_is_rejected_as_a_whole(tmp_path):
     assert path.exists()
 
 
+def test_legacy_nul_padding_is_removed_without_changing_csv_fields(tmp_path):
+    path = tmp_path / "buffer.csv.1.1.processing"
+    expected = ["2026-08-11 09:00:00+0800", 11, "example.exe", "中文 title"]
+    clean = tmp_path / "clean.csv"
+    _write_segment(clean, [expected])
+    raw = clean.read_bytes()
+    path.write_bytes(b"\x00\x00" + raw[:17] + b"\x00" + raw[17:])
+
+    assert ingest.parse_segment(path) == [tuple(expected)]
+    assert path.exists()
+
+
+def test_invalid_utf8_segment_remains_rejected_after_nul_cleanup(tmp_path):
+    path = tmp_path / "buffer.csv.1.1.processing"
+    path.write_bytes(b"\x00\xff\xfe\xfa")
+
+    try:
+        ingest.parse_segment(path)
+    except ingest.CsvPayloadError as exc:
+        assert str(exc) == "invalid_utf8"
+    else:
+        raise AssertionError("invalid UTF-8 segment was accepted")
+    assert path.exists()
+
+
+def test_nul_only_segment_is_not_silently_deleted(tmp_path):
+    path = tmp_path / "buffer.csv.1.1.processing"
+    path.write_bytes(b"\x00\x00\x00")
+
+    try:
+        ingest.parse_segment(path)
+    except ingest.CsvPayloadError as exc:
+        assert str(exc) == "nul_only_segment"
+    else:
+        raise AssertionError("NUL-only segment was accepted")
+    assert path.exists()
+
+
 def test_rotation_never_overwrites_existing_processing_segment(tmp_path):
     source = tmp_path / "buffer.csv"
     source.write_text("new", encoding="utf-8")

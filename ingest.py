@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import io
 import json
 import os
 import time
@@ -106,8 +107,18 @@ def pending_segments(csv_path: Path = CSV_PATH) -> list[Path]:
 
 def parse_segment(path: Path) -> list[tuple[str, int, str, str]]:
     rows: list[tuple[str, int, str, str]] = []
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        for row_number, row in enumerate(csv.reader(handle), start=1):
+    try:
+        raw = path.read_bytes()
+        # Legacy spool segments can contain NUL padding around otherwise valid
+        # UTF-8 CSV. PostgreSQL text cannot store U+0000, so remove only those
+        # invalid padding bytes and keep the immutable segment until the whole
+        # sanitized payload validates and commits successfully.
+        cleaned = raw.replace(b"\x00", b"")
+        if raw and not cleaned:
+            raise CsvPayloadError("nul_only_segment")
+        text = cleaned.decode("utf-8-sig")
+        reader = csv.reader(io.StringIO(text, newline=""))
+        for row_number, row in enumerate(reader, start=1):
             if len(row) != 4:
                 raise CsvPayloadError(f"invalid_column_count_at_row_{row_number}")
             try:
@@ -119,6 +130,10 @@ def parse_segment(path: Path) -> list[tuple[str, int, str, str]]:
             if duration < 0:
                 raise CsvPayloadError(f"negative_duration_at_row_{row_number}")
             rows.append((row[0], duration, row[2], row[3]))
+    except UnicodeDecodeError as exc:
+        raise CsvPayloadError("invalid_utf8") from exc
+    except csv.Error as exc:
+        raise CsvPayloadError("invalid_csv") from exc
     return rows
 
 
