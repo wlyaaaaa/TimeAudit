@@ -32,6 +32,10 @@ $ingesterHeartbeatMaxAgeSeconds = 45
 $sidecarGraceSeconds = 15
 $startupGraceSeconds = 15
 $autoStartMaxGraceSeconds = 240
+# Cold bootstrap registers every live PID before the first 1 Hz hardware row.
+# This is deliberately bounded: an old, live-but-stuck collector is still
+# restarted after this grace plus the normal stale confirmation window.
+$mainStartupHeartbeatGraceSeconds = 180
 $mainScriptPattern = '(?i)(?:^|\s|")' + [regex]::Escape($script) + '(?:"|\s|$)'
 $ahkScriptPattern = '(?i)(?:^|\s|")' + [regex]::Escape($ahkScript) + '(?:"|\s|$)'
 
@@ -66,6 +70,16 @@ function Test-AutoStartWithinGrace {
     return ($ageSeconds -ge 0 -and $ageSeconds -le $autoStartMaxGraceSeconds)
 }
 
+function Test-MainWithinStartupGrace($process) {
+    if (-not $process -or -not $process.CreationDate) { return $false }
+    try {
+        $ageSeconds = ((Get-Date) - ([datetime]$process.CreationDate)).TotalSeconds
+        return ($ageSeconds -ge 0 -and $ageSeconds -le $mainStartupHeartbeatGraceSeconds)
+    } catch {
+        return $false
+    }
+}
+
 function Remove-StaleTask($taskName) {
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task -and $task.State -ne 'Running') {
@@ -73,6 +87,7 @@ function Remove-StaleTask($taskName) {
     }
 }
 
+function Invoke-TimeAuditWatchdog {
 Remove-StaleTask 'TimeAudit_WatchdogRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogAhkRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogLhmRestart_tmp'
@@ -162,10 +177,39 @@ function Restart-Lhm($reason) {
 }
 
 # === 1. main.py (Python telemetry engine) ===
+function Stop-MainForRestart($reason) {
+    # The collector's own singleton is deliberately passive: only this
+    # serialized watchdog may replace a stale exact-script process.  This
+    # prevents an orphaned watchdog child from making a newly launched
+    # collector kill a healthy peer during startup.
+    $deadline = (Get-Date).AddSeconds(8)
+    do {
+        $mainProc = Find-MainProc
+        if (-not $mainProc) { return $true }
+
+        Log ("main.py {0} - stopping existing PID {1} before replacement" -f $reason, $mainProc.ProcessId)
+        try {
+            Stop-Process -Id $mainProc.ProcessId -Force -ErrorAction Stop
+        } catch {
+            Log ("ABORT: could not stop existing main.py PID {0}: {1}" -f $mainProc.ProcessId, $_.Exception.Message)
+            return $false
+        }
+        Start-Sleep -Milliseconds 250
+    } while ((Get-Date) -lt $deadline)
+
+    $remaining = Find-MainProc
+    if ($remaining) {
+        Log ("ABORT: main.py PID {0} survived replacement stop window" -f $remaining.ProcessId)
+        return $false
+    }
+    return $true
+}
+
 function Restart-Main($reason) {
     Log ("main.py {0} - attempting restart" -f $reason)
     if (-not (Test-Path $script)) { Log "ABORT: main.py path missing" }
     else {
+        if (-not (Stop-MainForRestart $reason)) { return }
         Restart-ViaTask 'TimeAudit_WatchdogRestart_tmp' $py ('"{0}"' -f $script) 'E:\Projects\Tools\TimeAudit'
         $now = Find-MainProc
         if ($now) { Log ("RESTART OK - main.py PID {0}" -f $now.ProcessId) }
@@ -186,13 +230,17 @@ if (-not $mainProc) {
         }
     }
 } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-    Log ("main.py heartbeat stale - waiting {0}s for startup/resume recovery" -f $heartbeatGraceSeconds)
-    Start-Sleep -Seconds $heartbeatGraceSeconds
-    $mainProc = Find-MainProc
-    if (-not $mainProc) {
-        Restart-Main 'stopped during heartbeat grace period'
-    } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-        Restart-Main 'heartbeat stale after grace period'
+    if (Test-MainWithinStartupGrace $mainProc) {
+        Log ("main.py heartbeat stale but live process is within its {0}s startup grace - defer" -f $mainStartupHeartbeatGraceSeconds)
+    } else {
+        Log ("main.py heartbeat stale - waiting {0}s for startup/resume recovery" -f $heartbeatGraceSeconds)
+        Start-Sleep -Seconds $heartbeatGraceSeconds
+        $mainProc = Find-MainProc
+        if (-not $mainProc) {
+            Restart-Main 'stopped during heartbeat grace period'
+        } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
+            Restart-Main 'heartbeat stale after grace period'
+        }
     }
 }
 
@@ -268,6 +316,33 @@ if (-not (Test-IngesterRunning)) {
     if (-not (Test-HeartbeatFresh $ingesterHeartbeat $ingesterHeartbeatMaxAgeSeconds)) {
         Restart-Ingester 'heartbeat stale after resume grace'
     }
+}
+
+return
+}
+
+$watchdogMutexName = 'Global\TimeAuditTelemetryWatchdogMutex'
+$watchdogMutex = $null
+$watchdogLockAcquired = $false
+try {
+    $watchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
+    try {
+        $watchdogLockAcquired = $watchdogMutex.WaitOne(0)
+    } catch [System.Threading.AbandonedMutexException] {
+        # The prior owner died; Windows grants this caller the abandoned lock.
+        $watchdogLockAcquired = $true
+    }
+
+    if ($watchdogLockAcquired) {
+        Invoke-TimeAuditWatchdog
+    } else {
+        Log 'watchdog invocation skipped because a live owner holds the recovery mutex'
+    }
+} finally {
+    if ($watchdogLockAcquired -and $watchdogMutex) {
+        try { $watchdogMutex.ReleaseMutex() } catch { }
+    }
+    if ($watchdogMutex) { $watchdogMutex.Dispose() }
 }
 
 exit 0

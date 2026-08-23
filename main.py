@@ -77,7 +77,7 @@ from hardware_worker import HardwareTelemetryWorker
 from context_worker import WindowStateTracker
 from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
-from runtime_health import command_line_targets_script, write_telemetry_heartbeat
+from runtime_health import write_telemetry_heartbeat
 
 DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
@@ -307,50 +307,27 @@ async def _cancel_and_reap_activity_task(activity_task):
     await asyncio.gather(activity_task, return_exceptions=True)
 
 def enforce_singleton():
+    """Claim the collector owner slot without ever evicting its live owner.
+
+    Deliberate replacement belongs to the external watchdog, which first stops
+    the exact stale process and only then launches a new collector.  A second
+    launcher here is therefore a race/orphan and must yield rather than turn a
+    transient stale heartbeat into a restart storm.
+    """
     mutex_name = "Global\\TimeAuditTelemetryEngineMutex"
     kernel32 = ctypes.windll.kernel32
-    
+
     mutex = kernel32.CreateMutexW(None, False, mutex_name)
     last_error = kernel32.GetLastError()
-    
+
     if last_error == 183:
-        print(f"[{datetime.datetime.now().strftime('%X')} 🔄 强制重启] 检测到互斥体占用，启动覆盖抢占机制...")
-        
-        current_pid = os.getpid()
-        current_exe = os.path.basename(sys.executable).lower()
-        target_script = os.path.abspath(__file__)
-        
-        for proc in psutil.process_iter(['pid', 'name', 'cmdline']):
-            try:
-                p_pid = proc.info['pid']
-                p_name = proc.info['name']
-                p_cmdline = proc.info['cmdline']
-                
-                if p_pid == current_pid or not p_name:
-                    continue
-                
-                if current_exe != "python.exe" and current_exe != "pythonw.exe":
-                    if p_name.lower() == current_exe:
-                        proc.kill()
-                elif 'python' in p_name.lower():
-                    if command_line_targets_script(p_cmdline, target_script):
-                        proc.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-        
+        print(
+            f"[{datetime.datetime.now().strftime('%X')} ℹ️ 单例] "
+            "检测到 live owner；duplicate collector launcher 安全退出。"
+        )
         kernel32.CloseHandle(mutex)
-        
-        for _ in range(10):
-            time.sleep(0.5)
-            mutex = kernel32.CreateMutexW(None, False, mutex_name)
-            if kernel32.GetLastError() != 183:
-                print(f"[{datetime.datetime.now().strftime('%X')} ✅ 抢占成功] 旧实例已蒸发，新引擎接管内核锁。")
-                return mutex
-            kernel32.CloseHandle(mutex)
-            
-        print("[主控] ❌ 抢占失败！当前进程安全退出。")
-        sys.exit(0)
-        
+        return None
+
     return mutex
 
 # 【关键】分区边界必须对齐北京时区(UTC+8)本地午夜，与 DDL 既有分区(边界 = 本地午夜 = 16:00 UTC)
@@ -884,6 +861,8 @@ async def _run_collector():
 
 async def main():
     _singleton_mutex = enforce_singleton()
+    if _singleton_mutex is None:
+        return
     try:
         await _run_collector()
     finally:

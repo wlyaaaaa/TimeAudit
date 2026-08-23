@@ -100,6 +100,29 @@ def test_main_updates_heartbeat_and_releases_singleton_mutex():
     )
 
 
+def test_duplicate_collector_never_kills_the_live_owner():
+    """A duplicate launcher must yield; the watchdog owns deliberate replacement."""
+    source = (ROOT / "main.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    singleton = next(
+        node
+        for node in tree.body
+        if isinstance(node, ast.FunctionDef) and node.name == "enforce_singleton"
+    )
+
+    destructive_calls = [
+        node
+        for node in ast.walk(singleton)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr in {"kill", "terminate"}
+    ]
+    assert not destructive_calls
+    assert "duplicate collector launcher" in ast.unparse(singleton)
+    assert "return None" in ast.unparse(singleton)
+    assert "if _singleton_mutex is None:" in source
+
+
 def test_watchdog_checks_exact_script_heartbeat_with_resume_grace():
     source = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
 
@@ -126,6 +149,39 @@ def test_watchdog_checks_exact_script_heartbeat_with_resume_grace():
     assert "$ingesterHeartbeat" in source
     assert "function Test-IngesterRunning" in source
     assert "Restart-Ingester 'heartbeat stale after resume grace'" in source
+
+
+def test_watchdog_serializes_recovery_and_replaces_main_explicitly():
+    """An orphaned scheduled-task child must not overlap another watchdog run."""
+    source = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
+
+    assert "$watchdogMutexName = 'Global\\TimeAuditTelemetryWatchdogMutex'" in source
+    assert "$watchdogMutex.WaitOne(0)" in source
+    assert "function Invoke-TimeAuditWatchdog" in source
+    assert "function Stop-MainForRestart" in source
+
+    restart_start = source.index("function Restart-Main")
+    restart_end = source.index("# === 2. LibreHardwareMonitor", restart_start)
+    restart_main = source[restart_start:restart_end]
+    assert "Stop-MainForRestart $reason" in restart_main
+    assert restart_main.index("Stop-MainForRestart $reason") < restart_main.index(
+        "Restart-ViaTask 'TimeAudit_WatchdogRestart_tmp'"
+    )
+
+
+def test_watchdog_grants_a_new_collector_bounded_bootstrap_time():
+    """Initial live-PID reconciliation can take minutes; it is not a stale owner."""
+    source = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
+
+    assert "$mainStartupHeartbeatGraceSeconds = 180" in source
+    assert "function Test-MainWithinStartupGrace" in source
+    stale_start = source.index("} elseif (-not (Test-HeartbeatFresh $heartbeat")
+    stale_end = source.index("# === 2. LibreHardwareMonitor", stale_start)
+    stale_branch = source[stale_start:stale_end]
+    assert "Test-MainWithinStartupGrace $mainProc" in stale_branch
+    assert stale_branch.index("Test-MainWithinStartupGrace $mainProc") < stale_branch.index(
+        "Start-Sleep -Seconds $heartbeatGraceSeconds"
+    )
 
 
 def test_ahk_emits_payload_free_progress_heartbeat():
@@ -205,7 +261,10 @@ if __name__ == "__main__":
     with TemporaryDirectory() as directory:
         test_heartbeat_is_written_atomically(Path(directory))
     test_main_updates_heartbeat_and_releases_singleton_mutex()
+    test_duplicate_collector_never_kills_the_live_owner()
     test_watchdog_checks_exact_script_heartbeat_with_resume_grace()
+    test_watchdog_serializes_recovery_and_replaces_main_explicitly()
+    test_watchdog_grants_a_new_collector_bounded_bootstrap_time()
     test_ahk_emits_payload_free_progress_heartbeat()
     test_screen_time_dashboard_has_no_grafana_13_style_field_parser()
     test_backup_payloads_default_to_g_drive()
