@@ -59,7 +59,7 @@
 └─────────────────────┼──────────────────────────────────────────────────────┘
                       ▼
         ┌──────────── Docker 容器群 (docker-compose) ────────────┐
-        │  audit-postgres   PostgreSQL 15   端口 55432  ← 数据仓库 │
+        │  audit-postgres   PostgreSQL 15   端口 45432  ← 数据仓库 │
         │  audit-ingester   跑 ingest.py    搬 CSV→app_usage_logs  │
         │  audit-grafana    Grafana 大盘    端口 53000  ← 看数据   │
         └────────────────────────────────────────────────────────┘
@@ -134,7 +134,7 @@
 
 ## 5. 数据库里有哪些表？（每张表存什么，大白话）
 
-数据库名 `time_audit`，跑在 Docker 容器 `audit-postgres` 里，宿主机端口 **55432**。
+数据库名 `time_audit`，跑在 Docker 容器 `audit-postgres` 里，宿主机端口 **45432**。
 
 | 表名 | 类型 | 存什么 | 怎么分区 |
 | :--- | :--- | :--- | :--- |
@@ -166,13 +166,13 @@
 
 | 容器 | 镜像 | 端口 | 干嘛 |
 | :--- | :--- | :--- | :--- |
-| `audit-postgres` | postgres:15-alpine | `55432→5432` | 数据仓库。数据存在宿主机 `./postgres_data` 目录。 |
+| `audit-postgres` | postgres:15-alpine | `45432→5432` | 数据仓库。数据存在宿主机 `./postgres_data` 目录。 |
 | `audit-ingester` | 本地 Dockerfile 构建 | 无 | 每 10 秒轮转唯一 spool 段并入库；有限连接/语句超时、幂等事件 ID、无 payload heartbeat 和 Docker healthcheck 防止整批静默卡死。 |
 | `audit-grafana` | grafana-oss:13.0.2 | `53000→3000` | 网页大盘。版本固定，避免 `latest` 自动升级再次破坏已验证的面板配置。 |
 
 **账号/端口速查**：
 
-- PostgreSQL：`localhost:55432`，库 `time_audit`；本机口令只从当前用户环境变量 `TIMEAUDIT_DB_PASSWORD` 注入，不进入 Git、日志或命令行。
+- PostgreSQL：`localhost:45432`，库 `time_audit`；本机口令只从当前用户环境变量 `TIMEAUDIT_DB_PASSWORD` 注入，不进入 Git、日志或命令行。固定宿主端口须避开 Windows 动态端口池，必要时用 `TIMEAUDIT_DB_HOST_PORT` 覆盖并先通过 PCConfig 端口门禁。
 - Grafana：浏览器开 `http://localhost:53000`。
 
 **PostgreSQL 性能配置写在 `docker-compose.yml` 的 `command:` 里**（不是 postgresql.conf）：`shared_buffers=2GB`、`work_mem=16MB`、`effective_cache_size=8GB`，以及 NVMe 友好的 `random_page_cost=1.1` / `effective_io_concurrency=200`；外加 `shm_size: '512mb'`（并行查询大分区时 `/dev/shm` 的上限，防 "could not resize shared memory segment ... No space left on device"）。改这些要编辑 compose 后 `docker compose up -d audit-db` 重建容器才生效。
@@ -388,7 +388,7 @@ E:\Projects\Tools\TimeAudit\
 2. **改完代码先跑三件事**：`python telemetry_test_suite.py`（应 6/6 绿）+ `python test_optimizations.py`（应 14/14 绿）+ `python test_telemetry_health.py`（引擎在跑时应大部分绿）。改 Grafana SQL 或数据库口径时，额外跑 `python db_audit.py` 和 `python test_sql_partition_explain.py`。
 3. **跑测试要用 UTF-8**：默认 GBK 控制台会因日志里的 emoji 崩；套件已自愈 stdout，但你手动跑别的脚本时记得 `PYTHONUTF8=1`。
 4. **这是写密集时序库**：硬件表每秒一行，进程表每 3 秒批量写入几十行。加索引、改表结构前先想清楚写放大代价。
-5. **本机就是目标机**（RTX 5090 D + 9950X3D，PostgreSQL 跑在 55432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
+5. **本机就是目标机**（RTX 5090 D + 9950X3D，PostgreSQL 跑在 45432）。很多硬件相关逻辑可以直接实机验证，别只靠推演。
 6. **测试里 mock NVML 时，假句柄(MagicMock)千万别传给真实 NVML 函数**——会在 C 层访问违例直接把进程干崩（try/except 拦不住）。所有 NVML 函数名都要 mock 到位。
 
 ---

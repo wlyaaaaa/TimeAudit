@@ -41,6 +41,18 @@ def evaluate_presentmon_process_status(pid):
         return True, f"PID={pid}"
     return True, "按需门控空闲：非活跃渲染期会主动退出；采集能力见后续 FPS 入库检查"
 
+
+def evaluate_presentmon_capture_status(fps_recent, sample_age_seconds):
+    if int(fps_recent or 0) > 0:
+        return True, f"近30分钟已有 {int(fps_recent)} 个正帧率样本"
+    try:
+        sample_age = float(sample_age_seconds)
+    except (TypeError, ValueError):
+        sample_age = None
+    if sample_age is not None and 0 <= sample_age < 15:
+        return True, "IDLE：硬件/FPS 通道持续写入，当前没有活跃游戏帧；未执行正帧率 canary"
+    return False, "近期既没有正帧率样本，硬件/FPS 通道样本也不新鲜"
+
 def lhm_port():
     try:
         with open(os.path.join(ROOT, "LibreHardwareMonitor.config"), encoding="utf-8", errors="ignore") as f:
@@ -174,9 +186,11 @@ async def main():
         # 容忍看门狗重启造成的极少量瞬时 NULL(<20%)，这是"自愈"而非故障
         check("LHM GPU 电压入库 (非伪造)", row['n'] > 0 and row['gpuv'] >= row['n'] * 0.8, f"{row['gpuv']}/{row['n']}")
         check("LHM CPU Vcore 入库 (非伪造)", row['n'] > 0 and row['vcore'] >= row['n'] * 0.8, f"{row['vcore']}/{row['n']}")
-        # PresentMon 采集能力：近30分钟只要有过帧数据即证明在采集(无游戏时瞬时为0属正常)
+        # 正帧率只能由真实游戏/3D 渲染证明；无游戏时用同一 1 Hz 硬件/FPS
+        # 通道的新鲜度判定 IDLE，避免把“等待游戏”误报为采集故障。
         fps_recent = await conn.fetchval("SELECT count(*) FROM public.fact_system_hardware WHERE timestamp > now()-interval '30 minutes' AND current_fps > 0")
-        check("PresentMon 帧率采集能力 (近30分钟有帧)", fps_recent > 0, f"{fps_recent}帧样本, 当前max={row['maxfps']}fps")
+        fps_ok, fps_detail = evaluate_presentmon_capture_status(fps_recent, row['age'])
+        check("PresentMon 帧率通道状态", fps_ok, f"{fps_detail}, 当前max={row['maxfps']}fps")
 
         # ---- 5. CPU 归一化 ----
         print("\n[4] 每进程 CPU 归一化 (整机口径 ≤100%)")

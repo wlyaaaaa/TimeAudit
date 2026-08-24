@@ -7,6 +7,7 @@ set "PROJECT_DIR=E:\Projects\Tools\TimeAudit"
 set "DOCKER_DESKTOP=C:\Program Files\Docker\Docker\Docker Desktop.exe"
 set DOCKER_WAIT_SECONDS=180
 set DB_WAIT_SECONDS=120
+if not defined TIMEAUDIT_DB_HOST_PORT set "TIMEAUDIT_DB_HOST_PORT=45432"
 set "PATH=%PATH%;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd"
 
 echo [*] 启动 AHK 守护进程...
@@ -42,14 +43,14 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-echo [*] 正在等待数据库端口 (55432) 联通...
+echo [*] 正在等待数据库端口 (%TIMEAUDIT_DB_HOST_PORT%) 联通...
 set /a DB_WAIT_REMAINING=%DB_WAIT_SECONDS%
 :WAIT_DB
 ping -n 3 127.0.0.1 >nul
-netstat -ano | findstr 55432 >nul
+powershell -NoProfile -NonInteractive -Command "$client = [Net.Sockets.TcpClient]::new(); try { $pending = $client.ConnectAsync('127.0.0.1', [int]$env:TIMEAUDIT_DB_HOST_PORT); if (-not $pending.Wait(1000)) { exit 1 }; if (-not $client.Connected) { exit 1 }; exit 0 } catch { exit 1 } finally { $client.Dispose() }" >nul 2>nul
 if %errorlevel% neq 0 (
     if !DB_WAIT_REMAINING! LEQ 0 (
-        echo [-] 数据库端口 55432 在 %DB_WAIT_SECONDS% 秒内未就绪，放弃启动采集器。
+        echo [-] 数据库端口 %TIMEAUDIT_DB_HOST_PORT% 在 %DB_WAIT_SECONDS% 秒内未就绪，放弃启动采集器。
         exit /b 1
     )
     set /a DB_WAIT_REMAINING-=2

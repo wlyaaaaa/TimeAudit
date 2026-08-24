@@ -1,9 +1,18 @@
-# check_status_gui.ps1
+﻿# check_status_gui.ps1
 # =====================================================================
 # 针对 VBScript GUI 弹窗定制的纯文本解析器 (宿主机驱动直连穿透版)
 # =====================================================================
 $outFile = "$env:TEMP\time_audit_status.txt"
 $report = @()
+$dbHostPort = 45432
+$configuredDbHostPort = 0
+if (
+    [int]::TryParse($env:TIMEAUDIT_DB_HOST_PORT, [ref]$configuredDbHostPort) -and
+    $configuredDbHostPort -ge 1 -and
+    $configuredDbHostPort -le 65535
+) {
+    $dbHostPort = $configuredDbHostPort
+}
 
 try {
     $report += "=========================================="
@@ -46,7 +55,7 @@ try {
     
     # 如果 PID 文件不存在或进程已死，回退到网络反查
     if (-not $py_running) {
-        $net_conns = Get-NetTCPConnection -RemotePort 55432 -State Established -ErrorAction SilentlyContinue
+        $net_conns = Get-NetTCPConnection -RemotePort $dbHostPort -State Established -ErrorAction SilentlyContinue
         if ($net_conns) {
             $target_pid = ($net_conns | Select-Object -First 1).OwningProcess
             try {
@@ -73,12 +82,12 @@ try {
     }
 
     # 3. 检查 Postgres 端口
-    $ports = Get-NetTCPConnection -LocalPort 55432 -ErrorAction SilentlyContinue
+    $ports = Get-NetTCPConnection -LocalPort $dbHostPort -ErrorAction SilentlyContinue
     if ($ports) {
         $unique_pid = ($ports | Select-Object -First 1).OwningProcess
-        $report += "[+] Docker Postgres : 端口 55432 就绪 [🟢] (PID: $unique_pid)"
+        $report += "[+] Docker Postgres : 端口 $dbHostPort 就绪 [🟢] (PID: $unique_pid)"
     } else {
-        $report += "[-] Docker Postgres : 端口 55432 闭塞 [❌] [OFFLINE]"
+        $report += "[-] Docker Postgres : 端口 $dbHostPort 闭塞 [❌] [OFFLINE]"
     }
 
     # 4. 🚀 强效修正：利用宿主机 Python + asyncpg 原生穿透网络流进行心跳实测
@@ -89,7 +98,7 @@ async def check():
     try:
         c = await asyncpg.connect(
             host="127.0.0.1",
-            port=55432,
+            port=int(os.environ.get("TIMEAUDIT_DB_HOST_PORT", "45432")),
             user="leyang",
             password=os.environ["TIMEAUDIT_DB_PASSWORD"],
             database="time_audit",

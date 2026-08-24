@@ -1,7 +1,10 @@
 # -*- coding: utf-8 -*-
 import unittest
 
-from test_telemetry_health import evaluate_presentmon_process_status
+from test_telemetry_health import (
+    evaluate_presentmon_capture_status,
+    evaluate_presentmon_process_status,
+)
 
 
 class PresentMonGateHealthTest(unittest.TestCase):
@@ -16,6 +19,25 @@ class PresentMonGateHealthTest(unittest.TestCase):
 
         self.assertTrue(ok)
         self.assertIn("PID=12345", detail)
+
+    def test_recent_positive_fps_is_live_capture_evidence(self):
+        ok, detail = evaluate_presentmon_capture_status(12, 1.0)
+
+        self.assertTrue(ok)
+        self.assertIn("正帧率样本", detail)
+
+    def test_fresh_zero_fps_is_idle_not_a_failure(self):
+        ok, detail = evaluate_presentmon_capture_status(0, 1.0)
+
+        self.assertTrue(ok)
+        self.assertIn("IDLE", detail)
+        self.assertIn("未执行正帧率 canary", detail)
+
+    def test_zero_fps_with_stale_channel_is_a_failure(self):
+        ok, detail = evaluate_presentmon_capture_status(0, 90.0)
+
+        self.assertFalse(ok)
+        self.assertIn("不新鲜", detail)
 
 
 if __name__ == "__main__":

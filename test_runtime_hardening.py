@@ -184,6 +184,16 @@ def test_watchdog_grants_a_new_collector_bounded_bootstrap_time():
     )
 
 
+def test_watchdog_defers_restart_while_database_endpoint_is_down():
+    source = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
+
+    assert "$dbHostPort = 45432" in source
+    assert "function Test-DatabaseEndpoint" in source
+    assert "ConnectAsync($dbHost, $dbHostPort)" in source
+    assert "heartbeat stale but PostgreSQL endpoint" in source
+    assert "audit-ingester recovery deferred because PostgreSQL endpoint" in source
+
+
 def test_ahk_emits_payload_free_progress_heartbeat():
     source = (ROOT / "TimeAudit.ahk").read_text(encoding="utf-8-sig")
 
@@ -265,6 +275,7 @@ if __name__ == "__main__":
     test_watchdog_checks_exact_script_heartbeat_with_resume_grace()
     test_watchdog_serializes_recovery_and_replaces_main_explicitly()
     test_watchdog_grants_a_new_collector_bounded_bootstrap_time()
+    test_watchdog_defers_restart_while_database_endpoint_is_down()
     test_ahk_emits_payload_free_progress_heartbeat()
     test_screen_time_dashboard_has_no_grafana_13_style_field_parser()
     test_backup_payloads_default_to_g_drive()

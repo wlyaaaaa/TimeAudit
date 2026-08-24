@@ -22,6 +22,17 @@ $ahkHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ahk_heartbeat'
 $ingesterHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ingester_heartbeat.json'
 $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $compose = 'E:\Projects\Tools\TimeAudit\docker-compose.yml'
+$dbHost = '127.0.0.1'
+$dbHostPort = 45432
+$configuredDbHostPort = 0
+if (
+    [int]::TryParse($env:TIMEAUDIT_DB_HOST_PORT, [ref]$configuredDbHostPort) -and
+    $configuredDbHostPort -ge 1 -and
+    $configuredDbHostPort -le 65535
+) {
+    $dbHostPort = $configuredDbHostPort
+}
+$dbProbeTimeoutMilliseconds = 1000
 $heartbeatMaxAgeSeconds = 90
 $heartbeatGraceSeconds = 45
 $lhmGraceSeconds = 15
@@ -68,6 +79,19 @@ function Test-AutoStartWithinGrace {
     if (-not $info) { return $false }
     $ageSeconds = ((Get-Date) - $info.LastRunTime).TotalSeconds
     return ($ageSeconds -ge 0 -and $ageSeconds -le $autoStartMaxGraceSeconds)
+}
+
+function Test-DatabaseEndpoint {
+    $client = [Net.Sockets.TcpClient]::new()
+    try {
+        $pending = $client.ConnectAsync($dbHost, $dbHostPort)
+        if (-not $pending.Wait($dbProbeTimeoutMilliseconds)) { return $false }
+        return $client.Connected
+    } catch {
+        return $false
+    } finally {
+        $client.Dispose()
+    }
 }
 
 function Test-MainWithinStartupGrace($process) {
@@ -223,23 +247,35 @@ if (-not $mainProc) {
     Start-Sleep -Seconds $startupGraceSeconds
     $mainProc = Find-MainProc
     if (-not $mainProc) {
-        if (Test-AutoStartWithinGrace) {
+        if (-not (Test-DatabaseEndpoint)) {
+            Log ("main.py restart deferred because PostgreSQL endpoint {0}:{1} is unavailable" -f $dbHost, $dbHostPort)
+        } elseif (Test-AutoStartWithinGrace) {
             Log ("main.py not running yet, but TimeAudit_AutoStart is within its {0}s startup window - defer this cycle" -f $autoStartMaxGraceSeconds)
         } else {
             Restart-Main 'NOT running after startup grace period'
         }
     }
 } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-    if (Test-MainWithinStartupGrace $mainProc) {
+    if (-not (Test-DatabaseEndpoint)) {
+        Log ("main.py heartbeat stale but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
+    } elseif (Test-MainWithinStartupGrace $mainProc) {
         Log ("main.py heartbeat stale but live process is within its {0}s startup grace - defer" -f $mainStartupHeartbeatGraceSeconds)
     } else {
         Log ("main.py heartbeat stale - waiting {0}s for startup/resume recovery" -f $heartbeatGraceSeconds)
         Start-Sleep -Seconds $heartbeatGraceSeconds
         $mainProc = Find-MainProc
         if (-not $mainProc) {
-            Restart-Main 'stopped during heartbeat grace period'
+            if (Test-DatabaseEndpoint) {
+                Restart-Main 'stopped during heartbeat grace period'
+            } else {
+                Log ("main.py stopped during heartbeat grace but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
+            }
         } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-            Restart-Main 'heartbeat stale after grace period'
+            if (Test-DatabaseEndpoint) {
+                Restart-Main 'heartbeat stale after grace period'
+            } else {
+                Log ("main.py heartbeat remains stale but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
+            }
         }
     }
 }
@@ -309,7 +345,9 @@ function Restart-Ingester($reason) {
     }
 }
 
-if (-not (Test-IngesterRunning)) {
+if (-not (Test-DatabaseEndpoint)) {
+    Log ("audit-ingester recovery deferred because PostgreSQL endpoint {0}:{1} is unavailable" -f $dbHost, $dbHostPort)
+} elseif (-not (Test-IngesterRunning)) {
     Restart-Ingester 'NOT running'
 } elseif (-not (Test-HeartbeatFresh $ingesterHeartbeat $ingesterHeartbeatMaxAgeSeconds)) {
     Start-Sleep -Seconds $sidecarGraceSeconds
