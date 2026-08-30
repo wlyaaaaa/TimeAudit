@@ -16,6 +16,7 @@ import time
 
 from lifecycle_worker import check_process_elevation, check_file_signature
 from hardware_worker import NVML_LOCK
+from psutil_native_guard import IsolatedConnectionSampler
 
 class UNICODE_STRING(ctypes.Structure):
     _fields_ = [
@@ -225,6 +226,7 @@ class ProcessActivityWorker:
         self.shared_vram_cache = {}
         self.hung_pids_cache = set()   # 后台线程每拍刷新的“无响应/卡死”进程 PID 集合(IsHungAppWindow 同源)
         self.stop_event = threading.Event()
+        self.net_connection_sampler = IsolatedConnectionSampler()
         
         self.vram_map_cache = {}
         self.gpu_util_map_cache = {}
@@ -483,21 +485,7 @@ class ProcessActivityWorker:
             pass
 
         while not self.stop_event.is_set():
-            temp_net_conn = {}
-            try:
-                from collections import defaultdict
-                grouped = defaultdict(list)
-                for conn in psutil.net_connections(kind='inet'):
-                    if conn.pid: 
-                        grouped[conn.pid].append(conn)
-                
-                for pid, conns in grouped.items():
-                    net_conn_count = len(conns)
-                    remote_targets = [f"{c.raddr.ip}:{c.raddr.port}" for c in conns if c.raddr]
-                    net_remote = ",".join(remote_targets) if remote_targets else None
-                    temp_net_conn[pid] = (net_conn_count, net_remote)
-            except Exception:
-                pass
+            temp_net_conn = self.net_connection_sampler.snapshot()
 
             try:
                 now_net_time = time.monotonic()
@@ -622,6 +610,7 @@ class ProcessActivityWorker:
 
     def terminate(self):
         self.stop_event.set()
+        self.net_connection_sampler.close()
         if hasattr(self, 'bg_thread') and self.bg_thread:
             try:
                 self.bg_thread.join(timeout=2.5)

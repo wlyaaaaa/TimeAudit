@@ -72,6 +72,8 @@ def test_main_updates_heartbeat_and_releases_singleton_mutex():
     )
 
     assert "CloseHandle(_singleton_mutex)" in source
+    assert "activity_worker.terminate()" in source
+    assert "faulthandler.enable(_native_crash_log_handle, all_threads=True)" in source
     assert "async def _run_collector():" in source
 
     heartbeat_calls = [
@@ -99,6 +101,25 @@ def test_main_updates_heartbeat_and_releases_singleton_mutex():
         for node in ast.walk(current.test)
     )
 
+
+def test_psutil_native_crash_paths_are_contained():
+    activity = (ROOT / "activity_worker.py").read_text(encoding="utf-8")
+    hardware = (ROOT / "hardware_worker.py").read_text(encoding="utf-8")
+    guard = (ROOT / "psutil_native_guard.py").read_text(encoding="utf-8")
+    start = (ROOT / "start_all.bat").read_text(encoding="utf-8-sig")
+    watchdog = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+
+    assert "psutil.net_connections" not in activity
+    assert "IsolatedConnectionSampler" in activity
+    assert "psutil.net_connections" in guard
+    assert "psutil.cpu_stats" not in hardware
+    assert r'"\\System\\Context Switches/sec"' in hardware
+    assert ".venv\\Scripts\\pythonw.exe" in start
+    assert ".venv\\Scripts\\pythonw.exe" in watchdog
+    assert "psutil==7.2.2" in requirements
+    assert "068b4bbd" in requirements
+    assert "781d8321" in requirements
 
 def test_duplicate_collector_never_kills_the_live_owner():
     """A duplicate launcher must yield; the watchdog owns deliberate replacement."""

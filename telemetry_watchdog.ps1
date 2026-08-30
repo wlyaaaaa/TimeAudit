@@ -10,7 +10,7 @@
 # This catches a live-but-stuck collector without false-restarting immediately after system sleep.
 $ErrorActionPreference = 'SilentlyContinue'
 $log       = 'E:\Projects\Tools\TimeAudit\telemetry_watchdog.log'
-$py        = 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe'
+$py        = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
 $script    = 'E:\Projects\Tools\TimeAudit\main.py'
 $ahkExe    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
 $ahkScript = 'E:\Projects\Tools\TimeAudit\TimeAudit.ahk'

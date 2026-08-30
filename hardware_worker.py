@@ -117,7 +117,6 @@ class HardwareTelemetryWorker:
         
         self.active_foreground_app = ""
         self.active_foreground_pid = None
-        self.last_ctx_switches = None
         self.last_ts = time.monotonic()
         
         self.network_metrics = {"ping_ms": None, "packet_loss": False, "jitter": 0.0}
@@ -140,6 +139,7 @@ class HardwareTelemetryWorker:
             "cpu_package_temp": None,
             "cpu_package_power": None,
             "system_hard_page_faults": 0,
+            "system_context_switches_rate": 0,
             "disk_max_latency_ms": 0.0,
             
             "cpu_percents": [0.0] * 32,
@@ -221,6 +221,9 @@ class HardwareTelemetryWorker:
                 self.h_hard_faults = add_first_working_counter([
                     "\\Memory\\Pages Input/sec",
                     "\\Memory\\Page Reads/sec"
+                ])
+                self.h_context_switches = add_first_working_counter([
+                    "\\System\\Context Switches/sec"
                 ])
                 self.h_disk_latency = add_first_working_counter([
                     "\\PhysicalDisk(*)\\Avg. Disk sec/Transfer",
@@ -1066,6 +1069,7 @@ class HardwareTelemetryWorker:
             cpu_package_temp = None
             cpu_package_power = None
             system_hard_page_faults = 0
+            system_context_switches_rate = 0
             disk_max_latency_ms = 0.0
 
             if self.pdh_query:
@@ -1095,6 +1099,9 @@ class HardwareTelemetryWorker:
                             cpu_package_power = p_val / 1000.0 if p_val > 1000 else p_val
 
                         system_hard_page_faults = int(get_val(self.h_hard_faults) or 0)
+                        system_context_switches_rate = int(
+                            max(0.0, get_val(self.h_context_switches) or 0.0)
+                        )
 
                         d_val = get_val(self.h_disk_latency)
                         if d_val:
@@ -1148,6 +1155,7 @@ class HardwareTelemetryWorker:
                 self.cached_pdh_data["cpu_package_temp"] = cpu_package_temp
                 self.cached_pdh_data["cpu_package_power"] = cpu_package_power
                 self.cached_pdh_data["system_hard_page_faults"] = system_hard_page_faults
+                self.cached_pdh_data["system_context_switches_rate"] = system_context_switches_rate
                 self.cached_pdh_data["disk_max_latency_ms"] = disk_max_latency_ms
                 
                 self.cached_pdh_data["cpu_percents"] = cpu_percents
@@ -1205,6 +1213,7 @@ class HardwareTelemetryWorker:
             cpu_package_temp = self.cached_pdh_data["cpu_package_temp"]
             cpu_package_power = self.cached_pdh_data["cpu_package_power"]
             system_hard_page_faults = self.cached_pdh_data["system_hard_page_faults"]
+            system_context_switches_rate = self.cached_pdh_data["system_context_switches_rate"]
             disk_max_latency_ms = self.cached_pdh_data["disk_max_latency_ms"]
             
             cpu_percents = self.cached_pdh_data["cpu_percents"]
@@ -1256,12 +1265,9 @@ class HardwareTelemetryWorker:
         except Exception: 
             pass
 
-        current_ctx = psutil.cpu_stats().ctx_switches
-        if self.last_ctx_switches is not None and current_ctx >= self.last_ctx_switches:
-            ctx_rate = int((current_ctx - self.last_ctx_switches) / dt)
-        else:
-            ctx_rate = 0
-        self.last_ctx_switches = current_ctx
+        # psutil 7.2.2 frees its Windows CPU-statistics buffer before reading
+        # ContextSwitches/SystemCalls.  Use the localized-safe PDH rate instead.
+        ctx_rate = int(max(0, system_context_switches_rate))
         
         ram_pct = psutil.virtual_memory().percent
         commit_gb = self._get_commit_charge_gb()

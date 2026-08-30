@@ -4,6 +4,7 @@ setlocal EnableExtensions EnableDelayedExpansion
 :: 自动拉起脚本 - 管理员提权自适应版本
 :: ==========================================
 set "PROJECT_DIR=E:\Projects\Tools\TimeAudit"
+set "PYTHONW=%PROJECT_DIR%\.venv\Scripts\pythonw.exe"
 set "DOCKER_DESKTOP=C:\Program Files\Docker\Docker\Docker Desktop.exe"
 set DOCKER_WAIT_SECONDS=180
 set DB_WAIT_SECONDS=120
@@ -59,7 +60,11 @@ if %errorlevel% neq 0 (
 echo [+] 数据库端口已经就位！
 
 echo [*] 启动后台核心守护进程 + 提权拉起 Python 遥测引擎...
-powershell -WindowStyle Hidden -Command "$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); if ($isAdmin) { Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden } else { Start-Process 'C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs }"
+if not exist "%PYTHONW%" (
+    echo [-] TimeAudit isolated runtime is missing. Run setup_runtime.ps1 first.
+    exit /b 1
+)
+powershell -WindowStyle Hidden -Command "$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); if ($isAdmin) { Start-Process '%PYTHONW%' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden } else { Start-Process '%PYTHONW%' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs }"
 
 echo [+] 引擎启动指令已下发！
 exit /b 0

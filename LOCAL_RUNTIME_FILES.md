@@ -5,6 +5,7 @@ This repository keeps a few baseline configuration files in Git, but some of the
 ## Local-only state
 
 - `tmp/`: one-off reboot checks, post-run notes, and local diagnostic scratch files.
+- `.venv/`: the project-local Python 3.11 runtime created by `setup_runtime.ps1`.
 - `LibreHardwareMonitor.config`: tracked as a baseline file, but this machine's running LibreHardwareMonitor process updates sensor/runtime state frequently.
 
 ## Local handling
@@ -19,3 +20,9 @@ git status -sb
 ```
 
 Review the diff carefully before committing.
+
+Rebuild the isolated telemetry runtime with:
+
+```powershell
+pwsh -NoProfile -ExecutionPolicy Bypass -File .\setup_runtime.ps1
+```

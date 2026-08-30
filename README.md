@@ -97,8 +97,10 @@
 - 每 1 秒驱动硬件、FPS 与前台心跳；每 3 秒驱动全进程资源扫描。慢车道单飞运行，尚未完成时只跳过后续慢车道档位，不排队也不拖住快车道；健康租约超期后停止刷新总心跳，交给外部看门狗恢复。
 - “每秒落一行”表示采样与写库节拍，不表示每个底层传感器都具有原生 1 Hz 新值；LHM/WMI 等较慢来源会安全复用其最近一次有效缓存。Grafana 为控制长时间范围查询成本，仍可把原始 1 秒数据聚合成更大的时间桶。
 - **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
-- **崩溃自愈（两层，注意盲区）**：① 主循环抛 **Python 异常**时，外层 `while True` 等 5 秒重启它；② 但若进程被 **native 崩溃**整个带走（实测 2026-06-22：psutil 的 `_psutil_windows.pyd` 触发 `0xc0000005` 访问冲突，整个 `pythonw` 段错误退出），外层 `while` 也一起死、**兜不住**——曾因此静默停摆 17 小时。这种由下面的「外部进程守护」兜底。
+- **原生崩溃隔离**：2026-06-22 起观测到 psutil `_psutil_windows.pyd` 的 `0xc0000005`。主引擎现已避开上游已确认的 Windows `cpu_stats()` use-after-free，并把 `net_connections()` 放进可独立重启的无状态子进程；子进程崩溃不再带死主引擎。`log/python_fatal.log` 额外保留 payload-free Python fatal stack。
 - **外部进程守护**（补 native 崩溃和“进程活着但采集卡死”盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 1 分钟 + 登录触发、提权、任务失败最多重试 3 次）**独立于引擎**运行。`main.py`、`TimeAudit.ahk` 和 `audit-ingester` 都写无 payload heartbeat；watchdog 先给睡眠恢复留出宽限，再按精确进程/容器身份分别恢复。进程只是 Running 但消息循环或入库循环已经卡死，也会因 heartbeat 陈旧被识别。任务定义由 PCConfig 的 `Install-TimeAuditRuntimeWatchdog.ps1` 恢复，日志见 `telemetry_watchdog.log`。
+
+- **隔离 Python 环境**：运行 `pwsh -File .\setup_runtime.ps1` 创建 `.venv`。启动脚本和 watchdog 只使用 `.venv\Scripts\pythonw.exe`，不再继承全局 Python 中 Open Interpreter 等工具的依赖冲突。
 - **睡眠/唤醒处理**（重点，见第 7 节）：用"墙上时间"判断系统是否刚从睡眠/休眠醒来，醒来后把跨睡眠的脏数据截断掉。
 - **冷启动清理**：每次启动先把上次"关机时没来得及收尾"的前台会话补上结束时间（否则会留下永远不结束的"幽灵行"）。
 - **分区预热**：每 12 小时（按墙上时间）提前把"下一周/下一月"的数据库分区建好，免得到了周一零点没表可写而丢数据。

@@ -3,16 +3,19 @@
 # 安装:  pip install -r requirements.txt
 # ============================================================
 
-# 进程 / 网络连接 / 磁盘 IO / 内存 采集（跨进程系统信息）
-psutil>=5.9
+# 进程 / 网络连接 / 磁盘 IO / 内存采集。
+# 7.2.2 是当前稳定基线；Windows 的 cpu_stats use-after-free 已由 PDH 替代，
+# net_connections 则隔离在可重启子进程。等首个包含上游 068b4bbd 与
+# 781d8321 修复的稳定版发布并通过本项目回归后再解除此 pin。
+psutil==7.2.2
 
 # NVIDIA 显卡 NVML 绑定：读取 GPU 利用率、温度、功耗、显存、PCIe、降频原因。
 # 官方包名是 nvidia-ml-py，但 import 名仍是 pynvml（即 `import pynvml`）。
 # 旧的同名 pynvml 包已废弃；新装机请用 nvidia-ml-py。
-nvidia-ml-py>=12.535
+nvidia-ml-py==13.610.43
 
 # PostgreSQL 异步高并发写入驱动（main.py 批量落库用）
-asyncpg>=0.29
+asyncpg==0.31.0
 
 # 说明：
 # - 本引擎其余底层调用（Win32 句柄、Wintrust 数字签名、PDH 性能计数器、NTDLL 进程快照）

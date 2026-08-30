@@ -4,6 +4,8 @@ warnings.filterwarnings("ignore", category=FutureWarning)
 
 import asyncio
 import datetime
+import faulthandler
+import multiprocessing
 import sys
 import os
 import time
@@ -18,6 +20,17 @@ from db_config import local_dsn
 # 【保留】：全局日志路径定义
 # ==========================================
 LOG_FILE = r"E:\Projects\Tools\TimeAudit\telemetry.log"
+NATIVE_CRASH_LOG = r"E:\Projects\Tools\TimeAudit\log\python_fatal.log"
+
+_native_crash_log_handle = None
+try:
+    os.makedirs(os.path.dirname(NATIVE_CRASH_LOG), exist_ok=True)
+    _native_crash_log_handle = open(
+        NATIVE_CRASH_LOG, "a", encoding="utf-8", buffering=1
+    )
+    faulthandler.enable(_native_crash_log_handle, all_threads=True)
+except Exception:
+    _native_crash_log_handle = None
 
 # ==========================================
 # 线程安全日志代理（支持盘符自愈与屏幕+文件双工同步输出）
@@ -846,6 +859,7 @@ async def _run_collector():
     finally:
         await _cancel_and_reap_activity_task(activity_task)
         await _cancel_and_reap_maintenance_task(maintenance_task)
+        activity_worker.terminate()
         lifecycle_worker.terminate()
         hardware_worker.terminate()
         if pool:
@@ -872,6 +886,7 @@ async def main():
             pass
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     # 【修复】：只有当作为主程序直接运行时，才安全接管控制台标准流。
     # 这样可以防止单元测试导入 main 时，控制台输出流被强行劫持导致屏幕没有日志
     sys.stdout = safe_logger
