@@ -47,6 +47,25 @@ def validate_dashboard_document(dashboard, source="dashboard", expected_uid=None
         if not isinstance(node, dict):
             continue
 
+        transformations = node.get("transformations")
+        if transformations is not None:
+            if not isinstance(transformations, list):
+                raise DashboardContractError(
+                    f"{source}: transformations must be a list at {path}.transformations"
+                )
+            for index, transformation in enumerate(transformations):
+                if not isinstance(transformation, dict):
+                    raise DashboardContractError(
+                        f"{source}: transformation must be an object at "
+                        f"{path}.transformations[{index}]"
+                    )
+                transformation_id = transformation.get("id")
+                if not isinstance(transformation_id, str) or not transformation_id.strip():
+                    raise DashboardContractError(
+                        f"{source}: transformation.id is missing at "
+                        f"{path}.transformations[{index}].id"
+                    )
+
         matcher = node.get("matcher")
         if isinstance(matcher, dict):
             matcher_id = matcher.get("id")

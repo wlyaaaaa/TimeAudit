@@ -135,8 +135,8 @@ def safe_filename(name):
     return (name or "untitled")[:80]
 
 
-HARDWARE_SKU_IN_PARENS = re.compile(
-    r"\s*\((?:RTX\s*\d{4}|\d{4}X3D)\)",
+HARDWARE_SKU_IN_TITLE = re.compile(
+    r"\s*(?:\((?:RTX\s*\d{4}|\d{4}X3D)\)|RTX\s*\d{4}|\d{4}X3D)",
     re.IGNORECASE,
 )
 
@@ -148,19 +148,20 @@ def _normalize_dashboard_value(value, parent_key=None):
         return value
     normalized = {}
     for key, child in value.items():
-        # Numeric dashboard/panel instance ids are machine-local. A matcher id,
-        # however, is semantic Grafana configuration (for example ``byName``)
-        # and Grafana 13 rejects an override when it is missing.
-        if key == "id" and parent_key != "matcher":
+        # Numeric dashboard/panel instance ids are machine-local. Matcher and
+        # transformation ids, however, are semantic Grafana configuration
+        # (for example ``byName`` and ``organize``); Grafana 13 rejects either
+        # object when its id is missing.
+        if key == "id" and parent_key not in {"matcher", "transformations"}:
             continue
         if key == "title" and isinstance(child, str):
-            child = HARDWARE_SKU_IN_PARENS.sub("", child).strip()
+            child = HARDWARE_SKU_IN_TITLE.sub("", child).strip()
         normalized[key] = _normalize_dashboard_value(child, key)
     return normalized
 
 
 def normalize_dashboard_for_public_backup(dashboard):
-    """Remove machine-local ids/SKUs while preserving semantic matcher ids."""
+    """Remove machine-local ids/SKUs while preserving semantic config ids."""
     return _normalize_dashboard_value(dashboard)
 
 

@@ -144,6 +144,7 @@
       "title": "用户使用电脑状态时间轴",
       "transformations": [
         {
+          "id": "organize",
           "options": {
             "excludeByName": {
               "持续秒数": true
@@ -1271,6 +1272,6 @@
   "timezone": "browser",
   "title": "🚀 前台交互与流畅度诊断舱",
   "uid": "addmc8x",
-  "version": 55,
+  "version": 56,
   "weekStart": ""
 }

@@ -77,6 +77,12 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
 
         def assert_matchers(node, source, path="dashboard"):
             if isinstance(node, dict):
+                title = node.get("title")
+                if isinstance(title, str):
+                    self.assertIsNone(
+                        backup.HARDWARE_SKU_IN_TITLE.search(title),
+                        f"{source}: {path}.title contains a hardware model",
+                    )
                 matcher = node.get("matcher")
                 if isinstance(matcher, dict):
                     self.assertIsInstance(
@@ -224,8 +230,15 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
                             }
                         ]
                     },
+                    "transformations": [
+                        {
+                            "id": "organize",
+                            "options": {"excludeByName": {"duration": True}},
+                        }
+                    ],
                 },
                 {"title": "CPU 频率 (9950X3D)"},
+                {"title": "整机显存 RTX 5080 监控"},
             ],
         }
 
@@ -239,8 +252,13 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
             ],
             "byName",
         )
+        self.assertEqual(
+            normalized["panels"][0]["transformations"][0]["id"],
+            "organize",
+        )
         self.assertEqual(normalized["panels"][0]["title"], "GPU 温度与功率")
         self.assertEqual(normalized["panels"][1]["title"], "CPU 频率")
+        self.assertEqual(normalized["panels"][2]["title"], "整机显存 监控")
         self.assertIn("RTX5080", normalized["panels"][0]["description"])
         self.assertEqual(
             backup.resolve_proxy_settings(

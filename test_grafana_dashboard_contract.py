@@ -65,6 +65,14 @@ class GrafanaDashboardContractTests(unittest.TestCase):
         with self.assertRaisesRegex(DashboardContractError, "matcher.id"):
             validate_dashboard_document(dashboard)
 
+    def test_contract_rejects_missing_transformation_id(self):
+        dashboard = valid_dashboard()
+        dashboard["panels"][0]["transformations"] = [
+            {"options": {"excludeByName": {"duration": True}}}
+        ]
+        with self.assertRaisesRegex(DashboardContractError, "transformation.id"):
+            validate_dashboard_document(dashboard)
+
     def test_backup_validates_all_documents_before_writing(self):
         dashboard = valid_dashboard()
         dashboard["panels"][0]["datasource"]["uid"] = "bfoc1vymtgni8a"
