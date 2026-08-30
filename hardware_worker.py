@@ -370,14 +370,15 @@ class HardwareTelemetryWorker:
         header_map,
         app_col_name="application",
         ft_idx=None,
-        observed_at=None,
+        observed_monotonic=None,
     ):
         """Record one PresentMon CSV row under its exact process/application key.
 
         Rows without a usable ProcessID or frame interval are discarded.  The
         parser intentionally does not keep an application-name-only bucket:
         selecting one would allow DWM/other applications (or a reused name) to
-        masquerade as the current foreground process.
+        masquerade as the current foreground process.  ``observed_monotonic``
+        is a test injection in the same monotonic age domain used in production.
         """
         try:
             app_idx = header_map.get(app_col_name)
@@ -404,7 +405,11 @@ class HardwareTelemetryWorker:
             if not self._valid_presentmon_frame_time(frame_time):
                 return False
 
-            timestamp = time.time() if observed_at is None else float(observed_at)
+            timestamp = (
+                time.monotonic()
+                if observed_monotonic is None
+                else float(observed_monotonic)
+            )
             key = (process_id, application)
             with self.lock:
                 window = self.app_windows[key]
@@ -424,17 +429,25 @@ class HardwareTelemetryWorker:
         except (AttributeError, TypeError, ValueError, OverflowError):
             return False
 
-    def _select_presentmon_window(self, foreground_app_name, foreground_pid, now=None):
+    def _select_presentmon_window(
+        self,
+        foreground_app_name,
+        foreground_pid,
+        now_monotonic=None,
+    ):
         """Return a copy of the fresh PresentMon window for the exact foreground PID.
 
         There is deliberately no newest-app fallback.  A missing PID match is
         represented by ``None`` and the caller reports an idle/unknown sample.
+        ``now_monotonic`` is a test injection, never a wall-clock timestamp.
         """
         application = self._normalize_presentmon_application(foreground_app_name)
         process_id = self._parse_presentmon_process_id(foreground_pid)
         if not application or process_id is None:
             return None
-        current_time = time.time() if now is None else float(now)
+        current_time = (
+            time.monotonic() if now_monotonic is None else float(now_monotonic)
+        )
         key = (process_id, application)
         with self.lock:
             last_update = self.app_last_update.get(key)

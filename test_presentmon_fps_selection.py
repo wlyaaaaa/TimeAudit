@@ -4,6 +4,7 @@ import threading
 import unittest
 from collections import defaultdict
 from pathlib import Path
+from unittest import mock
 
 import hardware_worker
 
@@ -34,7 +35,7 @@ class PresentMonFpsSelectionTest(unittest.TestCase):
                 header_map,
                 app_col_name="application",
                 ft_idx=2,
-                observed_at=100.0,
+                observed_monotonic=100.0,
             )
         )
         self.assertTrue(
@@ -43,7 +44,7 @@ class PresentMonFpsSelectionTest(unittest.TestCase):
                 header_map,
                 app_col_name="application",
                 ft_idx=2,
-                observed_at=100.0,
+                observed_monotonic=100.0,
             )
         )
 
@@ -65,11 +66,32 @@ class PresentMonFpsSelectionTest(unittest.TestCase):
                     header_map,
                     app_col_name="application",
                     ft_idx=2,
-                    observed_at=100.0,
+                    observed_monotonic=100.0,
                 )
             )
 
         self.assertEqual([], worker.app_windows[(1001, "game")])
+
+    def test_monotonic_record_gap_clears_the_previous_window(self):
+        worker = self.make_worker()
+        header_map = {
+            "application": 0,
+            "processid": 1,
+            "msbetweenpresents": 2,
+        }
+
+        for frame_time, observed_monotonic in (("10.0", 100.0), ("20.0", 106.0)):
+            self.assertTrue(
+                worker._record_presentmon_sample(
+                    ["game.exe", "1001", frame_time],
+                    header_map,
+                    app_col_name="application",
+                    ft_idx=2,
+                    observed_monotonic=observed_monotonic,
+                )
+            )
+
+        self.assertEqual([20.0], worker.app_windows[(1001, "game")])
 
     def test_missing_fresh_foreground_pid_does_not_fall_back_to_other_app(self):
         worker = self.make_worker()
@@ -80,7 +102,7 @@ class PresentMonFpsSelectionTest(unittest.TestCase):
         worker.app_last_update[(2002, "other")] = now - 1.0
 
         selected = worker._select_presentmon_window(
-            "game.exe", foreground_pid=1001, now=now
+            "game.exe", foreground_pid=1001, now_monotonic=now
         )
 
         self.assertIsNone(selected)
@@ -94,10 +116,40 @@ class PresentMonFpsSelectionTest(unittest.TestCase):
         worker.app_last_update[(2002, "game")] = now - 1.0
 
         selected = worker._select_presentmon_window(
-            "game.exe", foreground_pid=1001, now=now
+            "game.exe", foreground_pid=1001, now_monotonic=now
         )
 
         self.assertEqual([3.57], selected)
+
+    def test_wall_clock_rollback_cannot_keep_a_stale_window_fresh(self):
+        worker = self.make_worker()
+        header_map = {
+            "application": 0,
+            "processid": 1,
+            "msbetweenpresents": 2,
+        }
+
+        with (
+            mock.patch(
+                "hardware_worker.time.monotonic",
+                side_effect=[100.0, 106.0],
+            ),
+            mock.patch("hardware_worker.time.time", side_effect=[200.0, 100.0]),
+        ):
+            self.assertTrue(
+                worker._record_presentmon_sample(
+                    ["game.exe", "1001", "10.0"],
+                    header_map,
+                    app_col_name="application",
+                    ft_idx=2,
+                )
+            )
+            selected = worker._select_presentmon_window(
+                "game.exe",
+                foreground_pid=1001,
+            )
+
+        self.assertIsNone(selected)
 
 
 class PresentMonForegroundWiringTest(unittest.TestCase):
