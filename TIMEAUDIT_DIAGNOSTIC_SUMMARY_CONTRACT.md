@@ -28,8 +28,9 @@ Successful output is `timeaudit.diagnostic-summary.v1` and includes:
   internal-or-boundary gap;
 - aggregate CPU/GPU, memory, disk and network ranges;
 - FPS/1% Low/frame-time statistics only for positive, physically plausible
-  samples whose FPS and frame time agree within a bounded tolerance; rejected
-  positive samples are counted separately instead of being treated as gameplay;
+  samples whose FPS and frame time agree within a 35%/3ms tolerance, including
+  internally consistent severe low-FPS stalls; rejected positive samples are
+  counted separately instead of being treated as gameplay;
 - unioned active, idle, display-off, lock and sleep durations, plus uncovered
   and cross-state-overlap seconds;
 - bounded threshold-occurrence signals and explicit interpretation limits;

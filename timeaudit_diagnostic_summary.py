@@ -54,18 +54,24 @@ WITH bounds AS (
          :'until_utc'::timestamptz AS t_to
 ),
 hardware AS MATERIALIZED (
-  SELECT h.*
+  SELECT
+    h."timestamp", h.current_fps, h.average_fps,
+    h.one_percent_low_fps, h.frametime_ms,
+    h.cpu_total_usage, h.cpu_package_temp, h.cpu_package_power,
+    h.system_dpc_latency, h.gpu_usage, h.gpu_core_temp,
+    h.gpu_hotspot_temp, h.gpu_board_power, h.system_ram_usage_pct,
+    h.disk_max_latency_ms, h.network_ping_ms, h.is_packet_loss
   FROM public.fact_system_hardware h, bounds b
   WHERE h."timestamp" > b.t_from AND h."timestamp" <= b.t_to
 ),
 valid_frames AS MATERIALIZED (
   SELECT h.*
   FROM hardware h
-  WHERE h.current_fps BETWEEN 5 AND 1000
-    AND h.average_fps BETWEEN 5 AND 1000
-    AND h.frametime_ms BETWEEN 0.5 AND 500
+  WHERE h.current_fps BETWEEN 0.5 AND 1000
+    AND h.average_fps BETWEEN 0.5 AND 1000
+    AND h.frametime_ms BETWEEN 0.5 AND 2000
     AND ABS(h.frametime_ms - 1000.0 / h.current_fps)
-        <= GREATEST(5.0, (1000.0 / h.current_fps) * 0.75)
+        <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35)
 ),
 hardware_gaps AS (
   SELECT h.*,
@@ -115,7 +121,7 @@ hardware_summary AS (
     (SELECT ROUND(MIN(current_fps)::numeric, 3) FROM valid_frames) AS fps_min,
     (SELECT ROUND(AVG(one_percent_low_fps)::numeric, 3)
        FROM valid_frames
-      WHERE one_percent_low_fps BETWEEN 1 AND 1000)
+      WHERE one_percent_low_fps BETWEEN 0.1 AND 1000)
       AS fps_one_percent_low_avg,
     (SELECT ROUND((percentile_cont(0.95) WITHIN GROUP (
        ORDER BY frametime_ms))::numeric, 3) FROM valid_frames)
