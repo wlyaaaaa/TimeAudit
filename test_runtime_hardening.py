@@ -240,7 +240,7 @@ def test_backup_payloads_default_to_g_drive():
     assert Path(grafana["DASH_DIR"]) == ROOT / "grafana_dashboards"
 
 
-def test_lhm_uses_non_excluded_port_and_bounded_restart_backoff():
+def test_lhm_uses_non_excluded_port():
     config = ET.parse(ROOT / "LibreHardwareMonitor.config")
     settings = {
         node.attrib.get("key"): node.attrib.get("value")
@@ -251,16 +251,35 @@ def test_lhm_uses_non_excluded_port_and_bounded_restart_backoff():
 
     assert settings["listenerPort"] == "18085"
     assert "return 18085" in worker
-    assert "lhm_restart_not_before" in worker
-    assert "bounded_backoff_seconds" in worker
-    assert "psutil.process_iter(['name', 'exe', 'num_threads'])" in worker
-    assert "int(proc.info.get('num_threads') or 0) > 0" in worker
-    assert re.search(r"lhm_process\.kill\(\)\s+killed = True", worker)
-    assert 'schedule_lhm_retry("process exited")' in worker
-    assert 'schedule_lhm_retry("launch failed")' in worker
     assert "else 18085" in health_test
     assert "py_cmdline_ok or py_heartbeat_ok" in health_test
     assert 'os.path.join(ROOT, "log", "telemetry_heartbeat")' in health_test
+
+
+def test_lhm_has_one_external_runtime_owner():
+    """The Python consumer must not race the scheduled-task LHM owner."""
+    worker = (ROOT / "hardware_worker.py").read_text(encoding="utf-8")
+    start = worker.index("    def _background_lhm_loop")
+    end = worker.index("    def _read_gpu_throttle_reasons", start)
+    lhm_consumer = worker[start:end]
+
+    assert "单一运行时 owner" in lhm_consumer
+    assert "telemetry_watchdog.ps1" in lhm_consumer
+    assert "subprocess.Popen" not in lhm_consumer
+    assert ".kill()" not in lhm_consumer
+    assert ".terminate()" not in lhm_consumer
+    assert "process_iter" not in lhm_consumer
+    assert "当前样本留空" in lhm_consumer
+
+
+def test_health_check_ignores_zero_thread_lhm_crash_ghosts():
+    health = (ROOT / "test_telemetry_health.py").read_text(encoding="utf-8")
+    start = health.index("def proc_alive")
+    end = health.index("def heartbeat_fresh", start)
+    proc_probe = health[start:end]
+
+    assert "'name', 'num_threads'" in proc_probe
+    assert "int(p.info.get('num_threads') or 0) > 0" in proc_probe
 
 
 def test_external_watchdog_recovers_lhm_dead_endpoint_and_crash_ghost():
@@ -300,6 +319,8 @@ if __name__ == "__main__":
     test_ahk_emits_payload_free_progress_heartbeat()
     test_screen_time_dashboard_has_no_grafana_13_style_field_parser()
     test_backup_payloads_default_to_g_drive()
-    test_lhm_uses_non_excluded_port_and_bounded_restart_backoff()
+    test_lhm_uses_non_excluded_port()
+    test_lhm_has_one_external_runtime_owner()
+    test_health_check_ignores_zero_thread_lhm_crash_ghosts()
     test_external_watchdog_recovers_lhm_dead_endpoint_and_crash_ghost()
     test_manual_uses_generic_dashboard_titles()

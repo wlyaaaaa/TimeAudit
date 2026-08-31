@@ -77,9 +77,15 @@ def excluded_tcp_port_ranges():
         return []
 
 def proc_alive(name):
-    for p in psutil.process_iter(['name']):
+    # A crashed WinForms process can remain as a zero-thread ghost for a short
+    # time.  Do not report that ghost as a healthy collector.
+    for p in psutil.process_iter(['name', 'num_threads']):
         try:
-            if p.info['name'] and p.info['name'].lower() == name.lower():
+            if (
+                p.info['name']
+                and p.info['name'].lower() == name.lower()
+                and int(p.info.get('num_threads') or 0) > 0
+            ):
                 return p.pid
         except Exception:
             pass
@@ -133,7 +139,7 @@ async def main():
         py_ok,
         "exact process visible" if py_cmdline_ok else "fresh payload-free heartbeat",
     )
-    check("LibreHardwareMonitor 在运行 (看门狗保活)", lhm_pid is not None, f"PID={lhm_pid}")
+    check("LibreHardwareMonitor 在运行 (计划任务单一 owner)", lhm_pid is not None, f"PID={lhm_pid}")
     pm_ok, pm_detail = evaluate_presentmon_process_status(pm_pid)
     check("PresentMonConsole 按需门控状态正常", pm_ok, pm_detail)
 

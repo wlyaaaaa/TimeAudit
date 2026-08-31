@@ -21,7 +21,6 @@ from collections import defaultdict
 import psutil
 import pynvml
 import atexit
-from runtime_health import bounded_backoff_seconds
 
 NVML_PCIE_UTIL_TX_BYTES = 0
 NVML_PCIE_UTIL_RX_BYTES = 1
@@ -164,7 +163,9 @@ class HardwareTelemetryWorker:
         self._start_native_socket_network_stream()
         self._start_presentmon_listener()
 
-        # 启动后台自动下载线程，拉取最新版外部硬件监视器
+        # 只负责准备外部硬件监视器文件；运行中的 LHM 由独立计划任务/外部
+        # telemetry watchdog 统一拥有，避免本进程与计划任务各拉起一个 NVML
+        # 实例。多个 LHM 实例会在显示拓扑/HDR 切换时放大 NVIDIA 驱动竞态。
         self.lhm_download_thread = threading.Thread(target=self._auto_prepare_lhm_async, daemon=True)
         self.lhm_download_thread.start()
 
@@ -841,24 +842,17 @@ class HardwareTelemetryWorker:
         """通过 LibreHardwareMonitor 内置 Web 服务(/data.json)采集 NVML/PDH 无法可靠提供的真实硬件量：
         CPU Vcore、CPU 封装温度(Tctl/Tdie)与功率、NVIDIA GPU 核心电压与显存结点(热点)温度。
         相比旧的 WMI(root\\LibreHardwareMonitor) 通道：该命名空间在本机并未发布、旧通道长期失败并退化到
-        伪造/静态值；HTTP JSON 通道无需 WMI 注册、稳定且为 LHM 官方推荐。同时内置看门狗保活 LHM 进程。"""
+        伪造/静态值；HTTP JSON 通道无需 WMI 注册，稳定且为 LHM 官方推荐。
+
+        LHM 是本项目之外的单一运行时 owner（计划任务 ``LibreHardwareMonitor``，
+        由 ``telemetry_watchdog.ps1`` 负责恢复）。本 worker 只能读取端点，绝不
+        启动、结束或替换 LHM 进程；否则会与计划任务形成双 owner，在显示/HDR
+        拓扑变化时同时触发多个 NVML 初始化和驱动重置。"""
         import urllib.request
         import json as _json
 
         url = "http://127.0.0.1:%d/data.json" % self._read_lhm_port()
-        lhm_process = None
-        lhm_stuck_fails = 0   # 连续 JSON 拉取失败计数：进程在但 Web 服务卡死时据此强制重启自愈
-        lhm_restart_count = 0
-        lhm_restart_not_before = 0.0
-        lhm_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "LibreHardwareMonitor.exe")
-        normalized_lhm_path = os.path.normcase(os.path.abspath(lhm_path))
-
-        def schedule_lhm_retry(reason):
-            nonlocal lhm_restart_count, lhm_restart_not_before
-            lhm_restart_count += 1
-            restart_delay = bounded_backoff_seconds(lhm_restart_count)
-            lhm_restart_not_before = time.monotonic() + restart_delay
-            print(f"[⚠️ 硬件探针] LHM {reason}；{restart_delay}s 后退避重试。")
+        endpoint_down = False
 
         def flatten(node, path, out):
             text = node.get("Text", "")
@@ -872,41 +866,6 @@ class HardwareTelemetryWorker:
 
         try:
             while not self.stop_event.is_set():
-                # 【看门狗】物理文件存在但进程缺失时，3s 内静默(隐藏窗口)重新拉起。
-                if os.path.exists(lhm_path):
-                    is_alive = bool(lhm_process and lhm_process.poll() is None)
-                    if lhm_process is not None and not is_alive:
-                        lhm_process = None
-                        if time.monotonic() >= lhm_restart_not_before:
-                            schedule_lhm_retry("process exited")
-                    if not is_alive:
-                        lhm_running = False
-                        for proc in psutil.process_iter(['name', 'exe', 'num_threads']):
-                            try:
-                                proc_exe = proc.info.get('exe') or ""
-                                if (proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe"
-                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path
-                                        and int(proc.info.get('num_threads') or 0) > 0):
-                                    lhm_running = True
-                                    break
-                            except Exception:
-                                pass
-                        if not lhm_running and time.monotonic() >= lhm_restart_not_before:
-                            try:
-                                startupinfo = subprocess.STARTUPINFO()
-                                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-                                startupinfo.wShowWindow = 0
-                                lhm_process = subprocess.Popen(
-                                    [lhm_path], startupinfo=startupinfo,
-                                    creationflags=subprocess.CREATE_NO_WINDOW,
-                                    cwd=os.path.dirname(lhm_path)
-                                )
-                                lhm_stuck_fails = 0
-                                print("[🛸 硬件探针] 伴随驱动进程缺失，自动看门狗已隐藏复活 LibreHardwareMonitor。")
-                            except Exception as e:
-                                print(f"[⚠️ 硬件探针] 自动看门狗拉起 LibreHardwareMonitor 失败: {e}")
-                                schedule_lhm_retry("launch failed")
-
                 cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
                 json_ok = False
                 try:
@@ -932,36 +891,12 @@ class HardwareTelemetryWorker:
                 except Exception:
                     pass
 
-                # 【自愈】LHM 进程在、但 Web 服务连续 ~15s 无响应(卡死/端口冲突)时，强制结束 LHM，
-                # 令上方看门狗拉起健康新实例 —— 贯彻"始终在采集、绝不默默降级为 NULL"。
                 if json_ok:
-                    lhm_stuck_fails = 0
-                    lhm_restart_count = 0
-                    lhm_restart_not_before = 0.0
+                    endpoint_down = False
                 else:
-                    lhm_stuck_fails = min(15, lhm_stuck_fails + 1)
-                    if lhm_stuck_fails >= 15 and time.monotonic() >= lhm_restart_not_before:
-                        killed = False
-                        for proc in psutil.process_iter(['name', 'exe', 'num_threads']):
-                            try:
-                                proc_exe = proc.info.get('exe') or ""
-                                if (proc.info['name'] and proc.info['name'].lower() == "librehardwaremonitor.exe"
-                                        and os.path.normcase(os.path.abspath(proc_exe)) == normalized_lhm_path
-                                        and int(proc.info.get('num_threads') or 0) > 0):
-                                    proc.kill()
-                                    killed = True
-                            except Exception:
-                                pass
-                        if lhm_process:
-                            try:
-                                lhm_process.kill()
-                                killed = True
-                            except Exception:
-                                pass
-                            lhm_process = None
-                        if killed:
-                            schedule_lhm_retry("Web 服务连续无响应，已结束项目实例")
-                        lhm_stuck_fails = 0
+                    if not endpoint_down:
+                        print("[⚠️ 硬件探针] LHM Web 端点不可用；由外部 telemetry watchdog 负责恢复，当前样本留空。")
+                        endpoint_down = True
 
                 with self.wmi_lock:
                     self.cached_wmi_temp = cpu_temp
@@ -975,12 +910,8 @@ class HardwareTelemetryWorker:
                         break
                     time.sleep(0.1)
         finally:
-            if lhm_process:
-                try:
-                    lhm_process.terminate()
-                    lhm_process.wait(timeout=1.0)
-                except Exception:
-                    pass
+            # LHM 由外部 owner 管理；此处只结束本 worker 的读取线程。
+            pass
 
     def _read_gpu_throttle_reasons(self):
         """隔离的降频原因读取。GeForce 同样支持该接口(本机 NVIDIA 驱动实测返回 0x0，AI 所谓"仅

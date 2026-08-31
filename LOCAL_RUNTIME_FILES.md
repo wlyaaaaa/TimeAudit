@@ -8,6 +8,10 @@ This repository keeps a few baseline configuration files in Git, but some of the
 - `.venv/`: the project-local Python 3.11 runtime created by `setup_runtime.ps1`.
 - `LibreHardwareMonitor.config`: tracked as a baseline file, but this machine's running LibreHardwareMonitor process updates sensor/runtime state frequently.
 
+The runtime owner is the Windows scheduled task `LibreHardwareMonitor` (with
+`telemetry_watchdog.ps1` as its recovery path). TimeAudit's Python worker is a
+read-only HTTP consumer; it must not launch a second `LibreHardwareMonitor.exe`.
+
 ## Local handling
 
 On this workstation, `LibreHardwareMonitor.config` is marked with Git `skip-worktree` after the public ignore-rule update is committed. This keeps local runtime noise out of routine push audits while preserving the tracked baseline in the repository.
