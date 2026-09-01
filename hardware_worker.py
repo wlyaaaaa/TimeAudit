@@ -550,14 +550,23 @@ class HardwareTelemetryWorker:
             "frametime_jitter": frame_time_jitter,
         }
 
-    def _read_rtss_fps_snapshot(self, process_id):
-        """Read one exact foreground PID from RTSS' documented v2 mapping."""
+    @classmethod
+    def _rtss_candidate_pids(cls, header, process_id):
+        candidates = []
         try:
             target_pid = int(process_id)
         except (TypeError, ValueError):
-            return None
-        if target_pid <= 0:
-            return None
+            target_pid = 0
+        if target_pid > 0:
+            candidates.append(target_pid)
+        if len(header) >= 72 and cls._rtss_u32(header, 4) >= 0x00020010:
+            rtss_foreground_pid = cls._rtss_u32(header, 68)
+            if rtss_foreground_pid > 0 and rtss_foreground_pid not in candidates:
+                candidates.append(rtss_foreground_pid)
+        return candidates
+
+    def _read_rtss_fps_snapshot(self, process_id):
+        """Read exact OS focus, then a fresh RTSS foreground fallback."""
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenFileMappingW.argtypes = [
@@ -604,34 +613,53 @@ class HardwareTelemetryWorker:
                     or not 72 <= array_offset <= 64 * 1024 * 1024
                 ):
                     return None
-                entry_address = None
+                candidate_pids = self._rtss_candidate_pids(
+                    header_before,
+                    process_id,
+                )
+                if not candidate_pids:
+                    return None
+                addresses = {}
                 for index in range(array_size):
                     candidate = view + array_offset + index * entry_size
-                    if struct.unpack("<I", ctypes.string_at(candidate, 4))[0] == target_pid:
-                        entry_address = candidate
+                    candidate_pid = struct.unpack(
+                        "<I",
+                        ctypes.string_at(candidate, 4),
+                    )[0]
+                    if candidate_pid in candidate_pids:
+                        addresses[candidate_pid] = candidate
+                inconsistent = False
+                for candidate_pid in candidate_pids:
+                    entry_address = addresses.get(candidate_pid)
+                    if entry_address is None:
+                        continue
+                    first = ctypes.string_at(entry_address, entry_size)
+                    second = ctypes.string_at(entry_address, entry_size)
+                    header_after = ctypes.string_at(view, 96)
+                    stable_offsets = (0, 272, 280, 5020, 5024)
+                    layout_stable = (
+                        header_before[:32] == header_after[:32]
+                        and header_before[72:80] == header_after[72:80]
+                    )
+                    if not layout_stable or any(
+                        first[offset:offset + 4] != second[offset:offset + 4]
+                        for offset in stable_offsets
+                        if offset + 4 <= entry_size
+                    ):
+                        inconsistent = True
                         break
-                if entry_address is None:
-                    return None
-                first = ctypes.string_at(entry_address, entry_size)
-                second = ctypes.string_at(entry_address, entry_size)
-                header_after = ctypes.string_at(view, 96)
-                stable_offsets = (0, 272, 280, 5020, 5024)
-                layout_stable = (
-                    header_before[:32] == header_after[:32]
-                    and header_before[72:80] == header_after[72:80]
-                )
-                if not layout_stable or any(
-                    first[offset:offset + 4] != second[offset:offset + 4]
-                    for offset in stable_offsets
-                    if offset + 4 <= entry_size
-                ):
+                    if self._rtss_u32(second, 0) != candidate_pid:
+                        inconsistent = True
+                        break
+                    sample = self._parse_rtss_app_entry(
+                        second,
+                        kernel32.GetTickCount(),
+                    )
+                    if sample:
+                        return sample
+                if inconsistent:
                     continue
-                if self._rtss_u32(second, 0) != target_pid:
-                    continue
-                return self._parse_rtss_app_entry(
-                    second,
-                    kernel32.GetTickCount(),
-                )
+                return None
             return None
         finally:
             kernel32.UnmapViewOfFile(view)

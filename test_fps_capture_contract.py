@@ -156,6 +156,33 @@ class FpsCaptureContractTest(unittest.TestCase):
         ):
             self.assertTrue(worker._presentmon_needed())
 
+    def test_rtss_pid_selection_prefers_os_focus_then_fresh_header_fallback(self):
+        header = bytearray(96)
+        struct.pack_into("<I", header, 4, 0x00020014)
+        struct.pack_into("<I", header, 68, 4321)
+
+        self.assertEqual(
+            [1234, 4321],
+            hardware_worker.HardwareTelemetryWorker._rtss_candidate_pids(
+                bytes(header),
+                1234,
+            ),
+        )
+        self.assertEqual(
+            [4321],
+            hardware_worker.HardwareTelemetryWorker._rtss_candidate_pids(
+                bytes(header),
+                4321,
+            ),
+        )
+        self.assertEqual(
+            [4321],
+            hardware_worker.HardwareTelemetryWorker._rtss_candidate_pids(
+                bytes(header),
+                None,
+            ),
+        )
+
     def test_single_ddl_helper_is_called_for_initial_and_reconnect_pools(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8-sig")
         schema = (ROOT / "schema.sql").read_text(encoding="utf-8-sig")
