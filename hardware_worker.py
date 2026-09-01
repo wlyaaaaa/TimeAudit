@@ -108,6 +108,7 @@ class HardwareTelemetryWorker:
     RTSS_SHARED_MEMORY_MIN_VERSION = 0x00020005
     RTSS_FRAME_FRESH_MILLISECONDS = 2000
     RTSS_PRESENTMON_SUPPRESS_SECONDS = 3.0
+    RTSS_DESKTOP_RENDERERS = frozenset({"wallpaper32.exe", "wallpaper64.exe"})
 
     def __init__(self):
         self._last_render_ts = 0.0   # 最近一次检测到活跃渲染的 monotonic 时刻
@@ -119,6 +120,7 @@ class HardwareTelemetryWorker:
         self._presentmon_error = None
         self._presentmon_session_cleanup_done = False
         self._rtss_frame_seen_monotonic = 0.0
+        self._rtss_mapping_available = False
         self.nvml_initialized = False
         self.gpu_handle = None
         self.presentmon_process = None
@@ -352,6 +354,8 @@ class HardwareTelemetryWorker:
 
     def _presentmon_needed(self):
         with self._fps_state_lock:
+            if getattr(self, "_rtss_mapping_available", False):
+                return False
             rtss_recent = (
                 time.monotonic() - self._rtss_frame_seen_monotonic
                 < self.RTSS_PRESENTMON_SUPPRESS_SECONDS
@@ -382,6 +386,31 @@ class HardwareTelemetryWorker:
         if elapsed < cls.PRESENTMON_STARTING_GRACE_SEC:
             return "starting", "presentmon_starting"
         return "waiting_frames", "no_fresh_foreground_frame"
+
+    @classmethod
+    def _resolve_fps_capture_state(
+        cls,
+        rtss_mapping_available,
+        rtss_has_frame,
+        source_available,
+        render_active,
+        presentmon_has_frame,
+        started_monotonic,
+        now_monotonic,
+        error_detail=None,
+    ):
+        if rtss_has_frame:
+            return "active", "rtss_shared_memory_frame"
+        if rtss_mapping_available:
+            return "gated_idle", "rtss_no_active_frame"
+        return cls._map_fps_capture_state(
+            source_available,
+            render_active,
+            presentmon_has_frame,
+            started_monotonic,
+            now_monotonic,
+            error_detail,
+        )
 
     def _update_gpu_render_gate(self, source, gpu_usage, now_monotonic=None):
         """Update the gate only from a validated NVML or LHM utilisation reading."""
@@ -565,8 +594,28 @@ class HardwareTelemetryWorker:
                 candidates.append(rtss_foreground_pid)
         return candidates
 
+    @classmethod
+    def _rtss_entry_is_desktop_renderer(cls, entry_prefix):
+        raw_name = bytes(entry_prefix[4:264]).split(b"\x00", 1)[0]
+        try:
+            name = raw_name.decode("mbcs", errors="ignore")
+        except LookupError:
+            name = raw_name.decode(errors="ignore")
+        normalized = name.replace("/", "\\").rsplit("\\", 1)[-1].casefold()
+        return normalized in cls.RTSS_DESKTOP_RENDERERS
+
     def _read_rtss_fps_snapshot(self, process_id):
         """Read exact OS focus, then a fresh RTSS foreground fallback."""
+
+        def set_mapping_available(value):
+            lock = getattr(self, "_fps_state_lock", None)
+            if lock is None:
+                self._rtss_mapping_available = bool(value)
+            else:
+                with lock:
+                    self._rtss_mapping_available = bool(value)
+
+        set_mapping_available(False)
 
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         kernel32.OpenFileMappingW.argtypes = [
@@ -613,6 +662,7 @@ class HardwareTelemetryWorker:
                     or not 72 <= array_offset <= 64 * 1024 * 1024
                 ):
                     return None
+                set_mapping_available(True)
                 candidate_pids = self._rtss_candidate_pids(
                     header_before,
                     process_id,
@@ -620,19 +670,21 @@ class HardwareTelemetryWorker:
                 if not candidate_pids:
                     return None
                 addresses = {}
+                desktop_renderer_pids = []
                 for index in range(array_size):
                     candidate = view + array_offset + index * entry_size
-                    candidate_pid = struct.unpack(
-                        "<I",
-                        ctypes.string_at(candidate, 4),
-                    )[0]
-                    if candidate_pid in candidate_pids:
+                    entry_prefix = ctypes.string_at(candidate, min(entry_size, 264))
+                    candidate_pid = struct.unpack_from("<I", entry_prefix, 0)[0]
+                    if candidate_pid > 0:
                         addresses[candidate_pid] = candidate
+                        if self._rtss_entry_is_desktop_renderer(entry_prefix):
+                            desktop_renderer_pids.append(candidate_pid)
                 inconsistent = False
-                for candidate_pid in candidate_pids:
+
+                def read_sample(candidate_pid):
                     entry_address = addresses.get(candidate_pid)
                     if entry_address is None:
-                        continue
+                        return None, True
                     first = ctypes.string_at(entry_address, entry_size)
                     second = ctypes.string_at(entry_address, entry_size)
                     header_after = ctypes.string_at(view, 96)
@@ -646,19 +698,50 @@ class HardwareTelemetryWorker:
                         for offset in stable_offsets
                         if offset + 4 <= entry_size
                     ):
-                        inconsistent = True
-                        break
+                        return None, False
                     if self._rtss_u32(second, 0) != candidate_pid:
-                        inconsistent = True
-                        break
-                    sample = self._parse_rtss_app_entry(
+                        return None, False
+                    return self._parse_rtss_app_entry(
                         second,
                         kernel32.GetTickCount(),
-                    )
+                    ), True
+
+                for candidate_pid in candidate_pids:
+                    sample, consistent = read_sample(candidate_pid)
+                    if not consistent:
+                        inconsistent = True
+                        break
                     if sample:
                         return sample
                 if inconsistent:
                     continue
+                for candidate_pid in desktop_renderer_pids:
+                    if candidate_pid in candidate_pids:
+                        continue
+                    sample, consistent = read_sample(candidate_pid)
+                    if not consistent:
+                        inconsistent = True
+                        break
+                    if sample:
+                        return sample
+                if inconsistent:
+                    continue
+                fresh_fallbacks = []
+                for candidate_pid in addresses:
+                    if candidate_pid in candidate_pids:
+                        continue
+                    sample, consistent = read_sample(candidate_pid)
+                    if not consistent:
+                        inconsistent = True
+                        break
+                    if sample:
+                        fresh_fallbacks.append(sample)
+                        if len(fresh_fallbacks) > 1:
+                            break
+                if inconsistent:
+                    continue
+                if len(fresh_fallbacks) == 1:
+                    return fresh_fallbacks[0]
                 return None
             return None
         finally:
@@ -1656,25 +1739,26 @@ class HardwareTelemetryWorker:
             gate_started = self._render_gate_started_monotonic
             presentmon_started = self._presentmon_started_monotonic
             presentmon_error = self._presentmon_error
-        fps_capture_status, fps_capture_detail = self._map_fps_capture_state(
+            rtss_mapping_available = self._rtss_mapping_available
+        fps_capture_status, fps_capture_detail = self._resolve_fps_capture_state(
+            rtss_mapping_available=rtss_mapping_available,
+            rtss_has_frame=bool(rtss_fps),
             source_available=(
                 gpu_metrics_source in {"nvml", "lhm"} and gpu_usage is not None
             ),
             render_active=self._render_active(),
-            has_frame=bool(rtss_fps or frametimes),
+            presentmon_has_frame=bool(frametimes),
             started_monotonic=(
                 presentmon_started
                 if presentmon_started is not None
                 else gate_started
             ),
             now_monotonic=now_ts,
-            error_detail=None if rtss_fps else presentmon_error,
+            error_detail=presentmon_error,
         )
-        if fps_capture_status == "active":
+        if fps_capture_status == "active" and not rtss_fps:
             fps_capture_detail = (
-                "rtss_shared_memory_frame"
-                if rtss_fps
-                else "presentmon_foreground_frame"
+                "presentmon_foreground_frame"
             )
 
         return {

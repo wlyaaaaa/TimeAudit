@@ -121,7 +121,7 @@
 - NVML 读 GPU：利用率、温度、功耗、显存时钟、PCIe、降频原因。
 - PDH 读 CPU：频率、ACPI 温度、硬缺页等。
 - **LibreHardwareMonitor**（外部 exe）通过 HTTP `http://127.0.0.1:18085/data.json` 读 NVML/PDH 给不出来的真值：CPU 核心电压(Vcore)、CPU 封装温度(Tctl/Tdie)、GPU 核心电压、GPU 热点温度。`18085` 避开了启动前会阻断绑定的 Windows TCP 宽排除段；服务在线后出现同端口的单项活动保留是正常现象。
-- **RTSS 官方共享内存**按精确前台 PID 读取 FPS / 帧时间 / 1% Low；RTSS 没有有效帧时才回退项目内的 **PresentMonConsole**。
+- **RTSS 官方共享内存**按精确前台 PID、RTSS 最近前台和唯一新鲜帧源读取 FPS / 帧时间 / 1% Low；映射可用但没有唯一帧源时视为桌面空闲，只有 RTSS 映射不可用时才回退项目内的 **PresentMonConsole**。
 - 自己测 DPC 延迟、Ping、丢包、抖动。
 - PresentMon fallback 有项目内的单 owner 看门狗；RTSS 共享内存只读且不由 TimeAudit 启停。LibreHardwareMonitor 则由独立的 `LibreHardwareMonitor` 计划任务作为唯一运行时 owner，并由 `telemetry_watchdog.ps1` 按端点健康状态恢复。Python 硬件舱只读 `18085`，不会再自行拉起/结束 LHM，避免两个 LHM 实例同时访问 NVML。
 - 写进 `fact_system_hardware`。

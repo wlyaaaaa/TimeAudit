@@ -145,6 +145,7 @@ class FpsCaptureContractTest(unittest.TestCase):
         )
         worker._fps_state_lock = threading.Lock()
         worker._rtss_frame_seen_monotonic = 100.0
+        worker._rtss_mapping_available = False
         with (
             patch.object(worker, "_render_active", return_value=True),
             patch.object(hardware_worker.time, "monotonic", return_value=101.0),
@@ -155,6 +156,30 @@ class FpsCaptureContractTest(unittest.TestCase):
             patch.object(hardware_worker.time, "monotonic", return_value=104.0),
         ):
             self.assertTrue(worker._presentmon_needed())
+
+    def test_available_rtss_mapping_suppresses_presentmon_without_game_frames(self):
+        worker = hardware_worker.HardwareTelemetryWorker.__new__(
+            hardware_worker.HardwareTelemetryWorker
+        )
+        worker._fps_state_lock = threading.Lock()
+        worker._rtss_frame_seen_monotonic = 0.0
+        worker._rtss_mapping_available = True
+        with patch.object(worker, "_render_active", return_value=True):
+            self.assertFalse(worker._presentmon_needed())
+
+    def test_rtss_mapping_without_a_unique_frame_is_healthy_idle(self):
+        status, detail = hardware_worker.HardwareTelemetryWorker._resolve_fps_capture_state(
+            rtss_mapping_available=True,
+            rtss_has_frame=False,
+            source_available=True,
+            render_active=True,
+            presentmon_has_frame=False,
+            started_monotonic=100.0,
+            now_monotonic=120.0,
+            error_detail="presentmon_start_failed",
+        )
+        self.assertEqual("gated_idle", status)
+        self.assertEqual("rtss_no_active_frame", detail)
 
     def test_rtss_pid_selection_prefers_os_focus_then_fresh_header_fallback(self):
         header = bytearray(96)
@@ -181,6 +206,20 @@ class FpsCaptureContractTest(unittest.TestCase):
                 bytes(header),
                 None,
             ),
+        )
+
+    def test_rtss_desktop_renderer_match_is_exact_and_path_safe(self):
+        entry = bytearray(264)
+        path = b"E:\\Steam\\wallpaper64.exe"
+        entry[4:4 + len(path)] = path
+        self.assertTrue(
+            hardware_worker.HardwareTelemetryWorker._rtss_entry_is_desktop_renderer(entry)
+        )
+        other = bytearray(264)
+        other_name = b"not-wallpaper64.exe"
+        other[4:4 + len(other_name)] = other_name
+        self.assertFalse(
+            hardware_worker.HardwareTelemetryWorker._rtss_entry_is_desktop_renderer(other)
         )
 
     def test_single_ddl_helper_is_called_for_initial_and_reconnect_pools(self):
