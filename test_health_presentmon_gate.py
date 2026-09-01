@@ -26,12 +26,23 @@ class PresentMonGateHealthTest(unittest.TestCase):
         self.assertTrue(ok)
         self.assertIn("正帧率样本", detail)
 
-    def test_fresh_zero_fps_is_idle_not_a_failure(self):
-        ok, detail = evaluate_presentmon_capture_status(0, 1.0)
+    def test_fresh_zero_fps_is_idle_only_with_explicit_gate_state(self):
+        ok, detail = evaluate_presentmon_capture_status(0, 1.0, "gated_idle")
 
         self.assertTrue(ok)
         self.assertIn("IDLE", detail)
-        self.assertIn("未执行正帧率 canary", detail)
+
+    def test_fresh_zero_without_capture_status_is_failure(self):
+        ok, detail = evaluate_presentmon_capture_status(0, 1.0)
+
+        self.assertFalse(ok)
+        self.assertIn("缺少", detail)
+
+    def test_waiting_frames_is_failure_even_when_channel_is_fresh(self):
+        ok, detail = evaluate_presentmon_capture_status(0, 1.0, "waiting_frames")
+
+        self.assertFalse(ok)
+        self.assertIn("waiting_frames", detail)
 
     def test_zero_fps_with_stale_channel_is_a_failure(self):
         ok, detail = evaluate_presentmon_capture_status(0, 90.0)

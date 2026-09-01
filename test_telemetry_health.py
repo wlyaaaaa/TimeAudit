@@ -42,15 +42,26 @@ def evaluate_presentmon_process_status(pid):
     return True, "按需门控空闲：非活跃渲染期会主动退出；采集能力见后续 FPS 入库检查"
 
 
-def evaluate_presentmon_capture_status(fps_recent, sample_age_seconds):
+def evaluate_presentmon_capture_status(
+    fps_recent,
+    sample_age_seconds,
+    capture_status=None,
+):
     if int(fps_recent or 0) > 0:
         return True, f"近30分钟已有 {int(fps_recent)} 个正帧率样本"
     try:
         sample_age = float(sample_age_seconds)
     except (TypeError, ValueError):
         sample_age = None
+    normalized_status = str(capture_status or "").strip().lower()
     if sample_age is not None and 0 <= sample_age < 15:
-        return True, "IDLE：硬件/FPS 通道持续写入，当前没有活跃游戏帧；未执行正帧率 canary"
+        if normalized_status == "gated_idle":
+            return True, "IDLE：帧通道持续写入，渲染门明确空闲"
+        if normalized_status == "starting":
+            return True, "STARTING：帧源正在有界热身"
+        if normalized_status:
+            return False, f"帧通道新鲜但采集状态异常: {normalized_status}"
+        return False, "帧通道新鲜但缺少 fps_capture_status，不能推定健康"
     return False, "近期既没有正帧率样本，硬件/FPS 通道样本也不新鲜"
 
 def lhm_port():
@@ -185,18 +196,23 @@ async def main():
                    count(*) FILTER (WHERE cpu_vcore_voltage IS NOT NULL) vcore,
                    count(*) FILTER (WHERE current_fps > 0) fps,
                    round(max(current_fps)::numeric,1) maxfps,
-                   round(EXTRACT(EPOCH FROM (now()-max(timestamp)))::numeric,1) age
+                   round(EXTRACT(EPOCH FROM (now()-max(timestamp)))::numeric,1) age,
+                   (array_agg(fps_capture_status ORDER BY timestamp DESC))[1] capture_status
             FROM public.fact_system_hardware WHERE timestamp > now() - interval '2 minutes'
         """)
         check("硬件表持续写入", row['n'] > 0 and row['age'] < 15, f"{row['n']}行, 距今{row['age']}s")
         # 容忍看门狗重启造成的极少量瞬时 NULL(<20%)，这是"自愈"而非故障
         check("LHM GPU 电压入库 (非伪造)", row['n'] > 0 and row['gpuv'] >= row['n'] * 0.8, f"{row['gpuv']}/{row['n']}")
         check("LHM CPU Vcore 入库 (非伪造)", row['n'] > 0 and row['vcore'] >= row['n'] * 0.8, f"{row['vcore']}/{row['n']}")
-        # 正帧率只能由真实游戏/3D 渲染证明；无游戏时用同一 1 Hz 硬件/FPS
-        # 通道的新鲜度判定 IDLE，避免把“等待游戏”误报为采集故障。
+        # 正帧率只能由真实游戏/3D 渲染证明；零值还必须由显式状态区分
+        # gated idle 与 active-render capture failure。
         fps_recent = await conn.fetchval("SELECT count(*) FROM public.fact_system_hardware WHERE timestamp > now()-interval '30 minutes' AND current_fps > 0")
-        fps_ok, fps_detail = evaluate_presentmon_capture_status(fps_recent, row['age'])
-        check("PresentMon 帧率通道状态", fps_ok, f"{fps_detail}, 当前max={row['maxfps']}fps")
+        fps_ok, fps_detail = evaluate_presentmon_capture_status(
+            fps_recent,
+            row['age'],
+            row['capture_status'],
+        )
+        check("FPS 帧率通道状态", fps_ok, f"{fps_detail}, 当前max={row['maxfps']}fps")
 
         # ---- 5. CPU 归一化 ----
         print("\n[4] 每进程 CPU 归一化 (整机口径 ≤100%)")

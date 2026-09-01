@@ -101,9 +101,24 @@ class HardwareTelemetryWorker:
     PRESENTMON_FRAME_TIME_MIN_MS = 0.1
     PRESENTMON_FRAME_TIME_MAX_MS = 2000.0
     PRESENTMON_FRAME_FRESH_SECONDS = 5.0
+    PRESENTMON_STARTING_GRACE_SEC = 10.0
+    PRESENTMON_SESSION_CLEANUP_TIMEOUT_SEC = 3.0
+    RTSS_SHARED_MEMORY_NAME = "RTSSSharedMemoryV2"
+    RTSS_SHARED_MEMORY_SIGNATURE = 0x52545353
+    RTSS_SHARED_MEMORY_MIN_VERSION = 0x00020005
+    RTSS_FRAME_FRESH_MILLISECONDS = 2000
+    RTSS_PRESENTMON_SUPPRESS_SECONDS = 3.0
 
     def __init__(self):
         self._last_render_ts = 0.0   # 最近一次检测到活跃渲染的 monotonic 时刻
+        self._render_gate_started_monotonic = None
+        self._gpu_render_source_available = False
+        self._gpu_metrics_source = None
+        self._fps_state_lock = threading.Lock()
+        self._presentmon_started_monotonic = None
+        self._presentmon_error = None
+        self._presentmon_session_cleanup_done = False
+        self._rtss_frame_seen_monotonic = 0.0
         self.nvml_initialized = False
         self.gpu_handle = None
         self.presentmon_process = None
@@ -113,6 +128,9 @@ class HardwareTelemetryWorker:
         )
         self._presentmon_claims_inflight = 0
         self.presentmon_thread = None
+        self._presentmon_path = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "PresentMonConsole.exe"
+        )
         
         self.active_foreground_app = ""
         self.active_foreground_pid = None
@@ -130,6 +148,9 @@ class HardwareTelemetryWorker:
         self.cached_cpu_vcore = None        # CPU Vcore (LHM: 主板 Super I/O 真实读数)
         self.cached_gpu_voltage = None      # NVIDIA GPU 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
         self.cached_gpu_hotspot = None      # NVIDIA GPU 显存结点/热点温度 (LHM)
+        self.cached_lhm_gpu_usage = None    # LHM: Load/GPU Core，NVML 失效时的门控回退
+        self.cached_lhm_gpu_core_temp = None
+        self.cached_lhm_gpu_board_power = None
         self.stop_event = threading.Event()
         
         self.pdh_lock = threading.Lock()
@@ -144,15 +165,19 @@ class HardwareTelemetryWorker:
             "cpu_percents": [0.0] * 32,
             "cpu_total_usage": 0.0,
             
-            "gpu_usage": 0.0,
-            "gpu_core_voltage": 0.0,
-            "gpu_core_clock": 0,
-            "gpu_mem_clock": 0,
-            "gpu_core_temp": 0.0,
-            "gpu_hotspot_temp": 0.0,
-            "gpu_board_power": 0.0,
-            "gpu_throttling_reasons": 0,
-            "pcie_bus_utilization": 0.0
+            # ``None`` means unavailable.  Do not turn a lost NVML handle into
+            # a plausible-looking zero GPU sample: that used to suppress the
+            # render gate while a game was visibly running.
+            "gpu_usage": None,
+            "gpu_metrics_source": None,
+            "gpu_core_voltage": None,
+            "gpu_core_clock": None,
+            "gpu_mem_clock": None,
+            "gpu_core_temp": None,
+            "gpu_hotspot_temp": None,
+            "gpu_board_power": None,
+            "gpu_throttling_reasons": None,
+            "pcie_bus_utilization": None
         }
         
         self.dpc_checker = DpcLatencyChecker()
@@ -318,8 +343,299 @@ class HardwareTelemetryWorker:
         t.start()
 
     def _render_active(self):
-        """是否处于活跃渲染期(游戏/3D 在跑)。GPU 占用近期超阈值即为真，含 RENDER_HYSTERESIS_SEC 滞回。"""
-        return (time.monotonic() - self._last_render_ts) < self.RENDER_HYSTERESIS_SEC
+        with self._fps_state_lock:
+            return (
+                self._gpu_render_source_available
+                and (time.monotonic() - self._last_render_ts)
+                < self.RENDER_HYSTERESIS_SEC
+            )
+
+    def _presentmon_needed(self):
+        with self._fps_state_lock:
+            rtss_recent = (
+                time.monotonic() - self._rtss_frame_seen_monotonic
+                < self.RTSS_PRESENTMON_SUPPRESS_SECONDS
+            )
+        return self._render_active() and not rtss_recent
+
+    @classmethod
+    def _map_fps_capture_state(
+        cls,
+        source_available,
+        render_active,
+        has_frame,
+        started_monotonic,
+        now_monotonic,
+        error_detail=None,
+    ):
+        if has_frame:
+            return "active", "foreground_frame_observed"
+        if not source_available:
+            return "source_unavailable", "gpu_source_unavailable"
+        if error_detail:
+            return "error", error_detail
+        if not render_active:
+            return "gated_idle", "render_gate_idle"
+        if started_monotonic is None:
+            return "starting", "presentmon_starting"
+        elapsed = max(0.0, float(now_monotonic) - float(started_monotonic))
+        if elapsed < cls.PRESENTMON_STARTING_GRACE_SEC:
+            return "starting", "presentmon_starting"
+        return "waiting_frames", "no_fresh_foreground_frame"
+
+    def _update_gpu_render_gate(self, source, gpu_usage, now_monotonic=None):
+        """Update the gate only from a validated NVML or LHM utilisation reading."""
+        try:
+            usage = float(gpu_usage)
+        except (TypeError, ValueError):
+            usage = None
+        source_available = (
+            source in {"nvml", "lhm"}
+            and usage is not None
+            and math.isfinite(usage)
+            and 0.0 <= usage <= 100.0
+        )
+        now = time.monotonic() if now_monotonic is None else float(now_monotonic)
+        with self._fps_state_lock:
+            was_render_active = (
+                self._gpu_render_source_available
+                and (now - self._last_render_ts) < self.RENDER_HYSTERESIS_SEC
+            )
+            self._gpu_metrics_source = source if source_available else None
+            self._gpu_render_source_available = source_available
+            if not source_available:
+                self._render_gate_started_monotonic = None
+                return
+            if usage > self.RENDER_GPU_THRESHOLD:
+                if not was_render_active:
+                    self._render_gate_started_monotonic = now
+                self._last_render_ts = now
+            elif not was_render_active:
+                self._render_gate_started_monotonic = None
+
+    def _begin_presentmon_active_boundary(self):
+        with self._fps_state_lock:
+            if self._presentmon_session_cleanup_done:
+                self._presentmon_session_cleanup_done = False
+                if self._presentmon_error == "presentmon_session_cleanup_failed":
+                    self._presentmon_error = None
+
+    def _mark_presentmon_started(self):
+        with self._fps_state_lock:
+            self._presentmon_started_monotonic = time.monotonic()
+            self._presentmon_error = None
+
+    def _mark_presentmon_error(self, detail):
+        with self._fps_state_lock:
+            self._presentmon_error = detail
+
+    @classmethod
+    def _presentmon_terminate_session_command(cls, presentmon_path):
+        """Terminate only this worker's named ETW session, then exit."""
+        return [
+            presentmon_path,
+            "--session_name",
+            cls.PRESENTMON_SESSION_NAME,
+            "--terminate_existing_session",
+            "--no_console_stats",
+        ]
+
+    def _cleanup_presentmon_session_once(self):
+        """Best-effort cleanup for an orphaned named session; never sweep by process name."""
+        presentmon_path = getattr(self, "_presentmon_path", None)
+        if not presentmon_path:
+            return True
+
+        with self._fps_state_lock:
+            if self._presentmon_session_cleanup_done:
+                return self._presentmon_error != "presentmon_session_cleanup_failed"
+            self._presentmon_session_cleanup_done = True
+
+        succeeded = False
+        try:
+            startupinfo = subprocess.STARTUPINFO()
+            startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startupinfo.wShowWindow = 0
+            result = subprocess.run(
+                self._presentmon_terminate_session_command(presentmon_path),
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=self.PRESENTMON_SESSION_CLEANUP_TIMEOUT_SEC,
+                startupinfo=startupinfo,
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                check=False,
+            )
+            succeeded = result.returncode == 0
+        except Exception:
+            succeeded = False
+
+        if not succeeded:
+            self._mark_presentmon_error("presentmon_session_cleanup_failed")
+        return succeeded
+
+    @staticmethod
+    def _rtss_u32(data, offset):
+        if offset < 0 or offset + 4 > len(data):
+            raise ValueError("rtss_field_out_of_bounds")
+        return struct.unpack_from("<I", data, offset)[0]
+
+    @classmethod
+    def _parse_rtss_app_entry(cls, entry, tick_count_milliseconds):
+        """Parse one exact-PID RTSS entry using the installed SDK v2 layout."""
+        if len(entry) < 284:
+            return None
+        time0 = cls._rtss_u32(entry, 268)
+        time1 = cls._rtss_u32(entry, 272)
+        frames = cls._rtss_u32(entry, 276)
+        frame_time_us = cls._rtss_u32(entry, 280)
+        if not time1 or not frame_time_us:
+            return None
+        age_milliseconds = (int(tick_count_milliseconds) - time1) & 0xFFFFFFFF
+        if age_milliseconds > cls.RTSS_FRAME_FRESH_MILLISECONDS:
+            return None
+        if not 100 <= frame_time_us <= 2_000_000:
+            return None
+
+        current_fps = 1_000_000.0 / frame_time_us
+        frame_times_us = []
+        frame_time_jitter = 0.0
+        if len(entry) >= 5028:
+            buffer_count = min(cls._rtss_u32(entry, 920), 1024)
+            raw_buffer = struct.unpack_from("<1024I", entry, 924)
+            frame_times_us = [
+                value for value in raw_buffer
+                if 100 <= value <= 2_000_000
+            ]
+            if buffer_count and len(frame_times_us) > buffer_count:
+                frame_times_us = frame_times_us[-buffer_count:]
+            buffer_fps_tenths = cls._rtss_u32(entry, 5024)
+            if 5 <= buffer_fps_tenths <= 100_000:
+                current_fps = buffer_fps_tenths / 10.0
+            if buffer_count >= 2:
+                buffer_position = cls._rtss_u32(entry, 5020) & 1023
+                last_value = raw_buffer[(buffer_position - 1) & 1023]
+                previous_value = raw_buffer[(buffer_position - 2) & 1023]
+                if (
+                    100 <= last_value <= 2_000_000
+                    and 100 <= previous_value <= 2_000_000
+                ):
+                    frame_time_jitter = abs(last_value - previous_value) / 1000.0
+
+        period = (time1 - time0) & 0xFFFFFFFF
+        average_fps = 1000.0 * frames / period if frames and period else None
+        if average_fps is None and frame_times_us:
+            average_fps = 1_000_000.0 / (
+                sum(frame_times_us) / len(frame_times_us)
+            )
+
+        one_percent_low_fps = None
+        if len(entry) >= 9180:
+            low_tenths = cls._rtss_u32(entry, 9176)
+            if 5 <= low_tenths <= 100_000:
+                one_percent_low_fps = low_tenths / 10.0
+        if one_percent_low_fps is None and frame_times_us:
+            sorted_frame_times = sorted(frame_times_us)
+            low_index = min(
+                len(sorted_frame_times) - 1,
+                int(len(sorted_frame_times) * 0.99),
+            )
+            one_percent_low_fps = 1_000_000.0 / sorted_frame_times[low_index]
+
+        return {
+            "current_fps": current_fps,
+            "average_fps": average_fps,
+            "one_percent_low_fps": one_percent_low_fps,
+            "frametime_ms": frame_time_us / 1000.0,
+            "frametime_jitter": frame_time_jitter,
+        }
+
+    def _read_rtss_fps_snapshot(self, process_id):
+        """Read one exact foreground PID from RTSS' documented v2 mapping."""
+        try:
+            target_pid = int(process_id)
+        except (TypeError, ValueError):
+            return None
+        if target_pid <= 0:
+            return None
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenFileMappingW.argtypes = [
+            ctypes.c_uint32,
+            ctypes.c_bool,
+            ctypes.c_wchar_p,
+        ]
+        kernel32.OpenFileMappingW.restype = ctypes.c_void_p
+        kernel32.MapViewOfFile.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_uint32,
+            ctypes.c_size_t,
+        ]
+        kernel32.MapViewOfFile.restype = ctypes.c_void_p
+        kernel32.UnmapViewOfFile.argtypes = [ctypes.c_void_p]
+        kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+        kernel32.GetTickCount.restype = ctypes.c_uint32
+
+        file_map_read = 0x0004
+        handle = kernel32.OpenFileMappingW(
+            file_map_read,
+            False,
+            self.RTSS_SHARED_MEMORY_NAME,
+        )
+        if not handle:
+            return None
+        view = kernel32.MapViewOfFile(handle, file_map_read, 0, 0, 0)
+        if not view:
+            kernel32.CloseHandle(handle)
+            return None
+        try:
+            for _ in range(3):
+                header_before = ctypes.string_at(view, 96)
+                signature, version, entry_size, array_offset, array_size = (
+                    struct.unpack_from("<5I", header_before, 0)
+                )
+                if (
+                    signature != self.RTSS_SHARED_MEMORY_SIGNATURE
+                    or version < self.RTSS_SHARED_MEMORY_MIN_VERSION
+                    or not 284 <= entry_size <= 65_536
+                    or not 1 <= array_size <= 4096
+                    or not 72 <= array_offset <= 64 * 1024 * 1024
+                ):
+                    return None
+                entry_address = None
+                for index in range(array_size):
+                    candidate = view + array_offset + index * entry_size
+                    if struct.unpack("<I", ctypes.string_at(candidate, 4))[0] == target_pid:
+                        entry_address = candidate
+                        break
+                if entry_address is None:
+                    return None
+                first = ctypes.string_at(entry_address, entry_size)
+                second = ctypes.string_at(entry_address, entry_size)
+                header_after = ctypes.string_at(view, 96)
+                stable_offsets = (0, 272, 280, 5020, 5024)
+                layout_stable = (
+                    header_before[:32] == header_after[:32]
+                    and header_before[72:80] == header_after[72:80]
+                )
+                if not layout_stable or any(
+                    first[offset:offset + 4] != second[offset:offset + 4]
+                    for offset in stable_offsets
+                    if offset + 4 <= entry_size
+                ):
+                    continue
+                if self._rtss_u32(second, 0) != target_pid:
+                    continue
+                return self._parse_rtss_app_entry(
+                    second,
+                    kernel32.GetTickCount(),
+                )
+            return None
+        finally:
+            kernel32.UnmapViewOfFile(view)
+            kernel32.CloseHandle(handle)
 
     @classmethod
     def _presentmon_command(cls, presentmon_path):
@@ -643,15 +959,22 @@ class HardwareTelemetryWorker:
             pm_logger.info("=== PresentMon 守护线程已启动 ===")
             while not self.stop_event.is_set():
                 # 【门控】非活跃渲染期(桌面/窗口化轻载)不运行 PresentMon：确保其已被杀掉后等待重判。
-                if not self._render_active():
+                if not self._presentmon_needed():
                     self._stop_owned_presentmon_process()
+                    self._cleanup_presentmon_session_once()
                     time.sleep(3.0)
                     continue
+                self._begin_presentmon_active_boundary()
                 script_dir = os.path.dirname(os.path.abspath(__file__))
-                pm_path = os.path.join(script_dir, "PresentMonConsole.exe")
+                pm_path = getattr(
+                    self,
+                    "_presentmon_path",
+                    os.path.join(script_dir, "PresentMonConsole.exe"),
+                )
                 if not os.path.exists(pm_path):
-                    pm_logger.error(f"未找到可执行文件 {pm_path}")
+                    pm_logger.error("未找到 PresentMon 可执行文件")
                     pm_path = "PresentMonConsole.exe"
+                    self._presentmon_path = pm_path
 
                 if (
                     self.presentmon_process is not None
@@ -687,6 +1010,7 @@ class HardwareTelemetryWorker:
                         process, launch_reserved=True
                     ):
                         break
+                    self._mark_presentmon_started()
                 except Exception as e:
                     if not launch_handed_off:
                         self._finish_presentmon_claim()
@@ -694,6 +1018,7 @@ class HardwareTelemetryWorker:
                     # 如非提权环境下的 WinError 740(需要提升)、ETW 会话被占用等。这些异常会击穿 except、
                     # 让整个看门狗线程永久死亡，再不重启 PresentMon。改为兜底退避重试，绝不让守护线程崩溃。
                     pm_logger.error(f"启动 PresentMon 失败，5 秒后重试: {e}")
+                    self._mark_presentmon_error("presentmon_start_failed")
                     time.sleep(5)
                     continue
 
@@ -754,14 +1079,16 @@ class HardwareTelemetryWorker:
                     except queue.Empty:
                         if process.poll() is not None:
                             # 🟢 核心修复：一旦 PresentMon 意外崩塌，强制冷冻 3 秒再重启，拒绝高频连击显卡驱动
+                            self._mark_presentmon_error("presentmon_exited")
                             time.sleep(3.0)
                             break
-                        if not self._render_active():
+                        if not self._presentmon_needed():
                             # 【门控】渲染已停止(退出游戏/回到桌面) → 杀掉 PresentMon，回到外层门控等待。
                             self._stop_owned_presentmon_process(process)
                             break
                         continue
                     except Exception:
+                        self._mark_presentmon_error("presentmon_reader_failed")
                         break
 
                 self._stop_owned_presentmon_process(process)
@@ -838,9 +1165,56 @@ class HardwareTelemetryWorker:
         except Exception:
             return None
 
+    @staticmethod
+    def _valid_lhm_metric(value, minimum, maximum):
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(numeric) or numeric < minimum or numeric > maximum:
+            return None
+        return numeric
+
+    @classmethod
+    def _extract_lhm_gpu_metrics(cls, flat):
+        result = {
+            "gpu_usage": None,
+            "gpu_core_temp": None,
+            "gpu_board_power": None,
+        }
+        for raw_key, raw_value in (flat or {}).items():
+            key = str(raw_key or "").lower()
+            if "nvidia" not in key:
+                continue
+            value = cls._lhm_num(raw_value)
+            if key.endswith("/load/gpu core"):
+                result["gpu_usage"] = cls._valid_lhm_metric(value, 0.0, 100.0)
+            elif key.endswith("/temperatures/gpu core"):
+                result["gpu_core_temp"] = cls._valid_lhm_metric(value, 0.0, 150.0)
+            elif key.endswith("/powers/gpu power"):
+                result["gpu_board_power"] = cls._valid_lhm_metric(value, 0.0, 2000.0)
+        return result
+
+    @classmethod
+    def _merge_gpu_metrics(cls, nvml_metrics, lhm_metrics):
+        nvml_metrics = nvml_metrics or {}
+        lhm_metrics = lhm_metrics or {}
+        unavailable = dict.fromkeys((
+            "gpu_usage", "gpu_core_voltage", "gpu_core_clock", "gpu_mem_clock",
+            "gpu_core_temp", "gpu_hotspot_temp", "gpu_board_power",
+            "gpu_throttling_reasons", "pcie_bus_utilization",
+        ))
+        if nvml_metrics.get("source_available"):
+            return "nvml", {key: nvml_metrics.get(key) for key in unavailable}
+        if lhm_metrics.get("gpu_usage") is None:
+            return None, unavailable
+        result = unavailable.copy()
+        result.update(lhm_metrics)
+        return "lhm", result
+
     def _background_lhm_loop(self):
         """通过 LibreHardwareMonitor 内置 Web 服务(/data.json)采集 NVML/PDH 无法可靠提供的真实硬件量：
-        CPU Vcore、CPU 封装温度(Tctl/Tdie)与功率、NVIDIA GPU 核心电压与显存结点(热点)温度。
+        CPU Vcore、CPU 封装温度(Tctl/Tdie)与功率，以及 NVIDIA GPU Core Load、温度、功耗、电压与热点。
         相比旧的 WMI(root\\LibreHardwareMonitor) 通道：该命名空间在本机并未发布、旧通道长期失败并退化到
         伪造/静态值；HTTP JSON 通道无需 WMI 注册，稳定且为 LHM 官方推荐。
 
@@ -867,6 +1241,11 @@ class HardwareTelemetryWorker:
         try:
             while not self.stop_event.is_set():
                 cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
+                lhm_gpu_metrics = {
+                    "gpu_usage": None,
+                    "gpu_core_temp": None,
+                    "gpu_board_power": None,
+                }
                 json_ok = False
                 try:
                     with urllib.request.urlopen(url, timeout=1.5) as resp:
@@ -888,6 +1267,7 @@ class HardwareTelemetryWorker:
                             # 优先真正的核心热点(Hot Spot)，否则采用显存结点(Memory Junction)。
                             if v is not None and (gpu_hotspot is None or "hot spot" in key):
                                 gpu_hotspot = v
+                    lhm_gpu_metrics = self._extract_lhm_gpu_metrics(flat)
                 except Exception:
                     pass
 
@@ -904,6 +1284,9 @@ class HardwareTelemetryWorker:
                     self.cached_cpu_vcore = cpu_vcore
                     self.cached_gpu_voltage = gpu_voltage
                     self.cached_gpu_hotspot = gpu_hotspot
+                    self.cached_lhm_gpu_usage = lhm_gpu_metrics["gpu_usage"]
+                    self.cached_lhm_gpu_core_temp = lhm_gpu_metrics["gpu_core_temp"]
+                    self.cached_lhm_gpu_board_power = lhm_gpu_metrics["gpu_board_power"]
 
                 for _ in range(10):
                     if self.stop_event.is_set():
@@ -943,9 +1326,10 @@ class HardwareTelemetryWorker:
         隔离，故只有核心 util/温度/功率/时钟真正失败才会卸载并重置 NVML(交后台循环重初始化)。
         抽成独立方法亦便于测试在不依赖后台线程时序的前提下确定性校验热点合并逻辑(test_04)。"""
         res = {
-            "gpu_usage": 0.0, "gpu_core_voltage": 0.0, "gpu_core_clock": 0, "gpu_mem_clock": 0,
-            "gpu_core_temp": 0.0, "gpu_hotspot_temp": 0.0, "gpu_board_power": 0.0,
-            "gpu_throttling_reasons": 0, "pcie_bus_utilization": 0.0,
+            "source_available": False,
+            "gpu_usage": None, "gpu_core_voltage": None, "gpu_core_clock": None, "gpu_mem_clock": None,
+            "gpu_core_temp": None, "gpu_hotspot_temp": None, "gpu_board_power": None,
+            "gpu_throttling_reasons": None, "pcie_bus_utilization": None,
         }
         if not self.nvml_initialized:
             return res
@@ -969,13 +1353,13 @@ class HardwareTelemetryWorker:
                 res["gpu_core_clock"] = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS))
                 # 列类型为 integer，NVML 返回真实显存时钟(MHz)；去掉旧的 smallint(32767)截断 bug。
                 mem_clock = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM))
-                res["gpu_mem_clock"] = mem_clock if 0 <= mem_clock <= 100000 else 0
+                res["gpu_mem_clock"] = mem_clock if 0 <= mem_clock <= 100000 else None
 
                 # 占位：下游 collect_hardware_snapshot 用 LHM 真实核心电压覆盖(NVML 在 GeForce 无法提供)。
-                res["gpu_core_voltage"] = 0.0
                 # 易在特定驱动/版本上抛异常的非核心调用——各自隔离，绝不连累上面已取得的核心指标。
                 res["gpu_throttling_reasons"] = self._read_gpu_throttle_reasons()
                 res["pcie_bus_utilization"] = self._read_gpu_pcie_util()
+                res["source_available"] = True
             except Exception:
                 try:
                     pynvml.nvmlShutdown()
@@ -1054,32 +1438,37 @@ class HardwareTelemetryWorker:
             else:
                 self._init_pdh_cppc_engine()
 
-            if self.nvml_initialized:
-                g = self._sample_nvml_gpu_metrics()
-                gpu_usage = g["gpu_usage"]
-                gpu_voltage_est = g["gpu_core_voltage"]
-                gpu_core_clock = g["gpu_core_clock"]
-                gpu_mem_clock = g["gpu_mem_clock"]
-                gpu_core_temp = g["gpu_core_temp"]
-                gpu_hotspot_temp = g["gpu_hotspot_temp"]
-                gpu_board_power = g["gpu_board_power"]
-                gpu_throttling_reasons = g["gpu_throttling_reasons"]
-                pcie_bus_utilization = g["pcie_bus_utilization"]
-            else:
-                gpu_usage = 0.0
-                gpu_voltage_est = 0.0
-                gpu_core_clock = 0
-                gpu_mem_clock = 0
-                gpu_core_temp = 0.0
-                gpu_hotspot_temp = 0.0
-                gpu_board_power = 0.0
-                gpu_throttling_reasons = 0
-                pcie_bus_utilization = 0.0
+            nvml_metrics = (
+                self._sample_nvml_gpu_metrics()
+                if self.nvml_initialized
+                else {"source_available": False}
+            )
+            if not self.nvml_initialized:
+                # A failed handle is retried in-process, but its unavailable
+                # reading never becomes a synthetic zero sample.
                 self._init_nvml()
 
-            # 【PresentMon 门控】GPU 占用高=有游戏/3D 在跑，记录时刻供 PresentMon 看门狗判断是否该运行。
-            if gpu_usage is not None and gpu_usage > self.RENDER_GPU_THRESHOLD:
-                self._last_render_ts = time.monotonic()
+            with self.wmi_lock:
+                lhm_metrics = {
+                    "gpu_usage": self.cached_lhm_gpu_usage,
+                    "gpu_core_temp": self.cached_lhm_gpu_core_temp,
+                    "gpu_board_power": self.cached_lhm_gpu_board_power,
+                }
+
+            gpu_metrics_source, gpu_metrics = self._merge_gpu_metrics(
+                nvml_metrics,
+                lhm_metrics,
+            )
+            gpu_usage = gpu_metrics["gpu_usage"]
+            gpu_voltage_est = gpu_metrics["gpu_core_voltage"]
+            gpu_core_clock = gpu_metrics["gpu_core_clock"]
+            gpu_mem_clock = gpu_metrics["gpu_mem_clock"]
+            gpu_core_temp = gpu_metrics["gpu_core_temp"]
+            gpu_hotspot_temp = gpu_metrics["gpu_hotspot_temp"]
+            gpu_board_power = gpu_metrics["gpu_board_power"]
+            gpu_throttling_reasons = gpu_metrics["gpu_throttling_reasons"]
+            pcie_bus_utilization = gpu_metrics["pcie_bus_utilization"]
+            self._update_gpu_render_gate(gpu_metrics_source, gpu_usage)
 
             with self.pdh_lock:
                 self.cached_pdh_data["cpu_mhz"] = cpu_mhz
@@ -1093,6 +1482,7 @@ class HardwareTelemetryWorker:
                 self.cached_pdh_data["cpu_total_usage"] = cpu_total
                 
                 self.cached_pdh_data["gpu_usage"] = gpu_usage
+                self.cached_pdh_data["gpu_metrics_source"] = gpu_metrics_source
                 self.cached_pdh_data["gpu_core_voltage"] = gpu_voltage_est
                 self.cached_pdh_data["gpu_core_clock"] = gpu_core_clock
                 self.cached_pdh_data["gpu_mem_clock"] = gpu_mem_clock
@@ -1151,6 +1541,7 @@ class HardwareTelemetryWorker:
             cpu_total = self.cached_pdh_data["cpu_total_usage"]
             
             gpu_usage = self.cached_pdh_data["gpu_usage"]
+            gpu_metrics_source = self.cached_pdh_data.get("gpu_metrics_source")
             gpu_core_voltage = self.cached_pdh_data["gpu_core_voltage"]
             gpu_core_clock = self.cached_pdh_data["gpu_core_clock"]
             gpu_mem_clock = self.cached_pdh_data["gpu_mem_clock"]
@@ -1206,11 +1597,23 @@ class HardwareTelemetryWorker:
         system_dpc_latency = self.dpc_checker.get_latency_us()
 
         current_fps = average_fps = one_percent_low_fps = frametime_ms = frametime_jitter = None
-        frametimes = self._select_presentmon_window(
-            self.active_foreground_app,
-            self.active_foreground_pid,
-        )
-        if frametimes:
+        rtss_fps = self._read_rtss_fps_snapshot(self.active_foreground_pid)
+        frametimes = []
+        if rtss_fps:
+            current_fps = rtss_fps["current_fps"]
+            average_fps = rtss_fps["average_fps"]
+            one_percent_low_fps = rtss_fps["one_percent_low_fps"]
+            frametime_ms = rtss_fps["frametime_ms"]
+            frametime_jitter = rtss_fps["frametime_jitter"]
+            with self._fps_state_lock:
+                self._rtss_frame_seen_monotonic = now_ts
+                self._presentmon_error = None
+        else:
+            frametimes = self._select_presentmon_window(
+                self.active_foreground_app,
+                self.active_foreground_pid,
+            )
+        if not rtss_fps and frametimes:
             sorted_ft = sorted(frametimes)
             low_99_idx = min(len(sorted_ft) - 1, int(len(sorted_ft) * 0.99))
             ft = frametimes[-1]
@@ -1220,6 +1623,31 @@ class HardwareTelemetryWorker:
             average_fps = 1000.0 / (sum(frametimes) / len(frametimes))
             frametime_ms = ft
             frametime_jitter = abs(frametimes[-1] - frametimes[-2]) if len(frametimes) > 1 else 0.0
+
+        with self._fps_state_lock:
+            gate_started = self._render_gate_started_monotonic
+            presentmon_started = self._presentmon_started_monotonic
+            presentmon_error = self._presentmon_error
+        fps_capture_status, fps_capture_detail = self._map_fps_capture_state(
+            source_available=(
+                gpu_metrics_source in {"nvml", "lhm"} and gpu_usage is not None
+            ),
+            render_active=self._render_active(),
+            has_frame=bool(rtss_fps or frametimes),
+            started_monotonic=(
+                presentmon_started
+                if presentmon_started is not None
+                else gate_started
+            ),
+            now_monotonic=now_ts,
+            error_detail=None if rtss_fps else presentmon_error,
+        )
+        if fps_capture_status == "active":
+            fps_capture_detail = (
+                "rtss_shared_memory_frame"
+                if rtss_fps
+                else "presentmon_foreground_frame"
+            )
 
         return {
             "current_fps": current_fps if current_fps is not None else 0.0,
@@ -1238,15 +1666,17 @@ class HardwareTelemetryWorker:
             "system_ram_usage_pct": ram_pct,
             "system_commit_size_gb": commit_gb, 
             "system_hard_page_faults": system_hard_page_faults,
-            "gpu_usage": gpu_usage if gpu_usage is not None else 0.0,
+            "gpu_usage": gpu_usage,
             "gpu_core_voltage": gpu_core_voltage,   # LHM(NVAPI) NVIDIA GPU 真实核心电压；不可用时写 NULL
-            "gpu_core_clock": gpu_core_clock if gpu_core_clock is not None else 0,
-            "gpu_mem_clock": gpu_mem_clock if gpu_mem_clock is not None else 0,
-            "gpu_core_temp": gpu_core_temp if gpu_core_temp is not None else 0.0, 
-            "gpu_hotspot_temp": gpu_hotspot_temp if gpu_hotspot_temp is not None else 0.0, 
-            "gpu_board_power": gpu_board_power if gpu_board_power is not None else 0.0, 
-            "gpu_throttling_reasons": gpu_throttling_reasons if gpu_throttling_reasons is not None else 0,
-            "pcie_bus_utilization": pcie_bus_utilization if pcie_bus_utilization is not None else 0.0, 
+            "gpu_core_clock": gpu_core_clock,
+            "gpu_mem_clock": gpu_mem_clock,
+            "gpu_core_temp": gpu_core_temp,
+            "gpu_hotspot_temp": gpu_hotspot_temp,
+            "gpu_board_power": gpu_board_power,
+            "gpu_throttling_reasons": gpu_throttling_reasons,
+            "pcie_bus_utilization": pcie_bus_utilization,
+            "fps_capture_status": fps_capture_status,
+            "fps_capture_detail": fps_capture_detail,
             "disk_max_latency_ms": disk_max_latency_ms if disk_max_latency_ms is not None else 0.0,
             "network_ping_ms": self.network_metrics["ping_ms"], 
             "is_packet_loss": self.network_metrics["packet_loss"], 
@@ -1261,29 +1691,32 @@ class HardwareTelemetryWorker:
             
         ccd0_load = data.get("cpu_ccd0_usage", 0.0)
         ccd1_load = data.get("cpu_ccd1_usage", 0.0)
+        fps_capture_status = data.get("fps_capture_status", "source_unavailable")
+        fps_capture_detail = data.get("fps_capture_detail", "gpu_source_unavailable")
 
         query = """
             INSERT INTO public.fact_system_hardware 
             ("timestamp", current_fps, average_fps, one_percent_low_fps, frametime_ms, frametime_jitter,
+             fps_capture_status, fps_capture_detail,
              cpu_total_usage, cpu_vcore_voltage, cpu_clock_mhz, cpu_package_temp, cpu_package_power, 
              system_dpc_latency, system_context_switches, gpu_usage, gpu_core_voltage, gpu_core_clock, gpu_mem_clock, 
              gpu_core_temp, gpu_hotspot_temp, gpu_board_power, gpu_throttling_reasons, pcie_bus_utilization,
              system_ram_usage_pct, system_commit_size_gb, system_hard_page_faults, disk_max_latency_ms,
              network_ping_ms, is_packet_loss, network_jitter, cpu_ccd0_usage, cpu_ccd1_usage)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31);
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33);
         """
         async with pool.acquire() as conn:
             await conn.execute(
                 query, timestamp, data["current_fps"], data["average_fps"], data["one_percent_low_fps"],
-                data["frametime_ms"], data["frametime_jitter"], data["cpu_total_usage"], data["cpu_vcore_voltage"],
-                data["cpu_clock_mhz"], data["cpu_package_temp"], data["cpu_package_power"],
-                data["system_dpc_latency"], data["system_context_switches"], data["gpu_usage"], data["gpu_core_voltage"],
-                data["gpu_core_clock"], data["gpu_mem_clock"], data["gpu_core_temp"], data["gpu_hotspot_temp"],
-                data["gpu_board_power"], data["gpu_throttling_reasons"], data["pcie_bus_utilization"],
-                data["system_ram_usage_pct"], data["system_commit_size_gb"], data["system_hard_page_faults"],
-                data["disk_max_latency_ms"], data["network_ping_ms"], 
-                1 if data["is_packet_loss"] else 0, data["network_jitter"],
-                ccd0_load, ccd1_load
+                data["frametime_ms"], data["frametime_jitter"], fps_capture_status, fps_capture_detail,
+                data["cpu_total_usage"], data["cpu_vcore_voltage"], data["cpu_clock_mhz"],
+                data["cpu_package_temp"], data["cpu_package_power"], data["system_dpc_latency"],
+                data["system_context_switches"], data["gpu_usage"], data["gpu_core_voltage"],
+                data["gpu_core_clock"], data["gpu_mem_clock"], data["gpu_core_temp"],
+                data["gpu_hotspot_temp"], data["gpu_board_power"], data["gpu_throttling_reasons"],
+                data["pcie_bus_utilization"], data["system_ram_usage_pct"], data["system_commit_size_gb"],
+                data["system_hard_page_faults"], data["disk_max_latency_ms"], data["network_ping_ms"],
+                1 if data["is_packet_loss"] else 0, data["network_jitter"], ccd0_load, ccd1_load
             )
 
     def terminate(self):
@@ -1302,6 +1735,9 @@ class HardwareTelemetryWorker:
                 self._presentmon_process_condition.wait()
         if hasattr(self, 'presentmon_process'):
             self._stop_owned_presentmon_process(timeout=1.0)
+        # A force-killed owner process can leave the named ETW session behind.
+        # This helper targets only our session and is idempotent per boundary.
+        self._cleanup_presentmon_session_once()
         
         if hasattr(self, 'pdh_thread') and self.pdh_thread:
             try:

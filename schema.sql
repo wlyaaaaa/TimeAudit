@@ -165,6 +165,11 @@ CREATE TABLE IF NOT EXISTS public.fact_system_hardware (
     one_percent_low_fps     real,
     frametime_ms            real,
     frametime_jitter        real,
+    -- Stable, public-safe lifecycle for the FPS channel.  The numerical FPS
+    -- fields alone cannot distinguish no game, an unopened gate, or a broken
+    -- PresentMon capture path.
+    fps_capture_status      text,
+    fps_capture_detail      text,
     cpu_total_usage         real,
     cpu_vcore_voltage       real,
     cpu_clock_mhz           integer,

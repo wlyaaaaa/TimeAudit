@@ -366,6 +366,20 @@ def get_month_bounds(delta_months=0):
     end_date = datetime.date(year + 1, 1, 1) if month == 12 else datetime.date(year, month + 1, 1)
     return year, month, f"{start_date} 00:00:00+08", f"{end_date} 00:00:00+08"
 
+async def ensure_fps_capture_schema(pool):
+    """Add the public FPS lifecycle fields before a new writer can use them.
+
+    Existing TimeAudit databases predate these columns.  PostgreSQL propagates
+    a parent-table column addition to its partitions, so this single idempotent
+    migration covers both old and newly warmed hardware partitions.
+    """
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            ALTER TABLE IF EXISTS public.fact_system_hardware
+                ADD COLUMN IF NOT EXISTS fps_capture_status text,
+                ADD COLUMN IF NOT EXISTS fps_capture_detail text;
+        """)
+
 async def auto_warmup_partitions(pool):
     async with pool.acquire() as conn:
         print(f"[{datetime.datetime.now().strftime('%X')} 🔧 预热引擎] 开始对齐时序物理分区桶...")
@@ -475,12 +489,20 @@ async def _run_collector():
 
     pool = None
     while pool is None:
+        candidate_pool = None
         try:
-            pool = await asyncpg.create_pool(
+            candidate_pool = await asyncpg.create_pool(
                 dsn=DB_DSN, min_size=2, max_size=12, command_timeout=5.0
             )
+            await ensure_fps_capture_schema(candidate_pool)
+            pool = candidate_pool
             print("[连接池] 成功创建数据库连接池！")
         except Exception as e:
+            if candidate_pool is not None:
+                try:
+                    await candidate_pool.close()
+                except Exception:
+                    pass
             print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 等待数仓] {e}，5秒后重试...")
             await asyncio.sleep(5)
 
@@ -657,14 +679,22 @@ async def _run_collector():
                     pass
 
             if pool is None:
+                candidate_pool = None
                 try:
-                    pool = await asyncpg.create_pool(
+                    candidate_pool = await asyncpg.create_pool(
                         dsn=DB_DSN, min_size=2, max_size=12, command_timeout=5.0
                     )
+                    await ensure_fps_capture_schema(candidate_pool)
+                    pool = candidate_pool
                     if hasattr(lifecycle_worker, 'update_pool'):
                         lifecycle_worker.update_pool(pool)
                     print("[连接池] 自愈引擎：重新构建并穿透数据库连接池成功！")
                 except Exception as reconnect_err:
+                    if candidate_pool is not None:
+                        try:
+                            await candidate_pool.close()
+                        except Exception:
+                            pass
                     print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 自愈重试] 重建连接池失败: {reconnect_err}，等待下次循环...")
                     wall_anchor, detected_after_reconnect = _observe_sleep_resume(
                         wall_anchor,

@@ -49,7 +49,7 @@
 │                     │         ▲                                            │
 │                     │         │ 读硬件真值                                  │
 │                     │     LibreHardwareMonitor.exe (CPU/GPU 电压温度, HTTP :18085)
-│                     │     PresentMonConsole.exe     (游戏 FPS / 帧时间)      │
+│                     │     RTSS shared memory / PresentMon fallback (FPS)    │
 │                     ▼                                                       │
 │             [asyncpg 异步批量写入]                                          │
 │                     │                                                       │
@@ -121,9 +121,9 @@
 - NVML 读 GPU：利用率、温度、功耗、显存时钟、PCIe、降频原因。
 - PDH 读 CPU：频率、ACPI 温度、硬缺页等。
 - **LibreHardwareMonitor**（外部 exe）通过 HTTP `http://127.0.0.1:18085/data.json` 读 NVML/PDH 给不出来的真值：CPU 核心电压(Vcore)、CPU 封装温度(Tctl/Tdie)、GPU 核心电压、GPU 热点温度。`18085` 避开了启动前会阻断绑定的 Windows TCP 宽排除段；服务在线后出现同端口的单项活动保留是正常现象。
-- **PresentMonConsole**（外部 exe）抓游戏的 FPS / 帧时间 / 1% Low。
+- **RTSS 官方共享内存**按精确前台 PID 读取 FPS / 帧时间 / 1% Low；RTSS 没有有效帧时才回退项目内的 **PresentMonConsole**。
 - 自己测 DPC 延迟、Ping、丢包、抖动。
-- PresentMon 有项目内的单 owner 看门狗；LibreHardwareMonitor 则由独立的 `LibreHardwareMonitor` 计划任务作为唯一运行时 owner，并由 `telemetry_watchdog.ps1` 按端点健康状态恢复。Python 硬件舱只读 `18085`，不会再自行拉起/结束 LHM，避免两个 LHM 实例同时访问 NVML。
+- PresentMon fallback 有项目内的单 owner 看门狗；RTSS 共享内存只读且不由 TimeAudit 启停。LibreHardwareMonitor 则由独立的 `LibreHardwareMonitor` 计划任务作为唯一运行时 owner，并由 `telemetry_watchdog.ps1` 按端点健康状态恢复。Python 硬件舱只读 `18085`，不会再自行拉起/结束 LHM，避免两个 LHM 实例同时访问 NVML。
 - 写进 `fact_system_hardware`。
 
 ### `lifecycle_worker.py` — 进程生死舱
@@ -209,9 +209,9 @@
    降频原因、PCIe 吞吐这些调用在某些驱动版本会抛异常；它们各自包了 try，单个失败不会把整块 GPU 采集拖垮、更不会触发 `nvmlShutdown` 把 GPU 数据全部清零。（注：throttle 接口在当前 NVIDIA 驱动上实测是支持的，不会崩。）
 
 8. **外部采集器必须保持单一 owner，靠有界恢复而不是双重拉起或降级造假。**
-   PresentMon 由本项目 worker 管理；LibreHardwareMonitor 由 `LibreHardwareMonitor` 计划任务和外部 `telemetry_watchdog.ps1` 管理。Python worker 只读 `http://127.0.0.1:18085/data.json`，端点不可用时保留空值并记录一次告警，等待外部 owner 恢复。这样不会在显示/HDR 拓扑变化时叠加多个 NVML 实例。
+   RTSS 由用户既有桌面运行时管理，TimeAudit 只读其共享内存；PresentMon fallback 由本项目 worker 管理。LibreHardwareMonitor 由 `LibreHardwareMonitor` 计划任务和外部 `telemetry_watchdog.ps1` 管理。Python worker 只读 `http://127.0.0.1:18085/data.json`，端点不可用时保留空值并记录一次告警，等待外部 owner 恢复。
 
-9. **外部 exe 需要管理员权限。** 非提权环境下 PresentMon/LHM 会报 `WinError 740`，引擎会退避重试而**不会崩**，但拿不到 FPS/电压。所以**引擎必须以管理员身份运行**（开机自启任务已配好提权，见快速部署.md）。
+9. **fallback 外部 exe 需要管理员权限。** RTSS 共享内存是只读首选；回退 PresentMon 及部分 LHM/NVML 路径仍需要提权。所以**引擎必须以管理员身份运行**（开机自启任务已配好提权，见快速部署.md）。
 
 10. **日志会自动控制大小**：`telemetry.log` 超 50MB 截断；`presentmon_debug.log` 用滚动文件处理器封顶 ~15MB。
 
@@ -371,7 +371,7 @@ E:\Projects\Tools\TimeAudit\
 ├── test_sql_partition_explain.py Grafana SQL 分区裁剪与执行计划审计
 │
 ├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :18085）
-├── PresentMonConsole.exe    外部帧率探针（FPS / 帧时间）
+├── PresentMonConsole.exe    RTSS 无有效帧时使用的外部帧率 fallback
 │
 ├── postgres_data/           PostgreSQL 数据卷（别手删！）
 ├── grafana_data/            Grafana 数据卷（含 grafana.db 仪表盘库）
