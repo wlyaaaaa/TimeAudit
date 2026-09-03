@@ -39,7 +39,7 @@ def _display_time(value: str) -> str:
 class HistoryViewer(tk.Tk):
     def __init__(self, data_root: Path):
         super().__init__()
-        self.title("PersonalOS 剪贴板历史")
+        self.title("TimeAudit 剪贴板历史")
         self.geometry("1120x760")
         self.minsize(860, 580)
         self.paths = runtime_paths(data_root)

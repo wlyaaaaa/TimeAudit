@@ -1,4 +1,4 @@
-# PersonalOS 电脑剪贴板历史 sidecar
+# TimeAudit 电脑剪贴板历史 sidecar
 
 这是 TimeAudit 的独立 Windows 用户态 sidecar。它只采集当前交互会话中新发生的 Unicode 文本、HTTP(S) URL 和普通文件路径列表，写入带 WAL/FTS5 的私密 SQLite；不依赖 `main.py`、Docker、PostgreSQL 或 Grafana，也不向它们写入剪贴板内容。
 
@@ -26,7 +26,7 @@
 查看器的时间列和日期筛选统一使用固定中国标准时间（UTC+8），数据库与跨 owner
 适配器仍保留规范 UTC 时间戳。
 
-当前约定的普通入口名称是 `PersonalOS 剪贴板历史`。活动库属于 E 盘持久数据层，G 盘只做近线恢复副本，查询不依赖 G。
+当前约定的普通入口名称是 `TimeAudit 剪贴板历史`。活动库属于 E 盘持久数据层，G 盘只做近线恢复副本，查询不依赖 G。
 
 ## 验证
 
