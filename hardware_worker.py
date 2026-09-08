@@ -1277,7 +1277,7 @@ class HardwareTelemetryWorker:
             return None
 
     @staticmethod
-    def _valid_lhm_metric(value, minimum, maximum):
+    def _valid_gpu_metric(value, minimum, maximum):
         try:
             numeric = float(value)
         except (TypeError, ValueError):
@@ -1299,11 +1299,11 @@ class HardwareTelemetryWorker:
                 continue
             value = cls._lhm_num(raw_value)
             if key.endswith("/load/gpu core"):
-                result["gpu_usage"] = cls._valid_lhm_metric(value, 0.0, 100.0)
+                result["gpu_usage"] = cls._valid_gpu_metric(value, 0.0, 100.0)
             elif key.endswith("/temperatures/gpu core"):
-                result["gpu_core_temp"] = cls._valid_lhm_metric(value, 0.0, 150.0)
+                result["gpu_core_temp"] = cls._valid_gpu_metric(value, 0.0, 120.0)
             elif key.endswith("/powers/gpu power"):
-                result["gpu_board_power"] = cls._valid_lhm_metric(value, 0.0, 2000.0)
+                result["gpu_board_power"] = cls._valid_gpu_metric(value, 0.0, 2000.0)
         return result
 
     @classmethod
@@ -1450,9 +1450,20 @@ class HardwareTelemetryWorker:
                 core_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 0))
                 res["gpu_core_temp"] = core_temp
 
+                # NVML can return success with unusable values in a long-lived
+                # process. Treat those readings like a failed handle, so the
+                # existing reinitialization and real LHM fallback can recover.
+                if (
+                    self._valid_gpu_metric(res["gpu_usage"], 0.0, 100.0) is None
+                    or self._valid_gpu_metric(core_temp, 0.0, 120.0) is None
+                ):
+                    raise ValueError("nvml_core_metrics_out_of_bounds")
+
                 mem_temp = None
                 try:
-                    mem_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 1))
+                    mem_temp = self._valid_gpu_metric(
+                        pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 1), 0.0, 150.0
+                    )
                 except Exception:
                     pass
                 hotspot = core_temp + 12.0
@@ -1464,7 +1475,13 @@ class HardwareTelemetryWorker:
                 res["gpu_core_clock"] = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS))
                 # 列类型为 integer，NVML 返回真实显存时钟(MHz)；去掉旧的 smallint(32767)截断 bug。
                 mem_clock = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM))
-                res["gpu_mem_clock"] = mem_clock if 0 <= mem_clock <= 100000 else None
+                res["gpu_mem_clock"] = mem_clock
+                if (
+                    self._valid_gpu_metric(res["gpu_board_power"], 0.0, 2000.0) is None
+                    or self._valid_gpu_metric(res["gpu_core_clock"], 0.0, 100000.0) is None
+                    or self._valid_gpu_metric(mem_clock, 0.0, 100000.0) is None
+                ):
+                    raise ValueError("nvml_power_or_clocks_out_of_bounds")
 
                 # 占位：下游 collect_hardware_snapshot 用 LHM 真实核心电压覆盖(NVML 在 GeForce 无法提供)。
                 # 易在特定驱动/版本上抛异常的非核心调用——各自隔离，绝不连累上面已取得的核心指标。
@@ -1477,6 +1494,7 @@ class HardwareTelemetryWorker:
                 except Exception:
                     pass
                 self.nvml_initialized = False
+                self.gpu_handle = None
         return res
 
     def _background_pdh_loop(self):

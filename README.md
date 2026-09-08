@@ -78,7 +78,7 @@
 
 | | 管线 A：旧版「简版工时」 | 管线 B：主引擎「全量遥测」 |
 | :--- | :--- | :--- |
-| 谁采集 | `TimeAudit.ahk`（AutoHotkey 脚本） | `main.py` + 5 个 worker（Python） |
+| 谁采集 | `TimeAudit.ahk`（AutoHotkey 脚本） | `main.py` + 4 个 worker（Python） |
 | 采什么 | 只采"前台哪个窗口、用了多久"，自带空闲/睡眠/锁屏判定 | 前台窗口 + 全部进程指标 + 整机硬件 + 进程生死 |
 | 怎么落库 | 先写 `log/buffer.csv`，再由容器里的 `ingest.py` 每 10 秒搬进数据库 | Python 直接异步写数据库 |
 | 进哪张表 | `app_usage_logs`（一张简单表） | `fact_*` / `dim_*` 一套分区事实表 |
@@ -88,7 +88,7 @@
 
 ---
 
-## 4. 采集端：5 个 worker 各管一摊
+## 4. 采集端：4 个 worker 各管一摊
 
 主程序 `main.py` 是"总指挥"：它建数据库连接池、把 4 个采集 worker 拉起来，然后进入**双节拍调度**：
 整机硬件/FPS/前台心跳每 1 秒一拍，昂贵的全进程扫描单飞且每 3 秒一拍。下面逐个说人话。
@@ -96,7 +96,7 @@
 ### `main.py` — 总调度 + 守护外壳
 - 每 1 秒驱动硬件、FPS 与前台心跳；每 3 秒驱动全进程资源扫描。慢车道单飞运行，尚未完成时只跳过后续慢车道档位，不排队也不拖住快车道；健康租约超期后停止刷新总心跳，交给外部看门狗恢复。
 - “每秒落一行”表示采样与写库节拍，不表示每个底层传感器都具有原生 1 Hz 新值；LHM/WMI 等较慢来源会安全复用其最近一次有效缓存。Grafana 为控制长时间范围查询成本，仍可把原始 1 秒数据聚合成更大的时间桶。
-- **单例锁**：保证全机只有一个引擎在跑（新实例会抢占踢掉旧的）。
+- **单例锁**：保证全机只有一个引擎在跑；发现已有实例时，新实例退出。只有外部看门狗确认旧实例停止或心跳陈旧且恢复宽限已过，才先停后启替换。
 - **原生崩溃隔离**：2026-06-22 起观测到 psutil `_psutil_windows.pyd` 的 `0xc0000005`。主引擎现已避开上游已确认的 Windows `cpu_stats()` use-after-free，并把 `net_connections()` 放进可独立重启的无状态子进程；子进程崩溃不再带死主引擎。`log/python_fatal.log` 额外保留 payload-free Python fatal stack。
 - **外部进程守护**（补 native 崩溃和“进程活着但采集卡死”盲点）：`telemetry_watchdog.ps1` + 计划任务 `TimeAudit_Watchdog`（每 1 分钟 + 登录触发、提权、任务失败最多重试 3 次）**独立于引擎**运行。`main.py`、`TimeAudit.ahk` 和 `audit-ingester` 都写无 payload heartbeat；watchdog 先给睡眠恢复留出宽限，再按精确进程/容器身份分别恢复。进程只是 Running 但消息循环或入库循环已经卡死，也会因 heartbeat 陈旧被识别。任务定义由 PCConfig 的 `Install-TimeAuditRuntimeWatchdog.ps1` 恢复，日志见 `telemetry_watchdog.log`。
 
@@ -118,7 +118,7 @@
 - 写进 `fact_process_activity`，并维护进程身份维度表 `dim_process_registry`。
 
 ### `hardware_worker.py` — 整机硬件舱
-- NVML 读 GPU：利用率、温度、功耗、显存时钟、PCIe、降频原因。
+- NVML 读 GPU：利用率、温度、功耗、显存时钟、PCIe、降频原因。核心读数越界或非有限时按句柄失败处理，重初始化 NVML；当前采样使用既有 LHM 真实利用率、温度和功率回退，没有有效来源则写 NULL，不把坏读数截断成正常值。历史无效样本保留，诊断摘要仍标记 `telemetry_out_of_bounds`。
 - PDH 读 CPU：频率、ACPI 温度、硬缺页等。
 - **LibreHardwareMonitor**（外部 exe）通过 HTTP `http://127.0.0.1:18085/data.json` 读 NVML/PDH 给不出来的真值：CPU 核心电压(Vcore)、CPU 封装温度(Tctl/Tdie)、GPU 核心电压、GPU 热点温度。`18085` 避开了启动前会阻断绑定的 Windows TCP 宽排除段；服务在线后出现同端口的单项活动保留是正常现象。
 - **RTSS 官方共享内存**按精确前台 PID、RTSS 最近前台和唯一新鲜帧源读取 FPS / 帧时间 / 1% Low；映射可用但没有唯一帧源时视为桌面空闲，只有 RTSS 映射不可用时才回退项目内的 **PresentMonConsole**。
@@ -232,7 +232,7 @@
 17. **`collect_active_processes()` 在主循环里用 `await asyncio.to_thread(...)` 调，别改回同步直调。** `psutil.cmdline()` 对启动中/受保护进程会触发 `ERROR_PARTIAL_COPY` 的内部重试 `sleep`（单拍累计可达 0.5–1 秒）。这是同步 `sleep`，若直接在事件循环线程里跑会**冻结整个引擎**（阻塞 lifecycle 事件处理与连接自愈）。放进工作线程后，这段 sleep 不再卡住 event loop。
 
 18. **`SafeStdoutWrapper` 独占锁定与多实例并发冷启动冲突。**
-    当有多个实例或后台进程（如手动启动的同时计划任务也在拉起实例）试图在非常短的时间内同时打开 `telemetry.log` 时，会导致文件写操作的独占锁争用，抛出 `PermissionError`（拒绝访问）。主程序的 `SafeStdoutWrapper` 在类初始化中对此进行了 `try/except` 自愈防护以规避因日志句柄初始化失败导致的进程崩溃，但最佳实践仍是依赖单例锁（`enforce_singleton`）踢掉旧实例，避免多个实例长期并发双写。
+    当有多个实例或后台进程（如手动启动的同时计划任务也在拉起实例）试图在非常短的时间内同时打开 `telemetry.log` 时，会导致文件写操作的独占锁争用，抛出 `PermissionError`（拒绝访问）。主程序的 `SafeStdoutWrapper` 在类初始化中对此进行了 `try/except` 自愈防护以规避因日志句柄初始化失败导致的进程崩溃；单例锁（`enforce_singleton`）让新实例退出，避免多个实例长期并发双写，旧实例的受管替换由外部看门狗负责。
 
 19. **计划任务提权启动的 Python 解释器绝对路径与 `-WorkingDirectory` 强依赖。**
     在 Windows 计划任务中以最高权限（Highest Privilege）拉起脚本时，由于运行环境不包含完整的用户 PATH 变量，如果使用普通 `python` 命令行，或者未显式设置 WorkingDirectory，经常会导致解释器闪退或因为相对路径偏移找不到外部依赖（如 `LibreHardwareMonitor.config`）。必须始终使用 Python 解释器的**绝对物理路径**（如 `C:\Users\10979\AppData\Local\Programs\Python\Python311\pythonw.exe`），并且在计划任务中指定“起始于”（Start in）为项目根目录 `E:\Projects\Tools\TimeAudit`。
@@ -371,7 +371,7 @@ E:\Projects\Tools\TimeAudit\
 ├── test_sql_partition_explain.py Grafana SQL 分区裁剪与执行计划审计
 │
 ├── LibreHardwareMonitor.exe 外部硬件探针（CPU/GPU 电压温度，HTTP :18085）
-├── PresentMonConsole.exe    RTSS 无有效帧时使用的外部帧率 fallback
+├── PresentMonConsole.exe    RTSS 共享内存映射不可用时使用的外部帧率 fallback
 │
 ├── postgres_data/           PostgreSQL 数据卷（别手删！）
 ├── grafana_data/            Grafana 数据卷（含 grafana.db 仪表盘库）
