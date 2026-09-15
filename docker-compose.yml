@@ -75,6 +75,8 @@ services:
     ports:
       - "53000:3000"
     environment:
+      - GF_SERVER_ROOT_URL=https://grafana.wly0829.cn/
+      - GF_LIVE_ALLOWED_ORIGINS=http://localhost:53000
       - GF_USERS_DEFAULT_THEME=light
       - GF_PANELS_DISABLE_SANITIZE_HTML=true
       - TIMEAUDIT_DB_PASSWORD=${TIMEAUDIT_DB_PASSWORD:?TIMEAUDIT_DB_PASSWORD is required}
