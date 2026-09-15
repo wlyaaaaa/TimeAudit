@@ -11,7 +11,9 @@
 $ErrorActionPreference = 'SilentlyContinue'
 $log       = 'E:\Projects\Tools\TimeAudit\telemetry_watchdog.log'
 $py        = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
+$pyConsole = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
 $script    = 'E:\Projects\Tools\TimeAudit\main.py'
+$dbProbeScript = Join-Path $PSScriptRoot 'db_health_probe.py'
 $ahkExe    = 'C:\Program Files\AutoHotkey\v2\AutoHotkey64.exe'
 $ahkScript = 'E:\Projects\Tools\TimeAudit\TimeAudit.ahk'
 $lhmExe = 'E:\Projects\Tools\TimeAudit\LibreHardwareMonitor.exe'
@@ -91,6 +93,26 @@ function Test-DatabaseEndpoint {
         return $false
     } finally {
         $client.Dispose()
+    }
+}
+
+function Test-DatabaseQuery {
+    # A port listener alone is insufficient: Docker forwarding can accept a
+    # TCP handshake while the host-side PostgreSQL protocol is stalled.  The
+    # helper uses the same local DSN as main.py, executes only SELECT 1, emits
+    # no payload, and has its own bounded connect/query timeouts.
+    if (-not (Test-Path -LiteralPath $pyConsole) -or -not (Test-Path -LiteralPath $dbProbeScript)) {
+        return $false
+    }
+    try {
+        $probe = Start-Process -FilePath $pyConsole -ArgumentList @('-B', $dbProbeScript) -WindowStyle Hidden -PassThru
+        if (-not $probe.WaitForExit(8000)) {
+            try { $probe.Kill() } catch { }
+            return $false
+        }
+        return ($probe.ExitCode -eq 0)
+    } catch {
+        return $false
     }
 }
 
@@ -247,7 +269,7 @@ if (-not $mainProc) {
     Start-Sleep -Seconds $startupGraceSeconds
     $mainProc = Find-MainProc
     if (-not $mainProc) {
-        if (-not (Test-DatabaseEndpoint)) {
+        if (-not (Test-DatabaseQuery)) {
             Log ("main.py restart deferred because PostgreSQL endpoint {0}:{1} is unavailable" -f $dbHost, $dbHostPort)
         } elseif (Test-AutoStartWithinGrace) {
             Log ("main.py not running yet, but TimeAudit_AutoStart is within its {0}s startup window - defer this cycle" -f $autoStartMaxGraceSeconds)
@@ -256,7 +278,7 @@ if (-not $mainProc) {
         }
     }
 } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-    if (-not (Test-DatabaseEndpoint)) {
+    if (-not (Test-DatabaseQuery)) {
         Log ("main.py heartbeat stale but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
     } elseif (Test-MainWithinStartupGrace $mainProc) {
         Log ("main.py heartbeat stale but live process is within its {0}s startup grace - defer" -f $mainStartupHeartbeatGraceSeconds)
@@ -265,13 +287,13 @@ if (-not $mainProc) {
         Start-Sleep -Seconds $heartbeatGraceSeconds
         $mainProc = Find-MainProc
         if (-not $mainProc) {
-            if (Test-DatabaseEndpoint) {
+            if (Test-DatabaseQuery) {
                 Restart-Main 'stopped during heartbeat grace period'
             } else {
                 Log ("main.py stopped during heartbeat grace but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
             }
         } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-            if (Test-DatabaseEndpoint) {
+            if (Test-DatabaseQuery) {
                 Restart-Main 'heartbeat stale after grace period'
             } else {
                 Log ("main.py heartbeat remains stale but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)

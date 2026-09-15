@@ -96,6 +96,11 @@ DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
 TELEMETRY_INTERVAL_SEC = 1.0
 ACTIVITY_INTERVAL_SEC = 3.0
+# A host-side PostgreSQL port can accept a TCP handshake while asyncpg still
+# waits indefinitely for protocol/authentication.  Keep pool construction
+# bounded so a transient Docker forwarding stall cannot make recovery look
+# like a live-but-stuck collector for a full default connection timeout.
+DB_CONNECT_TIMEOUT_SEC = 5.0
 # Partition warmup/retention is maintenance work, not part of the 1 Hz fast
 # lane.  A transient DDL/DB failure must therefore retry on a bounded backoff
 # instead of re-entering both maintenance paths on every telemetry slot.
@@ -492,7 +497,11 @@ async def _run_collector():
         candidate_pool = None
         try:
             candidate_pool = await asyncpg.create_pool(
-                dsn=DB_DSN, min_size=2, max_size=12, command_timeout=5.0
+                dsn=DB_DSN,
+                min_size=2,
+                max_size=12,
+                timeout=DB_CONNECT_TIMEOUT_SEC,
+                command_timeout=5.0,
             )
             await ensure_fps_capture_schema(candidate_pool)
             pool = candidate_pool
@@ -682,7 +691,11 @@ async def _run_collector():
                 candidate_pool = None
                 try:
                     candidate_pool = await asyncpg.create_pool(
-                        dsn=DB_DSN, min_size=2, max_size=12, command_timeout=5.0
+                        dsn=DB_DSN,
+                        min_size=2,
+                        max_size=12,
+                        timeout=DB_CONNECT_TIMEOUT_SEC,
+                        command_timeout=5.0,
                     )
                     await ensure_fps_capture_schema(candidate_pool)
                     pool = candidate_pool

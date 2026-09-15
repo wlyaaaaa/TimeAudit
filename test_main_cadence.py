@@ -735,6 +735,22 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         self.assertEqual(1.0, _constant_value(self.tree, "TELEMETRY_INTERVAL_SEC"))
         self.assertEqual(3.0, _constant_value(self.tree, "ACTIVITY_INTERVAL_SEC"))
 
+    def test_pool_connect_attempts_have_a_bounded_timeout(self):
+        self.assertEqual(5.0, _constant_value(self.tree, "DB_CONNECT_TIMEOUT_SEC"))
+        pool_calls = [
+            node
+            for node in ast.walk(self.collector)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "create_pool"
+        ]
+        self.assertEqual(2, len(pool_calls))
+        for call in pool_calls:
+            keywords = {keyword.arg: keyword.value for keyword in call.keywords}
+            self.assertIn("timeout", keywords)
+            self.assertIsInstance(keywords["timeout"], ast.Name)
+            self.assertEqual("DB_CONNECT_TIMEOUT_SEC", keywords["timeout"].id)
+
     def test_only_background_lane_owns_expensive_activity_pipeline(self):
         hardware_calls = _calls_named(self.collector, "collect_hardware_snapshot")
         hardware_writes = _calls_named(self.collector, "write_to_db")

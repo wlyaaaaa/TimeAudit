@@ -207,12 +207,19 @@ def test_watchdog_grants_a_new_collector_bounded_bootstrap_time():
 
 def test_watchdog_defers_restart_while_database_endpoint_is_down():
     source = (ROOT / "telemetry_watchdog.ps1").read_text(encoding="utf-8-sig")
+    probe = (ROOT / "db_health_probe.py").read_text(encoding="utf-8")
 
     assert "$dbHostPort = 45432" in source
     assert "function Test-DatabaseEndpoint" in source
+    assert "function Test-DatabaseQuery" in source
+    assert "$dbProbeScript" in source
+    assert source.count("Test-DatabaseQuery") >= 4
     assert "ConnectAsync($dbHost, $dbHostPort)" in source
     assert "heartbeat stale but PostgreSQL endpoint" in source
     assert "audit-ingester recovery deferred because PostgreSQL endpoint" in source
+    assert 'connection.execute("SELECT 1")' in probe
+    assert "CONNECT_TIMEOUT_SEC = 5.0" in probe
+    assert "QUERY_TIMEOUT_SEC = 2.0" in probe
 
 
 def test_ahk_emits_payload_free_progress_heartbeat():
