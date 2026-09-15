@@ -97,10 +97,10 @@ function Test-DatabaseEndpoint {
 }
 
 function Test-DatabaseQuery {
-    # A port listener alone is insufficient: Docker forwarding can accept a
-    # TCP handshake while the host-side PostgreSQL protocol is stalled.  The
-    # helper uses the same local DSN as main.py, executes only SELECT 1, emits
-    # no payload, and has its own bounded connect/query timeouts.
+    # A port listener alone is insufficient: a PostgreSQL handshake can finish
+    # while authentication or a simple query does not. The helper uses the same
+    # local DSN as main.py, executes only SELECT 1, emits no payload, and has
+    # its own bounded connect/query timeouts.
     if (-not (Test-Path -LiteralPath $pyConsole) -or -not (Test-Path -LiteralPath $dbProbeScript)) {
         return $false
     }

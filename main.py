@@ -96,10 +96,10 @@ DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
 TELEMETRY_INTERVAL_SEC = 1.0
 ACTIVITY_INTERVAL_SEC = 3.0
-# A host-side PostgreSQL port can accept a TCP handshake while asyncpg still
-# waits indefinitely for protocol/authentication.  Keep pool construction
-# bounded so a transient Docker forwarding stall cannot make recovery look
-# like a live-but-stuck collector for a full default connection timeout.
+# A PostgreSQL TCP/SSL handshake can complete while an asyncpg authentication
+# or query attempt does not. Keep pool construction bounded so that condition
+# cannot make recovery look like a live-but-stuck collector for the default
+# connection timeout.
 DB_CONNECT_TIMEOUT_SEC = 5.0
 # Partition warmup/retention is maintenance work, not part of the 1 Hz fast
 # lane.  A transient DDL/DB failure must therefore retry on a bounded backoff
