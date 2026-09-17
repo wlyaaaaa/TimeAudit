@@ -3,7 +3,7 @@
 param([string]$OutFile=(Join-Path $env:TEMP 'time_audit_status.txt'))
 $ErrorActionPreference='Stop'
 $report=@('TimeAudit 运行状态','==========================================')
-$names=@{telemetry='遥测写入心跳';activity_heartbeat='时间采集心跳';activity_persistence='时间记录落盘';ingester='事件入库';database='数据库最新实测';sensors='硬件传感器';backup='备份可验证性';memory_blackbox='原生内存黑匣子';watchdog_last_outcome='看门狗最近验收';memory_blackbox='内存黑匣子';watchdog_last_outcome='看门狗最近验收'}
+$names=@{telemetry='遥测写入心跳';activity_heartbeat='时间采集心跳';activity_persistence='时间记录落盘';ingester='事件入库';database='数据库最新实测';sensors='硬件传感器';backup='备份可验证性';memory_blackbox='原生内存黑匣子';watchdog_last_outcome='看门狗最近验收'}
 $start=[Diagnostics.ProcessStartInfo]::new((Join-Path $PSScriptRoot '.venv\Scripts\python.exe'))
 $start.UseShellExecute=$false;$start.CreateNoWindow=$true
 $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
