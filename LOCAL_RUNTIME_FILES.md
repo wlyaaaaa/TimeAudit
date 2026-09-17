@@ -46,7 +46,9 @@ completed backup. Ordinary health reads metadata, while a restore drill uses a
 separately identified disposable database. See `DIAGNOSTICS_OPERATIONS.md`.
 
 Previously tracked/published historical diagnostic archives remain historical
-source artifacts, not live evidence. This maintenance did not read their
-payloads, rewrite Git history or delete originals. New runtime receipts, private
+source artifacts, not live evidence. This maintenance inspected only structural aggregates and did not disclose
+their payloads, rewrite Git history or delete originals. New runtime receipts, private
 records and temporary tests must not be added beside them. Test dependencies and
 fixtures belong to the current E-drive task temp root, not the source tree.
+
+Structural classification (2026-09-17): the historical PresentMon CSV contains 1,929 records and 28 columns, including a process identifier column; it is an old runtime artifact, not a test oracle. The UTF-16 text archive contains 1,315 lines and is not a parseable Python module; it is not active source. Neither file is consumed by current runtime or diagnostic entry points. Originals and their Git history are preserved.
