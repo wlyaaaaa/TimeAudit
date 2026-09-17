@@ -5,7 +5,7 @@ TimeAudit owns telemetry collection, database semantics, thresholds, and the rea
 ## Interface
 
 ```powershell
-python E:\Projects\Tools\TimeAudit\pcconfig_anomaly_digest.py `
+& E:\Projects\Tools\TimeAudit\.venv\Scripts\python.exe -B E:\Projects\Tools\TimeAudit\pcconfig_anomaly_digest.py `
   --after-utc <exclusive-UTC-cursor> `
   --until-utc <inclusive-UTC-bound>
 ```
@@ -25,7 +25,7 @@ It never returns raw telemetry values or rows, temperature/load series, process 
 
 ## Detection profile
 
-`timeaudit:pcconfig-hardware-anomaly.v1` detects sustained CPU/GPU thermal pressure, memory pressure, disk-latency pressure, bounded user-space scheduler-jitter saturation, physical-bound telemetry errors, and source gaps. Scheduler jitter is not presented as real kernel DPC latency and does not recommend a stable-configuration recheck. Thresholds and minimum sample counts are TimeAudit semantics. They are anomaly signals, not proof that stable hardware/configuration changed.
+`timeaudit:pcconfig-hardware-anomaly.v2` detects sustained CPU/GPU thermal pressure, memory pressure, disk-latency pressure, bounded user-space scheduler-jitter saturation, physical-bound telemetry errors, and source gaps. Scheduler jitter is not presented as real kernel DPC latency and does not recommend a stable-configuration recheck. Thresholds and minimum observed durations are TimeAudit semantics. Adjacent qualifying samples must be no more than 2.5 seconds apart; elapsed duration is required. A fixed 31-second lookbehind preserves runs across cursor boundaries; reported counts and timestamps remain inside the requested window. Scattered counts are not sustained seconds. They are anomaly signals, not proof that stable hardware/configuration changed.
 
 The query window is `(after_utc, until_utc]`, must be at most 168 hours, and uses only aggregate filters over indexed `fact_system_hardware.timestamp`. A successful response advances the cursor to `until_utc`, including an empty window. Missing Docker/PostgreSQL or invalid output returns bounded `status=unavailable`; it does not restart services.
 
@@ -36,6 +36,12 @@ PCConfig may persist only its cursor and a bounded digest/decision receipt. An a
 ## Verification
 
 ```powershell
-python -m unittest -v test_pcconfig_anomaly_digest.py
-python pcconfig_anomaly_digest.py --after-utc <UTC> --until-utc <UTC>
+& .\.venv\Scripts\python.exe -B -m unittest -v test_pcconfig_anomaly_digest.py
+& .\.venv\Scripts\python.exe -B pcconfig_anomaly_digest.py --after-utc <UTC> --until-utc <UTC>
 ```
+
+## Reliability contract
+
+The provider forces PostgreSQL read-only mode, a 10-second statement timeout and 1-second lock timeout, with bounded subprocess output and exact field/type validation. Missing evidence is not a successful measurement.
+
+PCConfig preserves pending_projection_refresh separately from its consumed cursor. Pending effects retry before requiring a new source window. Legacy profile-v1 cursors migrate, but current source digests require profile v2. Neither provider nor consumer rewrites historical telemetry or changes hardware configuration from a threshold alone.

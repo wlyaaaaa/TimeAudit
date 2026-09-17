@@ -30,3 +30,23 @@ Rebuild the isolated telemetry runtime with:
 ```powershell
 pwsh -NoProfile -ExecutionPolicy Bypass -File .\setup_runtime.ps1
 ```
+
+
+## Diagnostic reliability state
+
+`log/ahk_health.json`, `log/watchdog_outcome.json`, `log/diagnostics_activation.json`
+and `log/restore_check.json` are local runtime evidence, not source/public
+attachments. `log/restore_check.lock` is an OS-locked coordination file. Atomic
+`log/buffer.csv.ahk.*.processing` segments belong to the existing ingester; a
+`.tmp` file is not a committed event segment. Do not delete pending segments to
+make health look green.
+
+Completed database archives use `.dump` and `.dump.json`; `.partial` is not a
+completed backup. Ordinary health reads metadata, while a restore drill uses a
+separately identified disposable database. See `DIAGNOSTICS_OPERATIONS.md`.
+
+Previously tracked/published historical diagnostic archives remain historical
+source artifacts, not live evidence. This maintenance did not read their
+payloads, rewrite Git history or delete originals. New runtime receipts, private
+records and temporary tests must not be added beside them. Test dependencies and
+fixtures belong to the current E-drive task temp root, not the source tree.

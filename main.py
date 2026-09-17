@@ -334,9 +334,15 @@ def enforce_singleton():
     """
     mutex_name = "Global\\TimeAuditTelemetryEngineMutex"
     kernel32 = ctypes.windll.kernel32
-
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.CloseHandle.argtypes = [ctypes.c_void_p]
+    kernel32.CloseHandle.restype = ctypes.c_int
     mutex = kernel32.CreateMutexW(None, False, mutex_name)
     last_error = kernel32.GetLastError()
+    if not mutex:
+        print(f"[singleton] mutex_creation_failed winerror={last_error}; collector not started")
+        return None
 
     if last_error == 183:
         print(
@@ -382,7 +388,10 @@ async def ensure_fps_capture_schema(pool):
         await conn.execute("""
             ALTER TABLE IF EXISTS public.fact_system_hardware
                 ADD COLUMN IF NOT EXISTS fps_capture_status text,
-                ADD COLUMN IF NOT EXISTS fps_capture_detail text;
+                ADD COLUMN IF NOT EXISTS fps_capture_detail text,
+                ADD COLUMN IF NOT EXISTS measurement_quality jsonb,
+                ADD COLUMN IF NOT EXISTS collector_instance_id text,
+                ADD COLUMN IF NOT EXISTS collector_sample_seq bigint;
         """)
 
 async def auto_warmup_partitions(pool):
@@ -604,9 +613,15 @@ async def _run_collector():
 
     try:
         while True:
+            # Timers may wake one clock-resolution early. Never consume a
+            # slot until due; each retry yields for at least one clock quantum.
             now_monotonic = loop.time()
             if now_monotonic < next_telemetry_deadline:
-                await asyncio.sleep(next_telemetry_deadline - now_monotonic)
+                await asyncio.sleep(max(
+                    next_telemetry_deadline - now_monotonic,
+                    time.get_clock_info("monotonic").resolution,
+                ))
+                continue
 
             slot_started = loop.time()
             activity_due = slot_started >= next_activity_deadline

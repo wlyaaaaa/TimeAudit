@@ -381,28 +381,69 @@ if (-not (Test-DatabaseEndpoint)) {
 return
 }
 
+function Write-WatchdogOutcome {
+    param([string]$State,[object]$Components,[string]$Reason='')
+    $payload=[ordered]@{
+        schema='timeaudit.watchdog-outcome.v1'
+        checked_at_utc=[DateTimeOffset]::UtcNow.ToString('o')
+        status=$State; reason=$Reason; degraded_components=@($Components)
+    }
+    $target=Join-Path $PSScriptRoot 'log\watchdog_outcome.json'
+    $temporary=$target+'.'+$PID+'.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary,($payload|ConvertTo-Json -Depth 5 -Compress),[Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $target -Force -ErrorAction Stop
+    } finally { if(Test-Path $temporary){Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue} }
+}
+
+function Confirm-WatchdogHealth {
+    $start=New-Object Diagnostics.ProcessStartInfo
+    $start.FileName=$pyConsole
+    $start.Arguments='-B "'+(Join-Path $PSScriptRoot 'timeaudit_health.py')+'" --core-only'
+    $start.UseShellExecute=$false;$start.CreateNoWindow=$true
+    $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+    $process=New-Object Diagnostics.Process;$process.StartInfo=$start
+    try {
+        if(-not $process.Start()){throw 'health_start_failed'}
+        $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
+        if(-not $process.WaitForExit(10000)){$process.Kill();$process.WaitForExit();throw 'health_timeout'}
+        $text=$out.GetAwaiter().GetResult();$null=$err.GetAwaiter().GetResult()
+        if($text.Length -gt 65536 -or $process.ExitCode -notin @(0,2)){throw 'health_output_invalid'}
+        $health=$text|ConvertFrom-Json
+        if($health.schema -ne 'timeaudit.runtime-health.v1' -or $health.status -notin @('healthy','degraded')){throw 'health_contract_invalid'}
+        Write-WatchdogOutcome $health.status $health.degraded_components
+        return $health.status -eq 'healthy'
+    }catch{
+        Write-WatchdogOutcome 'unavailable' @() 'post_recovery_evidence_unavailable'
+        return $false
+    }finally{$process.Dispose()}
+}
+
 $watchdogMutexName = 'Global\TimeAuditTelemetryWatchdogMutex'
 $watchdogMutex = $null
 $watchdogLockAcquired = $false
+$watchdogExitCode=0
 try {
     $watchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
     try {
         $watchdogLockAcquired = $watchdogMutex.WaitOne(0)
     } catch [System.Threading.AbandonedMutexException] {
-        # The prior owner died; Windows grants this caller the abandoned lock.
         $watchdogLockAcquired = $true
     }
-
     if ($watchdogLockAcquired) {
         Invoke-TimeAuditWatchdog
+        if(-not (Confirm-WatchdogHealth)){$watchdogExitCode=2}
     } else {
         Log 'watchdog invocation skipped because a live owner holds the recovery mutex'
+        # The active owner alone publishes an outcome; do not overwrite it.
     }
+} catch {
+    $watchdogExitCode=2
+    if($watchdogLockAcquired){Write-WatchdogOutcome 'unavailable' @() 'recovery_invocation_failed'}
 } finally {
     if ($watchdogLockAcquired -and $watchdogMutex) {
         try { $watchdogMutex.ReleaseMutex() } catch { }
     }
     if ($watchdogMutex) { $watchdogMutex.Dispose() }
 }
-
-exit 0
+exit $watchdogExitCode

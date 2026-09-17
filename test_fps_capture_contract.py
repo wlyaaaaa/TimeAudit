@@ -208,7 +208,7 @@ class FpsCaptureContractTest(unittest.TestCase):
             10500,
         )
 
-        self.assertEqual(60.0, sample["current_fps"])
+        self.assertAlmostEqual(1000.0 / sample["frametime_ms"], sample["current_fps"])
         self.assertEqual(60.0, sample["average_fps"])
         self.assertEqual(50.0, sample["one_percent_low_fps"])
         self.assertAlmostEqual(16.667, sample["frametime_ms"], places=3)
@@ -361,7 +361,7 @@ class FpsCaptureContractTest(unittest.TestCase):
         call = conn.calls[0]
         self.assertIn("fps_capture_status, fps_capture_detail", call[0])
         self.assertIn("$33", call[0])
-        self.assertEqual(34, len(call))  # SQL plus timestamp and 32 fact values.
+        self.assertEqual(37, len(call))  # SQL plus 36 fact values, including provenance.
         self.assertEqual("waiting_frames", call[7])
         self.assertEqual("no_fresh_foreground_frame", call[8])
 

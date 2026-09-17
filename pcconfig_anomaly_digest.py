@@ -15,12 +15,13 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from typing import Any
+from diagnostic_validation import validate_aggregate
 
 
 UTC = dt.timezone.utc
 SCHEMA = "timeaudit.pcconfig-anomaly-digest.v1"
 OWNER_REF = "timeaudit:hardware-telemetry"
-PROFILE = "timeaudit:pcconfig-hardware-anomaly.v1"
+PROFILE = "timeaudit:pcconfig-hardware-anomaly.v2"
 DEFAULT_LOOKBACK_HOURS = 24
 MAX_WINDOW_HOURS = 168
 MAX_CLOCK_SKEW_SECONDS = 300
@@ -44,7 +45,7 @@ RULES = (
         "cpu_package_temp >= 95 AND cpu_package_temp <= 120",
         10,
         True,
-        "cpu_package_temp_celsius_gte_95_for_10_samples",
+        "cpu_package_temp_celsius_gte_95_for_10_contiguous_seconds",
     ),
     Rule(
         "gpu_thermal_pressure",
@@ -53,7 +54,7 @@ RULES = (
         "OR (gpu_hotspot_temp >= 105 AND gpu_hotspot_temp <= 130))",
         10,
         True,
-        "gpu_core_celsius_gte_90_or_hotspot_gte_105_for_10_samples",
+        "gpu_core_celsius_gte_90_or_hotspot_gte_105_for_10_contiguous_seconds",
     ),
     Rule(
         "memory_pressure",
@@ -61,7 +62,7 @@ RULES = (
         "system_ram_usage_pct >= 95 AND system_ram_usage_pct <= 100",
         20,
         True,
-        "system_ram_usage_pct_gte_95_for_20_samples",
+        "system_ram_usage_pct_gte_95_for_20_contiguous_seconds",
     ),
     Rule(
         "storage_latency_pressure",
@@ -69,7 +70,7 @@ RULES = (
         "disk_max_latency_ms >= 1000 AND disk_max_latency_ms <= 600000",
         5,
         True,
-        "disk_max_latency_ms_gte_1000_for_5_samples",
+        "disk_max_latency_ms_gte_1000_for_5_contiguous_seconds",
     ),
     Rule(
         "scheduler_jitter_saturation",
@@ -77,7 +78,7 @@ RULES = (
         "system_dpc_latency >= 100000 AND system_dpc_latency <= 100000",
         20,
         False,
-        "bounded_user_space_scheduler_jitter_us_eq_100000_for_20_samples",
+        "bounded_user_space_scheduler_jitter_us_eq_100000_for_20_contiguous_seconds",
     ),
     Rule(
         "telemetry_out_of_bounds",
@@ -113,30 +114,28 @@ def format_utc(value: dt.datetime) -> str:
 
 
 def build_aggregate_sql() -> str:
-    columns = [
-        "COUNT(*) AS sample_count",
-        'MIN("timestamp") AS first_sample_utc',
-        'MAX("timestamp") AS last_sample_utc',
-    ]
-    for rule in RULES:
-        columns.extend(
-            (
-                f"COUNT(*) FILTER (WHERE {rule.condition}) "
-                f"AS {rule.anomaly_id}_count",
-                f'MIN("timestamp") FILTER (WHERE {rule.condition}) '
-                f"AS {rule.anomaly_id}_first",
-                f'MAX("timestamp") FILTER (WHERE {rule.condition}) '
-                f"AS {rule.anomaly_id}_last",
-            )
-        )
-    return (
-        "SELECT row_to_json(aggregate_row) FROM (SELECT\n  "
-        + ",\n  ".join(columns)
-        + '\nFROM public.fact_system_hardware\nWHERE "timestamp" > '
-        + ":'after_utc'::timestamptz\n"
-        + '  AND "timestamp" <= :\'until_utc\'::timestamptz'
-        + "\n) AS aggregate_row;"
-    )
+    # A qualifying run ends on a normal observation or a gap over 2.5 seconds.
+    # Its duration is last minus first, not the number of samples in a window.
+    # A fixed 31-second lookbehind preserves runs crossing a cursor boundary.
+    # Reported counts and timestamps remain strictly inside the requested window.
+    flags = [f"COALESCE(({rule.condition}), false) AS f{i}" for i, rule in enumerate(RULES)]
+    previous = [f"LAG(f{i}) OVER (ORDER BY timestamp) AS p{i}" for i in range(len(RULES))]
+    groups = [f"SUM(CASE WHEN f{i} AND p{i} AND gap_seconds <= 2.5 THEN 0 ELSE 1 END) OVER (ORDER BY timestamp) AS g{i}" for i in range(len(RULES))]
+    in_window = "timestamp > :'after_utc'::timestamptz"
+    columns = [f"COUNT(*) FILTER (WHERE {in_window}) AS sample_count", f"MIN(timestamp) FILTER (WHERE {in_window}) AS first_sample_utc", f"MAX(timestamp) FILTER (WHERE {in_window}) AS last_sample_utc"]
+    for i, rule in enumerate(RULES):
+        name = rule.anomaly_id
+        columns.extend([
+            f"COUNT(*) FILTER (WHERE f{i} AND {in_window}) AS {name}_count",
+            f"MIN(timestamp) FILTER (WHERE f{i} AND {in_window}) AS {name}_first",
+            f"MAX(timestamp) FILTER (WHERE f{i} AND {in_window}) AS {name}_last",
+            f"(SELECT COALESCE(MAX(span), 0) FROM (SELECT EXTRACT(EPOCH FROM (MAX(timestamp)-MIN(timestamp))) AS span FROM runs WHERE f{i} GROUP BY g{i} HAVING MAX(timestamp) > :'after_utc'::timestamptz) spans) AS {name}_span_seconds",
+        ])
+    return ("WITH sampled AS MATERIALIZED (SELECT timestamp, " + ", ".join(flags)
+        + " FROM public.fact_system_hardware WHERE timestamp > :'after_utc'::timestamptz - interval '31 seconds' AND timestamp <= :'until_utc'::timestamptz), "
+        + "ordered AS (SELECT sampled.*, EXTRACT(EPOCH FROM (timestamp-LAG(timestamp) OVER (ORDER BY timestamp))) AS gap_seconds, " + ", ".join(previous) + " FROM sampled), "
+        + "runs AS MATERIALIZED (SELECT ordered.*, " + ", ".join(groups) + " FROM ordered) "
+        + "SELECT row_to_json(aggregate_row) FROM (SELECT " + ", ".join(columns) + " FROM runs) aggregate_row;")
 
 
 def query_aggregate(
@@ -145,7 +144,7 @@ def query_aggregate(
     *,
     docker_executable: str | None = None,
     container_name: str = "audit-postgres",
-    timeout_seconds: int = 30,
+    timeout_seconds: int = 12,
 ) -> dict[str, Any]:
     docker = docker_executable or shutil.which("docker.exe") or shutil.which(
         "docker"
@@ -156,8 +155,11 @@ def query_aggregate(
         docker,
         "exec",
         "-i",
+        "-e",
+        "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=10000 -c lock_timeout=1000",
         container_name,
         "psql",
+        "-X",
         "-U",
         "leyang",
         "-d",
@@ -198,9 +200,9 @@ def query_aggregate(
         value = json.loads(stdout)
     except json.JSONDecodeError:
         raise RuntimeError("query_output_invalid") from None
-    if not isinstance(value, dict):
-        raise RuntimeError("query_output_invalid")
-    return value
+    fields = {"sample_count", "first_sample_utc", "last_sample_utc"}
+    fields.update(f"{rule.anomaly_id}_{suffix}" for rule in RULES for suffix in ("count", "first", "last", "span_seconds"))
+    return validate_aggregate(value, fields=fields, count_key="sample_count", after=after_utc, until=until_utc)
 
 
 def _optional_utc(value: Any) -> str | None:
@@ -235,7 +237,9 @@ def build_digest(
     anomalies: list[dict[str, Any]] = []
     for rule in RULES:
         count = int(aggregate.get(f"{rule.anomaly_id}_count") or 0)
-        if count < rule.minimum_samples:
+        minimum_seconds = 0 if rule.anomaly_id == "telemetry_out_of_bounds" else rule.minimum_samples
+        span_seconds = float(aggregate.get(f"{rule.anomaly_id}_span_seconds") or 0)
+        if count < 1 or span_seconds < minimum_seconds:
             continue
         anomalies.append(
             {

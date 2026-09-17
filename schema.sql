@@ -160,6 +160,9 @@ CREATE INDEX IF NOT EXISTS idx_lifecycle_lookup
 -- 字段包括 FPS/帧时间、CPU/GPU 温度功耗电压时钟、内存、磁盘延迟、网络 Ping。
 CREATE TABLE IF NOT EXISTS public.fact_system_hardware (
     timestamp               timestamp with time zone NOT NULL PRIMARY KEY,
+    measurement_quality     jsonb,
+    collector_instance_id   text,
+    collector_sample_seq    bigint,
     current_fps             real,
     average_fps             real,
     one_percent_low_fps     real,

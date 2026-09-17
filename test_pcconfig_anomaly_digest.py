@@ -16,6 +16,7 @@ def base_aggregate():
         "last_sample_utc": "2026-07-30T00:59:57+00:00",
     }
     for rule in digest.RULES:
+        value[f"{rule.anomaly_id}_span_seconds"] = 0
         value[f"{rule.anomaly_id}_count"] = 0
         value[f"{rule.anomaly_id}_first"] = None
         value[f"{rule.anomaly_id}_last"] = None
@@ -41,10 +42,12 @@ class PcConfigAnomalyDigestTests(unittest.TestCase):
 
     def test_threshold_requires_minimum_samples_and_returns_no_values(self):
         aggregate = base_aggregate()
-        aggregate["cpu_thermal_pressure_count"] = 10
+        aggregate["cpu_thermal_pressure_count"] = 11
+        aggregate["cpu_thermal_pressure_span_seconds"] = 10
         aggregate["cpu_thermal_pressure_first"] = "2026-07-30T00:10:00Z"
         aggregate["cpu_thermal_pressure_last"] = "2026-07-30T00:11:00Z"
-        aggregate["gpu_thermal_pressure_count"] = 9
+        aggregate["gpu_thermal_pressure_count"] = 900
+        aggregate["gpu_thermal_pressure_span_seconds"] = 0.5
         aggregate["gpu_thermal_pressure_first"] = "2026-07-30T00:20:00Z"
         aggregate["gpu_thermal_pressure_last"] = "2026-07-30T00:21:00Z"
         result = digest.build_digest(
@@ -120,3 +123,10 @@ class PcConfigAnomalyDigestTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_continuous_run_crossing_window_has_bounded_lookbehind():
+    sql = digest.build_aggregate_sql()
+    assert "interval '31 seconds'" in sql
+    assert "HAVING MAX(timestamp) > :'after_utc'::timestamptz" in sql
+    assert "COUNT(*) FILTER (WHERE timestamp > :'after_utc'::timestamptz) AS sample_count" in sql

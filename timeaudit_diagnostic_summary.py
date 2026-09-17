@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import sys
 from typing import Any
+from diagnostic_validation import validate_aggregate
 
 
 UTC = dt.timezone.utc
@@ -28,6 +29,7 @@ FRESHNESS_SECONDS = 60
 QUERY_TIMEOUT_SECONDS = 10
 MAX_OUTPUT_BYTES = 1_048_576
 CONTAINER_NAME = "audit-postgres"
+AGGREGATE_FIELDS = frozenset("""main_cpu_core_pct_avg main_cpu_core_pct_max main_working_set_mib_max hardware_sample_count distinct_sample_seconds rapid_sample_count collector_instance_count cpu_temp_missing_samples cpu_power_missing_samples gpu_hotspot_missing_samples disk_missing_samples legacy_quality_samples fps_state_counts first_sample_utc last_sample_utc max_internal_gap_seconds cpu_usage_avg_pct cpu_usage_max_pct cpu_temp_avg_c cpu_temp_max_c cpu_power_avg_w cpu_power_max_w gpu_usage_avg_pct gpu_usage_max_pct gpu_temp_avg_c gpu_temp_max_c gpu_hotspot_max_c gpu_power_avg_w gpu_power_max_w ram_usage_avg_pct ram_usage_max_pct disk_latency_avg_ms disk_latency_p95_ms disk_latency_max_ms network_ping_avg_ms network_ping_max_ms packet_loss_samples fps_positive_sample_count fps_sample_count fps_avg fps_min fps_one_percent_low_avg frametime_p95_ms frametime_max_ms frametime_spike_samples cpu_thermal_samples gpu_thermal_samples memory_pressure_samples storage_latency_samples telemetry_out_of_bounds_samples state_event_count collection_gap_seconds active_seconds idle_seconds display_off_seconds lock_seconds sleep_seconds summed_state_seconds recorded_coverage_seconds requested_window_seconds uncovered_seconds cross_state_overlap_seconds""".split())
 
 
 def parse_utc(value: str) -> dt.datetime:
@@ -60,7 +62,8 @@ hardware AS MATERIALIZED (
     h.cpu_total_usage, h.cpu_package_temp, h.cpu_package_power,
     h.system_dpc_latency, h.gpu_usage, h.gpu_core_temp,
     h.gpu_hotspot_temp, h.gpu_board_power, h.system_ram_usage_pct,
-    h.disk_max_latency_ms, h.network_ping_ms, h.is_packet_loss
+    h.disk_max_latency_ms, h.network_ping_ms, h.is_packet_loss,
+    h.fps_capture_status, h.fps_capture_detail, h.measurement_quality, h.collector_instance_id
   FROM public.fact_system_hardware h, bounds b
   WHERE h."timestamp" > b.t_from AND h."timestamp" <= b.t_to
 ),
@@ -68,10 +71,12 @@ valid_frames AS MATERIALIZED (
   SELECT h.*
   FROM hardware h
   WHERE h.current_fps BETWEEN 0.5 AND 1000
-    AND h.average_fps BETWEEN 0.5 AND 1000
+    AND (h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
+    AND (h.fps_capture_status = 'active' OR h.fps_capture_status IS NULL)
     AND h.frametime_ms BETWEEN 0.5 AND 2000
-    AND ABS(h.frametime_ms - 1000.0 / h.current_fps)
-        <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35)
+    AND ((h.fps_capture_detail = 'rtss_shared_memory_frame' AND h.measurement_quality IS NULL)
+         OR ABS(h.frametime_ms - 1000.0 / h.current_fps)
+            <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35))
 ),
 hardware_gaps AS (
   SELECT h.*,
@@ -82,7 +87,23 @@ hardware_gaps AS (
 ),
 hardware_summary AS (
   SELECT
+    AVG(CASE WHEN jsonb_typeof(measurement_quality->'main_cpu_core_pct') = 'number' THEN (measurement_quality->>'main_cpu_core_pct')::double precision END) AS main_cpu_core_pct_avg,
+    MAX(CASE WHEN jsonb_typeof(measurement_quality->'main_cpu_core_pct') = 'number' THEN (measurement_quality->>'main_cpu_core_pct')::double precision END) AS main_cpu_core_pct_max,
+    MAX(CASE WHEN jsonb_typeof(measurement_quality->'main_working_set_mib') = 'number' THEN (measurement_quality->>'main_working_set_mib')::double precision END) AS main_working_set_mib_max,
     COUNT(*)::bigint AS hardware_sample_count,
+    COUNT(DISTINCT date_trunc('second', "timestamp"))::bigint AS distinct_sample_seconds,
+    COUNT(*) FILTER (WHERE gap_seconds < 0.8)::bigint AS rapid_sample_count,
+    COUNT(DISTINCT collector_instance_id)::bigint AS collector_instance_count,
+    COUNT(*) FILTER (WHERE cpu_package_temp IS NULL)::bigint AS cpu_temp_missing_samples,
+    COUNT(*) FILTER (WHERE cpu_package_power IS NULL)::bigint AS cpu_power_missing_samples,
+    COUNT(*) FILTER (WHERE gpu_hotspot_temp IS NULL)::bigint AS gpu_hotspot_missing_samples,
+    COUNT(*) FILTER (WHERE disk_max_latency_ms IS NULL)::bigint AS disk_missing_samples,
+    COUNT(*) FILTER (WHERE measurement_quality IS NULL)::bigint AS legacy_quality_samples,
+    (SELECT COALESCE(json_object_agg(k, n), '{}'::json) FROM (
+       SELECT CASE WHEN fps_capture_status IN ('active','gated_idle','starting','waiting_frames','error','source_unavailable')
+                   THEN fps_capture_status WHEN fps_capture_status IS NULL THEN 'legacy_missing' ELSE 'unknown' END AS k,
+              COUNT(*)::bigint AS n FROM hardware GROUP BY k
+    ) states) AS fps_state_counts,
     MIN("timestamp")::text AS first_sample_utc,
     MAX("timestamp")::text AS last_sample_utc,
     ROUND(COALESCE(MAX(gap_seconds), 0)::numeric, 3)
@@ -158,6 +179,7 @@ hardware_summary AS (
 state_clip AS MATERIALIZED (
   SELECT
     CASE
+      WHEN a.process_name = 'System_CollectionGap' THEN 'collection_gap'
       WHEN a.process_name = 'System_Sleep' THEN 'sleep'
       WHEN a.process_name = 'System_DisplayOff' THEN 'display_off'
       WHEN a.process_name IN ('System_LockScreen', 'LockApp.exe', 'LogonUI.exe')
@@ -232,6 +254,7 @@ all_islands AS (
 state_summary AS (
   SELECT
     (SELECT COUNT(*) FROM state_clip)::bigint AS state_event_count,
+    COALESCE(ROUND(MAX(seconds) FILTER (WHERE state = 'collection_gap')), 0)::bigint AS collection_gap_seconds,
     COALESCE(ROUND(MAX(seconds) FILTER (WHERE state = 'active')), 0)::bigint
       AS active_seconds,
     COALESCE(ROUND(MAX(seconds) FILTER (WHERE state = 'idle')), 0)::bigint
@@ -287,8 +310,11 @@ def query_aggregate(
         docker,
         "exec",
         "-i",
+        "-e",
+        "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000 -c lock_timeout=1000",
         CONTAINER_NAME,
         "psql",
+        "-X",
         "-U",
         "leyang",
         "-d",
@@ -326,9 +352,7 @@ def query_aggregate(
         value = json.loads(stdout)
     except json.JSONDecodeError:
         raise RuntimeError("query_output_invalid") from None
-    if not isinstance(value, dict):
-        raise RuntimeError("query_output_invalid")
-    return value
+    return validate_aggregate(value, fields=AGGREGATE_FIELDS, count_key="hardware_sample_count", after=after_utc, until=until_utc)
 
 
 def _int(value: Any) -> int:
@@ -434,6 +458,22 @@ def build_summary(
             "max_gap_seconds": max_gap_seconds,
             "coverage_status": coverage_status,
         },
+        "data_quality": {
+            "distinct_sample_seconds": _int(aggregate.get("distinct_sample_seconds")),
+            "rapid_sample_count": _int(aggregate.get("rapid_sample_count")),
+            "collector_instance_count": _int(aggregate.get("collector_instance_count")),
+            "legacy_quality_samples": _int(aggregate.get("legacy_quality_samples")),
+            "missing_samples": {k: _int(aggregate.get(k + "_missing_samples")) for k in ("cpu_temp", "cpu_power", "gpu_hotspot", "disk")},
+            "observer_cost": {
+                "scope": "main_process_only_not_total_stack",
+                "cpu_core_pct_average": _float(aggregate.get("main_cpu_core_pct_avg")),
+                "cpu_core_pct_maximum": _float(aggregate.get("main_cpu_core_pct_max")),
+                "working_set_mib_maximum": _float(aggregate.get("main_working_set_mib_max")),
+                "cpu_unit": "100 percent means one logical processor",
+            },
+            "sampling_target_seconds": 1,
+            "historical_values_rewritten": False,
+        },
         "hardware": {
             "cpu": {
                 "usage_pct": _range(aggregate.get("cpu_usage_avg_pct"), aggregate.get("cpu_usage_max_pct")),
@@ -458,6 +498,8 @@ def build_summary(
             },
         },
         "game_performance": {
+            "capture_state_samples": aggregate.get("fps_state_counts", {}),
+            "capture_failures_observed": any(aggregate.get("fps_state_counts", {}).get(k, 0) > 0 for k in ("error", "source_unavailable", "unknown")),
             "status": "observed" if fps_samples else "no_game_frames",
             "quality": (
                 "mixed_valid_and_rejected"
@@ -486,6 +528,7 @@ def build_summary(
                 "display_off": _int(aggregate.get("display_off_seconds")),
                 "lock": _int(aggregate.get("lock_seconds")),
                 "sleep": _int(aggregate.get("sleep_seconds")),
+                "collection_gap": _int(aggregate.get("collection_gap_seconds")),
             },
             "recorded_coverage_seconds": recorded,
             "uncovered_seconds": _int(aggregate.get("uncovered_seconds")),
@@ -497,7 +540,7 @@ def build_summary(
             "causality": "correlation_only",
             "data_gap_meaning": "sleep_power_off_or_collection_gap",
             "scheduler_jitter_meaning": "not_kernel_dpc_latency",
-            "fps_validity": "positive_plausible_and_fps_frametime_consistent",
+            "fps_validity": "source_aware_latest_frame_or_legacy_rtss_window",
         },
         "privacy": {
             "raw_samples_included": False,

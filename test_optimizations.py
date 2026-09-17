@@ -30,28 +30,52 @@ GRAFANA = "http://127.0.0.1:53000"
 results = []
 def check(name, ok, detail=""):
     results.append(bool(ok))
+    if not ok:
+        raise AssertionError(name)
     print(f"  {'✅ PASS' if ok else '❌ FAIL'}  {name}" + (f"  — {detail}" if detail else ""))
 
 
 def test_hung_detection():
-    print("\n[1] is_not_responding 真·无响应检测 (IsHungAppWindow)")
-    try:
-        from activity_worker import ProcessActivityWorker
-    except Exception as e:
-        check("导入 ProcessActivityWorker", False, str(e)); return
-    code = ("import tkinter,time; r=tkinter.Tk(); r.title('HUNGTEST_TA'); "
-            "r.geometry('240x120'); r.update(); time.sleep(40)")
-    pyw = sys.executable.replace('python.exe', 'pythonw.exe')
-    proc = subprocess.Popen([pyw, '-c', code])
-    try:
-        time.sleep(9)  # 超过 IsHungAppWindow ~5s 卡死阈值
-        hung = ProcessActivityWorker._scan_hung_pids()
-        check("_scan_hung_pids 返回集合且不抛异常", isinstance(hung, set))
-        check("真·卡死窗口被精准命中", proc.pid in hung,
-              f"target pid={proc.pid}, detected={sorted(hung)[:6]}")
-    finally:
-        try: proc.kill()
-        except Exception: pass
+    import tempfile
+    from pathlib import Path
+    import psutil
+    from activity_worker import ProcessActivityWorker
+    # The Windows venv executable can be a launcher whose PID owns no window.
+    # The synthetic GUI writes its real PID after its window is visible.
+    with tempfile.TemporaryDirectory(prefix="timeaudit-hung-test-") as directory:
+        ready = Path(directory) / "ready.txt"
+        code = (
+            "import tkinter,time,os; from pathlib import Path; "
+            "r=tkinter.Tk(); r.title('TimeAudit isolated regression'); "
+            "r.overrideredirect(True); r.attributes('-toolwindow', True); r.geometry('1x1-10000-10000'); r.update(); "
+            f"Path({str(ready)!r}).write_text(str(os.getpid())); "
+            "r.after(100,lambda:time.sleep(40)); r.mainloop()"
+        )
+        proc = subprocess.Popen([sys.executable.replace('python.exe', 'pythonw.exe'), '-c', code])
+        owned = []
+        try:
+            deadline = time.monotonic() + 8
+            while not ready.exists() and time.monotonic() < deadline:
+                time.sleep(.1)
+            check("synthetic window became ready", ready.exists())
+            actual_pid = int(ready.read_text())
+            parent = psutil.Process(proc.pid)
+            owned = [parent] + parent.children(recursive=True)
+            check("synthetic window belongs to launched process tree", actual_pid in {p.pid for p in owned})
+            time.sleep(8)
+            hung = ProcessActivityWorker._scan_hung_pids()
+            check("hung scan returns a set", isinstance(hung, set))
+            check("actual synthetic window is detected", actual_pid in hung)
+        finally:
+            for child in reversed(owned):
+                try:
+                    child.kill(); child.wait(timeout=3)
+                except (psutil.Error, OSError):
+                    pass
+            try:
+                proc.kill(); proc.wait(timeout=3)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
 
 
 def test_grafana_pool():

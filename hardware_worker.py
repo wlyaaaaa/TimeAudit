@@ -1,3 +1,5 @@
+import json
+import uuid
 # -*- coding: utf-8 -*-
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning, module="pynvml")
@@ -145,11 +147,15 @@ class HardwareTelemetryWorker:
         self.lock = threading.Lock()
         
         self.wmi_lock = threading.Lock()
+        self._lhm_sample_monotonic = None
+        self._pdh_sample_monotonic = None
+        self._collector_instance_id = uuid.uuid4().hex
+        self._collector_sample_seq = 0
         self.cached_wmi_temp = None        # CPU 封装温度 (LHM: Core (Tctl/Tdie))
         self.cached_wmi_power = None        # CPU 封装功率 (LHM: Powers/Package)
         self.cached_cpu_vcore = None        # CPU Vcore (LHM: 主板 Super I/O 真实读数)
         self.cached_gpu_voltage = None      # NVIDIA GPU 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
-        self.cached_gpu_hotspot = None      # NVIDIA GPU 显存结点/热点温度 (LHM)
+        self.cached_gpu_hotspot = None      # NVIDIA GPU 核心热点实测温度 (LHM)
         self.cached_lhm_gpu_usage = None    # LHM: Load/GPU Core，NVML 失效时的门控回退
         self.cached_lhm_gpu_core_temp = None
         self.cached_lhm_gpu_board_power = None
@@ -157,15 +163,15 @@ class HardwareTelemetryWorker:
         
         self.pdh_lock = threading.Lock()
         self.cached_pdh_data = {
-            "cpu_mhz": 4300,
+            "cpu_mhz": None,
             "cpu_package_temp": None,
             "cpu_package_power": None,
-            "system_hard_page_faults": 0,
-            "system_context_switches_rate": 0,
-            "disk_max_latency_ms": 0.0,
+            "system_hard_page_faults": None,
+            "system_context_switches_rate": None,
+            "disk_max_latency_ms": None,
             
-            "cpu_percents": [0.0] * 32,
-            "cpu_total_usage": 0.0,
+            "cpu_percents": [],
+            "cpu_total_usage": None,
             
             # ``None`` means unavailable.  Do not turn a lost NVML handle into
             # a plausible-looking zero GPU sample: that used to suppress the
@@ -538,9 +544,6 @@ class HardwareTelemetryWorker:
             ]
             if buffer_count and len(frame_times_us) > buffer_count:
                 frame_times_us = frame_times_us[-buffer_count:]
-            buffer_fps_tenths = cls._rtss_u32(entry, 5024)
-            if 5 <= buffer_fps_tenths <= 100_000:
-                current_fps = buffer_fps_tenths / 10.0
             if buffer_count >= 2:
                 buffer_position = cls._rtss_u32(entry, 5020) & 1023
                 last_value = raw_buffer[(buffer_position - 1) & 1023]
@@ -553,6 +556,10 @@ class HardwareTelemetryWorker:
 
         period = (time1 - time0) & 0xFFFFFFFF
         average_fps = 1000.0 * frames / period if frames and period else None
+        if average_fps is None and len(entry) >= 5028:
+            buffer_fps_tenths = cls._rtss_u32(entry, 5024)
+            if 5 <= buffer_fps_tenths <= 100_000:
+                average_fps = buffer_fps_tenths / 10.0
         if average_fps is None and frame_times_us:
             average_fps = 1_000_000.0 / (
                 sum(frame_times_us) / len(frame_times_us)
@@ -1373,7 +1380,7 @@ class HardwareTelemetryWorker:
                             cpu_temp = self._lhm_num(raw)
                         elif "nvidia" in key and key.endswith("gpu core voltage"):
                             gpu_voltage = self._lhm_num(raw)
-                        elif "nvidia" in key and "/temperatures/" in key and ("hot spot" in key or "junction" in key):
+                        elif "nvidia" in key and "/temperatures/" in key and "hot spot" in key:
                             v = self._lhm_num(raw)
                             # 优先真正的核心热点(Hot Spot)，否则采用显存结点(Memory Junction)。
                             if v is not None and (gpu_hotspot is None or "hot spot" in key):
@@ -1390,6 +1397,7 @@ class HardwareTelemetryWorker:
                         endpoint_down = True
 
                 with self.wmi_lock:
+                    self._lhm_sample_monotonic = time.monotonic() if json_ok else None
                     self.cached_wmi_temp = cpu_temp
                     self.cached_wmi_power = cpu_power
                     self.cached_cpu_vcore = cpu_vcore
@@ -1432,10 +1440,7 @@ class HardwareTelemetryWorker:
             return 0.0
 
     def _sample_nvml_gpu_metrics(self):
-        """采集一拍 NVML GPU 指标并返回字典，内含 GDDR7 显存结温(sensor=1)与核心热点的合并保护
-        gpu_hotspot = max(core+12, mem_junction)。易在特定驱动上抛异常的降频原因/PCIe 调用已各自
-        隔离，故只有核心 util/温度/功率/时钟真正失败才会卸载并重置 NVML(交后台循环重初始化)。
-        抽成独立方法亦便于测试在不依赖后台线程时序的前提下确定性校验热点合并逻辑(test_04)。"""
+        """Read actual NVML metrics. Core hotspot requires a real LHM sensor."""
         res = {
             "source_available": False,
             "gpu_usage": None, "gpu_core_voltage": None, "gpu_core_clock": None, "gpu_mem_clock": None,
@@ -1459,17 +1464,9 @@ class HardwareTelemetryWorker:
                 ):
                     raise ValueError("nvml_core_metrics_out_of_bounds")
 
-                mem_temp = None
-                try:
-                    mem_temp = self._valid_gpu_metric(
-                        pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 1), 0.0, 150.0
-                    )
-                except Exception:
-                    pass
-                hotspot = core_temp + 12.0
-                if mem_temp is not None:
-                    hotspot = max(hotspot, mem_temp)
-                res["gpu_hotspot_temp"] = hotspot
+                # NVML sensor 1 is not a portable core-hotspot reading.
+                # Do not disguise memory temperature or core+offset as hotspot.
+                res["gpu_hotspot_temp"] = None
 
                 res["gpu_board_power"] = float(pynvml.nvmlDeviceGetPowerUsage(self.gpu_handle)) / 1000.0
                 res["gpu_core_clock"] = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS))
@@ -1501,20 +1498,20 @@ class HardwareTelemetryWorker:
         pdh_fail_count = 0
         
         while not self.stop_event.is_set():
-            cpu_percents = [0.0] * 32
-            cpu_total = 0.0
+            cpu_percents = []
+            cpu_total = None
             try:
-                cpu_percents = psutil.cpu_percent(interval=None, percpu=True) or [0.0]
-                cpu_total = sum(cpu_percents) / len(cpu_percents) if cpu_percents else 0.0
+                cpu_percents = psutil.cpu_percent(interval=None, percpu=True) or []
+                cpu_total = sum(cpu_percents) / len(cpu_percents) if cpu_percents else None
             except Exception:
                 pass
 
-            cpu_mhz = 4300
+            cpu_mhz = None
             cpu_package_temp = None
             cpu_package_power = None
-            system_hard_page_faults = 0
-            system_context_switches_rate = 0
-            disk_max_latency_ms = 0.0
+            system_hard_page_faults = None
+            system_context_switches_rate = None
+            disk_max_latency_ms = None
 
             if self.pdh_query:
                 try:
@@ -1528,11 +1525,12 @@ class HardwareTelemetryWorker:
                             if not h: return None
                             v = PDH_FMT_COUNTERVALUE_DOUBLE_L()
                             res = ctypes.windll.pdh.PdhGetFormattedCounterValue(h, 0x00000200, ctypes.byref(type_val), ctypes.byref(v))
-                            return v.doubleValue if res == 0 else None
+                            return v.doubleValue if res == 0 and v.CStatus in (0, 1) and math.isfinite(v.doubleValue) else None
 
-                        base_freq = get_val(self.h_base_freq) or 4300.0
-                        perf_ratio = get_val(self.h_perf_pct) or 100.0
-                        cpu_mhz = int(base_freq * (perf_ratio / 100.0))
+                        base_freq = get_val(self.h_base_freq)
+                        perf_ratio = get_val(self.h_perf_pct)
+                        if base_freq is not None and perf_ratio is not None:
+                            cpu_mhz = int(base_freq * (perf_ratio / 100.0))
 
                         t_val = get_val(self.h_temp)
                         if t_val:
@@ -1542,13 +1540,13 @@ class HardwareTelemetryWorker:
                         if p_val:
                             cpu_package_power = p_val / 1000.0 if p_val > 1000 else p_val
 
-                        system_hard_page_faults = int(get_val(self.h_hard_faults) or 0)
-                        system_context_switches_rate = int(
-                            max(0.0, get_val(self.h_context_switches) or 0.0)
-                        )
+                        faults = get_val(self.h_hard_faults)
+                        switches = get_val(self.h_context_switches)
+                        system_hard_page_faults = int(max(0, faults)) if faults is not None else None
+                        system_context_switches_rate = int(max(0, switches)) if switches is not None else None
 
                         d_val = get_val(self.h_disk_latency)
-                        if d_val:
+                        if d_val is not None and d_val >= 0:
                             disk_max_latency_ms = d_val * 1000.0
                     else:
                         pdh_fail_count += 1
@@ -1584,6 +1582,9 @@ class HardwareTelemetryWorker:
                     "gpu_board_power": self.cached_lhm_gpu_board_power,
                 }
 
+            lhm_at = getattr(self, "_lhm_sample_monotonic", None)
+            if lhm_at is None or time.monotonic() - lhm_at > 5.0:
+                lhm_metrics = {}
             gpu_metrics_source, gpu_metrics = self._merge_gpu_metrics(
                 nvml_metrics,
                 lhm_metrics,
@@ -1600,6 +1601,7 @@ class HardwareTelemetryWorker:
             self._update_gpu_render_gate(gpu_metrics_source, gpu_usage)
 
             with self.pdh_lock:
+                self._pdh_sample_monotonic = time.monotonic()
                 self.cached_pdh_data["cpu_mhz"] = cpu_mhz
                 self.cached_pdh_data["cpu_package_temp"] = cpu_package_temp
                 self.cached_pdh_data["cpu_package_power"] = cpu_package_power
@@ -1687,25 +1689,58 @@ class HardwareTelemetryWorker:
             lhm_gpu_voltage = self.cached_gpu_voltage
             lhm_gpu_hotspot = self.cached_gpu_hotspot
 
-        # CPU 封装温度/功率：优先 LHM 真实读数(Tctl/Tdie、Package)，其次 PDH(ACPI 热区/电表)，最后合成兜底。
-        if lhm_temp is not None:
-            cpu_package_temp = lhm_temp
-        elif cpu_package_temp is None:
-            cpu_package_temp = 39.0 + (cpu_total * 0.46)
+        # Only real package / hotspot sensors can populate these fields.
+        # ACPI thermal zones and whole-machine power are not CPU package data.
+        lhm_at = getattr(self, "_lhm_sample_monotonic", None)
+        pdh_at = getattr(self, "_pdh_sample_monotonic", None)
+        lhm_age = None if lhm_at is None else max(0.0, now_ts - lhm_at)
+        pdh_age = None if pdh_at is None else max(0.0, now_ts - pdh_at)
+        lhm_fresh = lhm_age is not None and lhm_age <= 5.0
+        cpu_package_temp = lhm_temp if lhm_fresh else None
+        cpu_package_power = lhm_power if lhm_fresh else None
+        gpu_core_voltage = lhm_gpu_voltage if lhm_fresh else None
+        gpu_hotspot_temp = lhm_gpu_hotspot if lhm_fresh else None
+        if not lhm_fresh:
+            cpu_vcore = None
+        if pdh_age is None or pdh_age > 5.0:
+            disk_max_latency_ms = None
+            cpu_mhz = cpu_total = None
+            cpu_percents = []
+            system_hard_page_faults = system_context_switches_rate = None
+            gpu_usage = gpu_core_clock = gpu_mem_clock = gpu_core_temp = gpu_board_power = None
+        # Bounded self-only cost measurement, not another monitoring process.
+        observer = getattr(self, "_observer_metrics", {})
+        if now_ts - getattr(self, "_observer_at", 0.0) >= 5.0:
+            try:
+                process = psutil.Process()
+                times = process.cpu_times()
+                cpu_seconds = times.user + times.system
+                previous = getattr(self, "_observer_cpu", None)
+                elapsed = now_ts - getattr(self, "_observer_at", now_ts)
+                observer = {
+                    "main_cpu_core_pct": None if previous is None or elapsed <= 0 else max(0.0, 100.0 * (cpu_seconds-previous) / elapsed),
+                    "main_working_set_mib": process.memory_info().rss / 1048576.0,
+                }
+                self._observer_cpu = cpu_seconds
+                self._observer_at = now_ts
+                self._observer_metrics = observer
+            except Exception:
+                observer = {}
+        measurement_quality = {
+            "contract": 2,
+            "cpu_package_source": "lhm" if lhm_fresh else "unavailable",
+            "gpu_hotspot_source": "lhm" if gpu_hotspot_temp is not None else "unavailable",
+            "lhm_age_seconds": None if lhm_age is None else round(lhm_age, 3),
+            "pdh_age_seconds": None if pdh_age is None else round(pdh_age, 3),
+            "disk_source": "pdh" if disk_max_latency_ms is not None else "unavailable",
+            "fps_current_semantics": "latest_frame_reciprocal",
+            "observer_scope": "main_process_only",
+            "main_cpu_core_pct": observer.get("main_cpu_core_pct"),
+            "main_working_set_mib": observer.get("main_working_set_mib"),
+        }
 
-        if lhm_power is not None:
-            cpu_package_power = lhm_power
-        elif cpu_package_power is None:
-            cpu_package_power = 24.0 + (cpu_total * 1.46)
-
-        # GPU 核心电压：NVML 在 GeForce 无法提供，仅采用 LHM 真实读数，无则置空(NULL)，不再伪造。
-        gpu_core_voltage = lhm_gpu_voltage
-        # GPU 热点温度：优先 LHM 显存结点真实温度，否则退化为 NVML 估算(core+12)。
-        if lhm_gpu_hotspot is not None:
-            gpu_hotspot_temp = lhm_gpu_hotspot
-
-        ccd0_load = 0.0
-        ccd1_load = 0.0
+        ccd0_load = None
+        ccd1_load = None
         try:
             if len(cpu_percents) >= 32:
                 ccd0_load = sum(cpu_percents[0:16]) / 16.0
@@ -1718,7 +1753,7 @@ class HardwareTelemetryWorker:
 
         # psutil 7.2.2 frees its Windows CPU-statistics buffer before reading
         # ContextSwitches/SystemCalls.  Use the localized-safe PDH rate instead.
-        ctx_rate = int(max(0, system_context_switches_rate))
+        ctx_rate = int(max(0, system_context_switches_rate)) if system_context_switches_rate is not None else None
         
         ram_pct = psutil.virtual_memory().percent
         commit_gb = self._get_commit_charge_gb()
@@ -1807,7 +1842,8 @@ class HardwareTelemetryWorker:
             "pcie_bus_utilization": pcie_bus_utilization,
             "fps_capture_status": fps_capture_status,
             "fps_capture_detail": fps_capture_detail,
-            "disk_max_latency_ms": disk_max_latency_ms if disk_max_latency_ms is not None else 0.0,
+            "disk_max_latency_ms": disk_max_latency_ms,
+            "measurement_quality": measurement_quality,
             "network_ping_ms": self.network_metrics["ping_ms"], 
             "is_packet_loss": self.network_metrics["packet_loss"], 
             "network_jitter": self.network_metrics["jitter"],
@@ -1824,6 +1860,8 @@ class HardwareTelemetryWorker:
         fps_capture_status = data.get("fps_capture_status", "source_unavailable")
         fps_capture_detail = data.get("fps_capture_detail", "gpu_source_unavailable")
 
+        self._collector_sample_seq = getattr(self, "_collector_sample_seq", 0) + 1
+        instance_id = getattr(self, "_collector_instance_id", None)
         query = """
             INSERT INTO public.fact_system_hardware 
             ("timestamp", current_fps, average_fps, one_percent_low_fps, frametime_ms, frametime_jitter,
@@ -1832,8 +1870,9 @@ class HardwareTelemetryWorker:
              system_dpc_latency, system_context_switches, gpu_usage, gpu_core_voltage, gpu_core_clock, gpu_mem_clock, 
              gpu_core_temp, gpu_hotspot_temp, gpu_board_power, gpu_throttling_reasons, pcie_bus_utilization,
              system_ram_usage_pct, system_commit_size_gb, system_hard_page_faults, disk_max_latency_ms,
-             network_ping_ms, is_packet_loss, network_jitter, cpu_ccd0_usage, cpu_ccd1_usage)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33);
+             network_ping_ms, is_packet_loss, network_jitter, cpu_ccd0_usage, cpu_ccd1_usage,
+             measurement_quality, collector_instance_id, collector_sample_seq)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36);
         """
         async with pool.acquire() as conn:
             await conn.execute(
@@ -1846,7 +1885,9 @@ class HardwareTelemetryWorker:
                 data["gpu_hotspot_temp"], data["gpu_board_power"], data["gpu_throttling_reasons"],
                 data["pcie_bus_utilization"], data["system_ram_usage_pct"], data["system_commit_size_gb"],
                 data["system_hard_page_faults"], data["disk_max_latency_ms"], data["network_ping_ms"],
-                1 if data["is_packet_loss"] else 0, data["network_jitter"], ccd0_load, ccd1_load
+                1 if data["is_packet_loss"] else 0, data["network_jitter"], ccd0_load, ccd1_load,
+                json.dumps(data.get("measurement_quality", {}), allow_nan=False),
+                instance_id, self._collector_sample_seq
             )
 
     def terminate(self):

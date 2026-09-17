@@ -16,7 +16,14 @@ UNTIL = dt.datetime(2026, 8, 29, 1, 0, tzinfo=UTC)
 
 def aggregate_fixture():
     return {
+        "main_cpu_core_pct_avg": 2.0, "main_cpu_core_pct_max": 4.0, "main_working_set_mib_max": 100.0,
         "hardware_sample_count": 3600,
+        "distinct_sample_seconds": 3600, "rapid_sample_count": 0,
+        "collector_instance_count": 1, "cpu_temp_missing_samples": 0,
+        "cpu_power_missing_samples": 0, "gpu_hotspot_missing_samples": 3600,
+        "disk_missing_samples": 0, "legacy_quality_samples": 0,
+        "fps_state_counts": {"active": 130, "gated_idle": 3470},
+        "collection_gap_seconds": 0,
         "first_sample_utc": "2026-08-29T00:00:01+00:00",
         "last_sample_utc": "2026-08-29T00:59:59+00:00",
         "max_internal_gap_seconds": 2,
@@ -157,7 +164,10 @@ class TimeAuditDiagnosticSummaryTests(unittest.TestCase):
             result = summary.query_aggregate(AFTER, UNTIL, docker_executable="docker.exe")
         self.assertEqual(result["hardware_sample_count"], 3600)
         command = run.call_args.args[0]
-        self.assertEqual(command[:4], ["docker.exe", "exec", "-i", "audit-postgres"])
+        self.assertEqual(command[:3], ["docker.exe", "exec", "-i"])
+        self.assertIn("audit-postgres", command)
+        self.assertIn("-X", command)
+        self.assertIn("default_transaction_read_only=on", " ".join(command))
         self.assertNotIn("password", " ".join(command).lower())
         self.assertFalse(run.call_args.kwargs["shell"] if "shell" in run.call_args.kwargs else False)
 

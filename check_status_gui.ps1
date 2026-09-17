@@ -1,158 +1,39 @@
-﻿# check_status_gui.ps1
-# =====================================================================
-# 针对 VBScript GUI 弹窗定制的纯文本解析器 (宿主机驱动直连穿透版)
-# =====================================================================
-$outFile = "$env:TEMP\time_audit_status.txt"
-$report = @()
-$dbHostPort = 45432
-$configuredDbHostPort = 0
-if (
-    [int]::TryParse($env:TIMEAUDIT_DB_HOST_PORT, [ref]$configuredDbHostPort) -and
-    $configuredDbHostPort -ge 1 -and
-    $configuredDbHostPort -le 65535
-) {
-    $dbHostPort = $configuredDbHostPort
-}
-
+﻿#requires -Version 7.2
+[CmdletBinding()]
+param([string]$OutFile=(Join-Path $env:TEMP 'time_audit_status.txt'))
+$ErrorActionPreference='Stop'
+$report=@('TimeAudit 运行状态','==========================================')
+$names=@{telemetry='遥测写入心跳';activity_heartbeat='时间采集心跳';activity_persistence='时间记录落盘';ingester='事件入库';database='数据库最新实测';sensors='硬件传感器';backup='备份可验证性';memory_blackbox='原生内存黑匣子';watchdog_last_outcome='看门狗最近验收';memory_blackbox='内存黑匣子';watchdog_last_outcome='看门狗最近验收'}
+$start=[Diagnostics.ProcessStartInfo]::new((Join-Path $PSScriptRoot '.venv\Scripts\python.exe'))
+$start.UseShellExecute=$false;$start.CreateNoWindow=$true
+$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
+$start.ArgumentList.Add('-B');$start.ArgumentList.Add((Join-Path $PSScriptRoot 'timeaudit_health.py'))
+$process=[Diagnostics.Process]::new();$process.StartInfo=$start
 try {
-    $report += "=========================================="
-    $report += "   🛸 个人工时数仓 - 开机自启实况体检报告"
-    $report += "=========================================="
-
-    # 1. 检查 AHK 进程
-    $ahk = Get-Process -Name "AutoHotkey*" -ErrorAction SilentlyContinue
-    if ($ahk) {
-        $report += "[+] AHK 状态机内核 : 运行中 [🟢] (PID: $($ahk.Id))"
-    } else {
-        $report += "[-] AHK 状态机内核 : 已离线 [❌] [OFFLINE]"
-    }
-
-    # 2. 检查 Python 守护进程 (双重保证：PID 文件强校验 + 网络反查 + tasklist 穿透)
-    $py_running = $false
-    $py_pid = "N/A"
-    
-    # 优先使用 PID 文件校验（最直接且免错）
-    $pidFile = "E:\Projects\Tools\TimeAudit\time_audit.pid"
-    if (Test-Path $pidFile) {
-        $pidContent = (Get-Content $pidFile).Trim()
-        if ($pidContent -match "^\d+$") {
-            try {
-                $py_proc = Get-Process -Id ([int]$pidContent) -ErrorAction Stop
-                if ($py_proc -and $py_proc.Name -like "python*") {
-                    $py_running = $true
-                    $py_pid = $pidContent
-                }
-            } catch {
-                # 如果 Get-Process 因为权限等报错，使用 tasklist 跨权限强行穿透验证
-                $task_check = tasklist /FI "PID eq $pidContent" /NH /FO CSV 2>$null
-                if ($task_check -and $task_check -like "*python*") {
-                    $py_running = $true
-                    $py_pid = $pidContent
-                }
-            }
+    if(-not $process.Start()){throw 'probe_start_failed'}
+    $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
+    if(-not $process.WaitForExit(12000)){$process.Kill($true);$process.WaitForExit();throw 'probe_timeout'}
+    $text=$out.GetAwaiter().GetResult();$null=$err.GetAwaiter().GetResult()
+    if($process.ExitCode -notin @(0,2) -or $text.Length -gt 65536){throw 'invalid_probe_output'}
+    $health=$text|ConvertFrom-Json -Depth 12
+    if($health.schema -ne 'timeaudit.runtime-health.v1'){throw 'invalid_health_contract'}
+    if($health.status -ne 'healthy'){$report+='[OFFLINE] 部分证据异常或缺失，见下方分项。'}
+    foreach($property in $health.components.PSObject.Properties){
+        $value=$property.Value;$label=$names[$property.Name]
+        if(-not $label){continue}
+        $mark=if($value.status -eq 'healthy'){'[正常]'}else{'[OFFLINE] 需检查'}
+        $age=if($value.PSObject.Properties.Name -contains 'age_seconds'){'，距最近更新 '+$value.age_seconds+' 秒'}else{''}
+        $report+="$mark $label$age"
+        if($property.Name -eq 'memory_blackbox' -and $value.PSObject.Properties.Name -contains 'rolling_span_hours'){
+            $report+='    滚动记录首尾跨度 '+$value.rolling_span_hours+' 小时，具体窗口仍需核对缺口；旧启动尾段另计。'
         }
     }
-    
-    # 如果 PID 文件不存在或进程已死，回退到网络反查
-    if (-not $py_running) {
-        $net_conns = Get-NetTCPConnection -RemotePort $dbHostPort -State Established -ErrorAction SilentlyContinue
-        if ($net_conns) {
-            $target_pid = ($net_conns | Select-Object -First 1).OwningProcess
-            try {
-                $py_proc = Get-Process -Id $target_pid -ErrorAction Stop
-                if ($py_proc -and $py_proc.Name -like "python*") {
-                    $py_running = $true
-                    $py_pid = $target_pid
-                }
-            } catch {
-                # 使用 tasklist 跨权限穿透验证
-                $task_check = tasklist /FI "PID eq $target_pid" /NH /FO CSV 2>$null
-                if ($task_check -and $task_check -like "*python*") {
-                    $py_running = $true
-                    $py_pid = $target_pid
-                }
-            }
-        }
-    }
-
-    if ($py_running) {
-        $report += "[+] Python 遥测守护 : 运行中 [🟢] (PID: $py_pid)"
-    } else {
-        $report += "[-] Python 遥测守护 : 已离线 [❌] [OFFLINE]"
-    }
-
-    # 3. 检查 Postgres 端口
-    $ports = Get-NetTCPConnection -LocalPort $dbHostPort -ErrorAction SilentlyContinue
-    if ($ports) {
-        $unique_pid = ($ports | Select-Object -First 1).OwningProcess
-        $report += "[+] Docker Postgres : 端口 $dbHostPort 就绪 [🟢] (PID: $unique_pid)"
-    } else {
-        $report += "[-] Docker Postgres : 端口 $dbHostPort 闭塞 [❌] [OFFLINE]"
-    }
-
-    # 4. 🚀 强效修正：利用宿主机 Python + asyncpg 原生穿透网络流进行心跳实测
-    # 彻底抛弃受阻的 docker ps / docker exec 命令，实现 100% 鉴权级体检
-    $pyCode = @'
-import asyncio, asyncpg, os, sys
-async def check():
-    try:
-        c = await asyncpg.connect(
-            host="127.0.0.1",
-            port=int(os.environ.get("TIMEAUDIT_DB_HOST_PORT", "45432")),
-            user="leyang",
-            password=os.environ["TIMEAUDIT_DB_PASSWORD"],
-            database="time_audit",
-        )
-        v = await c.fetchval("SELECT EXTRACT(EPOCH FROM (now() - timestamp)) FROM public.fact_system_hardware ORDER BY timestamp DESC LIMIT 1;")
-        if v is not None:
-            print(f"SUCCESS:{v}")
-        else:
-            print("NODATA")
-        await c.close()
-    except Exception as e:
-        print(f"FAILED:{e}")
-asyncio.run(check())
-'@
-
-    # 动态探测真实的 Python 物理路径，杜绝 WindowsApps 应用商店别名引起的隐藏卡死/权限问题
-    $pyExe = "C:\Users\10979\AppData\Local\Programs\Python\Python311\python.exe"
-    if (-not (Test-Path $pyExe)) {
-        $pyExe = "python" # 默认回退
-        $pyPaths = where.exe python.exe 2>$null
-        foreach ($p in $pyPaths) {
-            if ($p -notlike "*WindowsApps*") {
-                $pyExe = $p
-                break
-            }
-        }
-    }
-
-    # 将 Python 代码块灌入标准输入流执行
-    $db_status = $pyCode | & $pyExe 2>$null
-
-
-    if ($db_status -like "SUCCESS:*") {
-        $diff_sec = [double]::Parse(($db_status -replace "SUCCESS:", "").Trim())
-        $diff_sec_format = [Math]::Round($diff_sec, 1)
-        
-        if ($diff_sec -lt 10.0) {
-            $report += "[+] 数仓实况写入   : 绿色健康 [🟢] (延时: $diff_sec_format 秒)"
-        } else {
-            $report += "[!] 数仓实况写入   : 心跳滞后 [⚠️] [OFFLINE] (延时: $diff_sec_format 秒)"
-        }
-    } elseif ($db_status -eq "NODATA") {
-        $report += "[-] 数仓实况写入   : 无数据 [❌] [OFFLINE] (数据库内尚无任何采样记录)"
-    } else {
-        $report += "[-] 数仓实况写入   : 数仓连接失败 [❌] [OFFLINE]"
-    }
-
-    $report += "=========================================="
-    $report += "提示：若有组件离线，请双击运行 start_all.bat。"
-
-} catch {
-    $report += "[-] 脚本运行时异常 : [❌] [OFFLINE]"
-    $report += "错误详情: $_"
-} finally {
-    # 强保宽字符输出，拒绝弹窗格式崩塌
-    $report | Out-File -FilePath $outFile -Encoding unicode -Force
+    $report+='=========================================='
+    $report+='健康检查不会启动或重启任何组件。'
+    $report+='无热点温度读数不等于过热；FPS 空闲不等于采集故障。'
+    $report+='旧备份缺少校验记录时会提示需检查，不会冒充已验证。'
+}catch{$report+='[OFFLINE] 状态证据暂时不可用；本次没有执行修复。'}
+finally{
+    $process.Dispose()
+    $report|Out-File -LiteralPath $OutFile -Encoding unicode -Force
 }
