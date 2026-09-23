@@ -21,6 +21,8 @@ from timeaudit_diagnostic_summary import parse_utc, format_utc
 
 UTC = dt.timezone.utc
 SCHEMA = "timeaudit.personal-activity.v1"
+SUMMARY_SCHEMA = "timeaudit.personal-activity-summary.v1"
+BEIJING = dt.timezone(dt.timedelta(hours=8))
 STATE_NAMES = {
     "System_CollectionGap": "collection_gap", "System_Sleep": "sleep",
     "System_DisplayOff": "display_off", "System_LockScreen": "lock",
@@ -308,12 +310,227 @@ def read_activity(after, until, *, automation=(), query_fn=query):
             }, "known_automation": list(automation), "chunks": chunks}
 
 
+def _coverage(parts, after, until, row_count):
+    """Report recorded interval unions; absence is an uncovered source window."""
+    united = merge(parts)
+    gaps = missing(united, after, until)
+    observed = seconds(united)
+    return {
+        "row_count": row_count,
+        "recorded_union_seconds": observed,
+        "uncovered_seconds": seconds(gaps),
+        "gap_count": len(gaps),
+        "largest_gap_seconds": round(max(((e-s).total_seconds() for s, e in gaps), default=0), 6),
+        "first_interval_utc": format_utc(united[0][0]) if united else None,
+        "last_interval_utc": format_utc(united[-1][1]) if united else None,
+        "overlapping_row_seconds": round(sum((e-s).total_seconds() for s, e in parts)-observed, 6),
+    }
+
+
+def _beijing_days(after, until):
+    cursor = after
+    while cursor < until:
+        local = cursor.astimezone(BEIJING)
+        next_midnight = dt.datetime.combine(local.date()+dt.timedelta(days=1), dt.time(), BEIJING)
+        end = min(until, next_midnight.astimezone(UTC))
+        yield local.date().isoformat(), cursor, end
+        cursor = end
+
+
+def _period_summary(rows, after, until, automation, top_n):
+    sources = defaultdict(list)
+    states = defaultdict(list)
+    apps = defaultdict(lambda: {"parts": [], "row_count": 0})
+    row_counts = defaultdict(int)
+    anomalies = defaultdict(int)
+    day_windows = list(_beijing_days(after, until))
+    daily = [{"date_beijing": date, "after_utc": format_utc(start),
+              "until_utc": format_utc(end), "window_seconds": round((end-start).total_seconds(), 6),
+              "source_parts": defaultdict(list), "state_parts": defaultdict(list),
+              "row_counts": defaultdict(int)} for date, start, end in day_windows]
+    automation_parts = [(max(after, parse_utc(a["after_utc"])),
+                         min(until, parse_utc(a["until_utc"]))) for a in automation]
+
+    for row in rows:
+        source = row["source"]
+        row_counts[source] += 1
+        start = parse_utc(row["start"])
+        process = row.get("process_name") or "[unresolved_process]"
+        state = STATE_NAMES.get(process, "app_observed") if source == "ahk" else "foreground"
+        if row.get("end") is None:
+            anomalies["open_foreground_rows_not_extrapolated"] += 1
+            continue
+        end = parse_utc(row["end"])
+        if end <= start:
+            anomalies[f"{source}_nonpositive_intervals"] += 1
+            continue
+        if source == "foreground" and row.get("duration_ms") is not None:
+            if abs((end-start).total_seconds()*1000-row["duration_ms"]) > 1000:
+                anomalies["foreground_duration_mismatch_rows"] += 1
+        part = max(start, after), min(end, until)
+        if part[1] <= part[0]:
+            continue
+        sources[source].append(part)
+        if source == "ahk":
+            states[state].append(part)
+        if source == "foreground" or state == "app_observed":
+            app = apps[(source, process)]
+            app["parts"].append(part)
+            app["row_count"] += 1
+        for item, (_, day_start, day_end) in zip(daily, day_windows):
+            s, e = max(part[0], day_start), min(part[1], day_end)
+            if e > s:
+                item["source_parts"][source].append((s, e))
+                item["row_counts"][source] += 1
+                if source == "ahk":
+                    item["state_parts"][state].append((s, e))
+
+    coverage = {source: _coverage(sources[source], after, until, row_counts[source])
+                for source in ("foreground", "ahk")}
+    coverage["ahk"]["explicit_collection_gap_seconds"] = seconds(states.get("collection_gap", []))
+    coverage["ahk"]["non_gap_recorded_seconds"] = seconds(
+        [part for state, parts in states.items() if state != "collection_gap" for part in parts])
+    coverage["ahk"]["cross_state_overlap_seconds"] = round(
+        sum(seconds(parts) for parts in states.values())-seconds(sources["ahk"]), 6)
+    app_output = {}
+    for source in ("foreground", "ahk"):
+        ranked = []
+        for (app_source, name), info in apps.items():
+            if app_source == source:
+                parts = info["parts"]
+                ranked.append({"process_name": name, "row_count": info["row_count"],
+                               "observed_union_seconds": seconds(parts),
+                               "overlapping_row_seconds": round(sum((e-s).total_seconds() for s,e in parts)-seconds(parts), 6),
+                               "known_automation_overlap_seconds": seconds(intersect(parts, automation_parts))})
+        ranked.sort(key=lambda item: (-item["observed_union_seconds"], item["process_name"]))
+        app_output[source] = {"total_application_count": len(ranked), "top_n": top_n,
+                              "other_application_count": max(0, len(ranked)-top_n),
+                              "top": ranked[:top_n]}
+    days = []
+    for item, (_, start, end) in zip(daily, day_windows):
+        source_parts = item.pop("source_parts")
+        state_parts = item.pop("state_parts")
+        counts = item.pop("row_counts")
+        item["coverage"] = {}
+        for source in ("foreground", "ahk"):
+            full = _coverage(source_parts[source], start, end, counts[source])
+            item["coverage"][source] = {
+                "intersecting_row_count": full["row_count"],
+                "recorded_union_seconds": full["recorded_union_seconds"],
+                "uncovered_seconds": full["uncovered_seconds"],
+                "gap_count": full["gap_count"],
+                "largest_gap_seconds": full["largest_gap_seconds"],
+                "overlapping_row_seconds": full["overlapping_row_seconds"],
+            }
+        item["coverage"]["ahk"]["explicit_collection_gap_seconds"] = seconds(state_parts.get("collection_gap", []))
+        item["coverage"]["ahk"]["non_gap_recorded_seconds"] = seconds(
+            [part for state, parts in state_parts.items() if state != "collection_gap" for part in parts])
+        item["states"] = {state: {"recorded_union_seconds": seconds(parts),
+                                   "interval_count": len(merge(parts))}
+                          for state, parts in sorted(state_parts.items())}
+        days.append(item)
+    return {"period": {"window_seconds": round((until-after).total_seconds(), 6),
+                       "coverage": coverage,
+                       "states": {state: {"recorded_union_seconds": seconds(parts),
+                                           "interval_count": len(merge(parts))}
+                                  for state, parts in sorted(states.items())},
+                       "applications": app_output, "anomalies": dict(anomalies)},
+            "days": days}
+
+
+def read_activity_summary(after, until, *, automation=(), top_n=10, query_fn=query):
+    """Compact complete-window observation, with Beijing calendar-day detail.
+
+    Native rows are deduplicated across disjoint SQL windows before aggregation.
+    The legacy read_activity API remains available for full group/source evidence.
+    """
+    if after.tzinfo is None or until.tzinfo is None or until <= after:
+        raise ValueError("explicit_ordered_timezone_aware_window_required")
+    after, until = after.astimezone(UTC), until.astimezone(UTC)
+    if until > dt.datetime.now(UTC):
+        raise ValueError("future_window_not_observed")
+    if not isinstance(top_n, int) or isinstance(top_n, bool) or top_n < 1:
+        raise ValueError("positive_top_n_required")
+    if not isinstance(automation, (list, tuple)):
+        raise ValueError("automation_context_array_required")
+    for item in automation:
+        if not isinstance(item, dict) or not all(item.get(k) for k in ("after_utc", "until_utc", "source_ref")):
+            raise ValueError("automation_interval_and_source_ref_required")
+        if parse_utc(item["until_utc"]) <= parse_utc(item["after_utc"]):
+            raise ValueError("invalid_automation_window")
+    started = time.monotonic()
+    sql_seconds = 0.0
+    check_personal_access()
+    tick = time.monotonic()
+    retention = query_fn(RANGE_SQL, after, until)[0]
+    sql_seconds += time.monotonic()-tick
+    seen = set()
+    batch_count = 0
+
+    def read_batch(start, end):
+        nonlocal sql_seconds, batch_count
+        check_personal_access()
+        tick = time.monotonic()
+        try:
+            batch = query_fn(SQL, start, end)
+        except RuntimeError as exc:
+            sql_seconds += time.monotonic()-tick
+            if str(exc) in {"query_timeout", "query_output_too_large"} and end-start > dt.timedelta(hours=1):
+                middle = start+(end-start)/2
+                yield from read_batch(start, middle)
+                yield from read_batch(middle, end)
+                return
+            raise
+        sql_seconds += time.monotonic()-tick
+        batch_count += 1
+        for row in batch:
+            key = (row["source"], json.dumps(row["id"], sort_keys=True, ensure_ascii=False))
+            if key not in seen:
+                seen.add(key)
+                yield row
+
+    def iter_rows():
+        cursor = after
+        while cursor < until:
+            end = min(cursor+dt.timedelta(days=7), until)
+            yield from read_batch(cursor, end)
+            cursor = end
+
+    summary = _period_summary(iter_rows(), after, until, automation, top_n)
+    check_personal_access()
+    return {"schema": SUMMARY_SCHEMA, "status": "ok", "after_utc": format_utc(after),
+            "until_utc": format_utc(until),
+            "observation": {"queried_at_utc": format_utc(dt.datetime.now(UTC)),
+                            "reader_elapsed_seconds": round(time.monotonic()-started, 3),
+                            "query_elapsed_seconds": round(sql_seconds, 3),
+                            "sql_batch_count": batch_count, "native_row_count": len(seen),
+                            "retained_start_bounds": retention,
+                            "retention_completeness": "unknown; bounds do not prove continuous collection",
+                            "snapshot": "independent read-only queries; open sessions can later close"},
+            "semantics": {"actor_role": "device_observation_not_person_presence",
+                          "coverage": "per-source union of recorded half-open intervals; uncovered means no interval from that source, not proof of device inactivity",
+                          "states": "AHK collector categories remain distinct; state unions may overlap and must not be added",
+                          "physical_idle": "60s threshold in current collector, suppressed while system audio plays; per-row exemption and historical version unknown",
+                          "no_foreground_response": "Idle means no responsive focused window, not physical idle",
+                          "foreground": "focus intervals; end timestamp authoritative; open duration unknown",
+                          "days": "Asia/Shanghai UTC+08 calendar days; intervals clipped at local midnight; intersecting_row_count may repeat a row on adjacent days",
+                          "applications": "separate source rankings by observed interval union; top N is partial, other_application_count names omitted groups; groups are not person time",
+                          "automation": "only supplied known intervals annotated; absence does not establish human operation",
+                          "detail": "read_activity(after, until) retains grouped source evidence on demand",
+                          "content": "no titles or command lines selected; no attention, effective-work or personality scores"},
+            "known_automation": list(automation), **summary}
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--after", required=True, help="inclusive ISO timestamp with timezone")
     parser.add_argument("--until", required=True, help="exclusive ISO timestamp with timezone")
     parser.add_argument("--automation-context", type=Path,
                         help="optional JSON array of known after_utc/until_utc/source_ref intervals")
+    parser.add_argument("--summary", action="store_true",
+                        help="compact complete-window and Beijing calendar-day observation")
+    parser.add_argument("--top-n", type=int, default=10,
+                        help="applications per source in summary mode (default: 10)")
     parser.add_argument("--output", type=Path, help="private local result; otherwise JSON stdout")
     args = parser.parse_args(argv)
     try:
@@ -321,7 +538,11 @@ def main(argv=None):
         if args.automation_context:
             check_personal_access()
             automation = json.loads(args.automation_context.read_text(encoding="utf-8"))
-        result = read_activity(parse_utc(args.after), parse_utc(args.until), automation=automation)
+        if args.summary:
+            result = read_activity_summary(parse_utc(args.after), parse_utc(args.until),
+                                           automation=automation, top_n=args.top_n)
+        else:
+            result = read_activity(parse_utc(args.after), parse_utc(args.until), automation=automation)
         payload = json.dumps(result, ensure_ascii=False, indent=2)
         if args.output:
             args.output.write_text(payload + "\n", encoding="utf-8")
@@ -331,7 +552,8 @@ def main(argv=None):
     except (RuntimeError, ValueError, OSError) as exc:
         # No subprocess stderr, private paths or raw database rows on failures.
         reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
-        failure = {"schema": SCHEMA, "status": "error", "reason": reason}
+        failure = {"schema": SUMMARY_SCHEMA if args.summary else SCHEMA,
+                   "status": "error", "reason": reason}
         if isinstance(exc, PersonalDataAccessBlocked) and isinstance(exc.decision.get("diagnostic"), dict):
             failure["diagnostic"] = exc.decision["diagnostic"]
         print(json.dumps(failure))

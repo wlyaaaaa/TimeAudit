@@ -106,6 +106,121 @@ class ActivityTests(unittest.TestCase):
         self.assertEqual(result["chunks"][0]["until_utc"], result["chunks"][1]["after_utc"])
         self.assertEqual(access.call_count, 4)
 
+    @patch.object(reader, "check_personal_access")
+    def test_week_summary_crosses_beijing_midnight_without_losing_days(self, access):
+        after = reader.parse_utc("2026-09-01T15:00:00Z")
+        until = after+dt.timedelta(days=7)
+        crossing = {"source": "foreground", "start": "2026-09-01T15:30:00Z",
+                    "end": "2026-09-01T16:30:00Z", "process_name": "Work.exe",
+                    "id": {"id": 1}}
+        idle = {**crossing, "source": "ahk", "process_name": "System_Idle", "id": {"id": 2}}
+        lock = {**crossing, "source": "ahk", "process_name": "System_LockScreen", "id": {"id": 3}}
+        calls = []
+        def query(sql, start, end):
+            calls.append((sql, start, end))
+            return [{}] if sql == reader.RANGE_SQL else [crossing, idle, lock]
+        result = reader.read_activity_summary(after, until, query_fn=query)
+        self.assertEqual([x["date_beijing"] for x in result["days"]],
+                         [f"2026-09-{day:02d}" for day in range(1, 9)])
+        self.assertEqual(result["days"][0]["coverage"]["foreground"]["recorded_union_seconds"], 1800)
+        self.assertEqual(result["days"][1]["coverage"]["foreground"]["recorded_union_seconds"], 1800)
+        self.assertEqual(result["period"]["coverage"]["foreground"]["recorded_union_seconds"], 3600)
+        self.assertEqual(result["period"]["states"]["physical_idle"]["recorded_union_seconds"], 3600)
+        self.assertEqual(result["period"]["states"]["lock"]["recorded_union_seconds"], 3600)
+        self.assertEqual(result["period"]["coverage"]["ahk"]["cross_state_overlap_seconds"], 3600)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(access.call_count, 3)
+
+    @patch.object(reader, "check_personal_access")
+    def test_summary_deduplicates_cross_batch_rows_and_reports_all_apps(self, access):
+        after = reader.parse_utc("2026-09-01T00:00:00Z")
+        until = after+dt.timedelta(days=8)
+        crossing = {"source": "foreground", "start": "2026-09-07T23:00:00Z",
+                    "end": "2026-09-08T01:00:00Z", "process_name": "Alpha.exe", "id": {"id": 1}}
+        other = {"source": "foreground", "start": "2026-09-08T01:00:00Z",
+                 "end": "2026-09-08T02:00:00Z", "process_name": "Beta.exe", "id": {"id": 2}}
+        gap = {"source": "ahk", "start": "2026-09-08T00:00:00Z",
+               "end": "2026-09-08T00:30:00Z", "process_name": "System_CollectionGap",
+               "id": {"id": 3}}
+        def query(sql, start, end):
+            if sql == reader.RANGE_SQL:
+                return [{}]
+            return [crossing] if start == after else [crossing, other, gap]
+        result = reader.read_activity_summary(after, until, top_n=1, query_fn=query)
+        self.assertEqual(result["observation"]["native_row_count"], 3)
+        self.assertEqual(result["period"]["coverage"]["foreground"]["row_count"], 2)
+        self.assertEqual(result["period"]["coverage"]["foreground"]["recorded_union_seconds"], 10800)
+        apps = result["period"]["applications"]["foreground"]
+        self.assertEqual((apps["total_application_count"], apps["other_application_count"]), (2, 1))
+        self.assertEqual(apps["top"][0]["process_name"], "Alpha.exe")
+        self.assertEqual(result["period"]["coverage"]["ahk"]["explicit_collection_gap_seconds"], 1800)
+        self.assertEqual(result["period"]["coverage"]["ahk"]["non_gap_recorded_seconds"], 0)
+        self.assertEqual(access.call_count, 4)
+
+    @patch.object(reader, "check_personal_access")
+    def test_summary_preserves_overlap_open_and_nonpositive_anomalies(self, access):
+        after = reader.parse_utc("2026-09-01T00:00:00Z")
+        until = after+dt.timedelta(hours=1)
+        rows = [row("foreground", -30, 20), row("foreground", 10, 40, key=2),
+                row("foreground", 50, None, key=3), row("foreground", 60, 40, key=4),
+                row("ahk", 0, 30, "Idle", key=5), row("ahk", 0, 30, "System_Idle", key=6)]
+        def query(sql, start, end):
+            return [{}] if sql == reader.RANGE_SQL else rows
+        result = reader.read_activity_summary(after, until, query_fn=query)
+        fg = result["period"]["coverage"]["foreground"]
+        self.assertEqual((fg["recorded_union_seconds"], fg["overlapping_row_seconds"]), (40, 10))
+        self.assertEqual(result["period"]["anomalies"],
+                         {"open_foreground_rows_not_extrapolated": 1,
+                          "foreground_nonpositive_intervals": 1})
+        self.assertEqual(result["period"]["states"]["physical_idle"]["recorded_union_seconds"], 30)
+        self.assertEqual(result["period"]["states"]["no_foreground_response"]["recorded_union_seconds"], 30)
+
+    @patch.object(reader, "check_personal_access", side_effect=[None, None, RuntimeError("locked")])
+    def test_summary_split_rechecks_before_retry_and_stops_on_lock(self, access):
+        after = reader.parse_utc("2026-09-01T00:00:00Z")
+        calls = []
+        def query(sql, start, end):
+            calls.append(sql)
+            if sql == reader.SQL:
+                raise RuntimeError("query_timeout")
+            return [{}]
+        with self.assertRaisesRegex(RuntimeError, "locked"):
+            reader.read_activity_summary(after, after+dt.timedelta(days=1), query_fn=query)
+        self.assertEqual(calls, [reader.RANGE_SQL, reader.SQL])
+        self.assertEqual(access.call_count, 3)
+
+    @patch.object(reader, "check_personal_access")
+    def test_summary_successful_retry_preserves_whole_window(self, access):
+        after = reader.parse_utc("2026-09-01T00:00:00Z")
+        calls = []
+        crossing = row("ahk", 11*3600, 13*3600, "System_Sleep")
+        def query(sql, start, end):
+            calls.append((sql, start, end))
+            if sql == reader.RANGE_SQL:
+                return [{}]
+            if end-start > dt.timedelta(hours=12):
+                raise RuntimeError("query_output_too_large")
+            return [crossing]
+        result = reader.read_activity_summary(after, after+dt.timedelta(days=1), query_fn=query)
+        self.assertEqual(result["observation"]["sql_batch_count"], 2)
+        self.assertEqual(result["observation"]["native_row_count"], 1)
+        self.assertEqual(result["period"]["states"]["sleep"]["recorded_union_seconds"], 7200)
+        self.assertEqual(access.call_count, 5)
+        self.assertEqual([end-start for sql,start,end in calls if sql == reader.SQL],
+                         [dt.timedelta(days=1), dt.timedelta(hours=12), dt.timedelta(hours=12)])
+
+    @patch.object(reader, "check_personal_access", side_effect=[None, None, RuntimeError("locked")])
+    def test_summary_denial_before_delivery_discards_aggregated_result(self, access):
+        after = reader.parse_utc("2026-09-01T00:00:00Z")
+        calls = []
+        def query(sql, start, end):
+            calls.append(sql)
+            return [{}] if sql == reader.RANGE_SQL else [row("foreground", 0, 60)]
+        with self.assertRaisesRegex(RuntimeError, "locked"):
+            reader.read_activity_summary(after, after+dt.timedelta(hours=1), query_fn=query)
+        self.assertEqual(calls, [reader.RANGE_SQL, reader.SQL])
+        self.assertEqual(access.call_count, 3)
+
 
 if __name__ == "__main__":
     unittest.main()
