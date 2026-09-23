@@ -1,4 +1,7 @@
 import datetime as dt
+import contextlib
+import io
+import json
 import unittest
 from unittest.mock import patch
 
@@ -14,6 +17,24 @@ def row(source, start, end, process="Example.exe", key=1):
 
 
 class ActivityTests(unittest.TestCase):
+    def test_access_failure_retains_owner_diagnostic_without_query_or_retry(self):
+        decision = {"status": "blocked", "reason": "personal_access_adapter_unavailable",
+                    "business_data_read": False, "diagnostic": {"stage": "broker", "code": "broker_timeout",
+                    "elapsed_ms": 30001, "timeout_seconds": 30}}
+        adapter = unittest.mock.Mock()
+        adapter.check_access.return_value = decision
+        with patch.object(reader.importlib.util, "module_from_spec", return_value=adapter), \
+             patch.object(reader.importlib.util, "spec_from_file_location") as spec, \
+             patch.object(reader, "query") as query, contextlib.redirect_stdout(io.StringIO()) as output:
+            spec.return_value.loader.exec_module.return_value = None
+            code = reader.main(["--after", "2026-09-01T00:00:00Z", "--until", "2026-09-02T00:00:00Z"])
+        result = json.loads(output.getvalue())
+        self.assertEqual(code, 1)
+        self.assertEqual(result["reason"], "personal_access_blocked:" + decision["reason"])
+        self.assertEqual(result["diagnostic"], decision["diagnostic"])
+        adapter.check_access.assert_called_once_with("factor")
+        query.assert_not_called()
+
     def test_clipping_overlap_and_gap(self):
         rows = [row("foreground", -30, 20), row("foreground", 10, 40),
                 row("foreground", 60, 140), row("ahk", 0, 50, "System_Idle"),

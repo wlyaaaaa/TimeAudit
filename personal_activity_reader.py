@@ -213,6 +213,13 @@ def summarize(rows, after, until, automation=()):
             "groups": sorted(output, key=lambda g: (g["source"], g["process_name"]))}
 
 
+class PersonalDataAccessBlocked(RuntimeError):
+    """Carry the owner's closed result without retaining subprocess output."""
+    def __init__(self, decision):
+        super().__init__("personal_access_blocked:" + str(decision.get("reason", "unknown")))
+        self.decision = decision
+
+
 def check_personal_access():
     path = Path(r"C:\ProgramData\PCConfig\AuthorityHost\tools\personal_data_access.py")
     spec = importlib.util.spec_from_file_location("_timeaudit_personal_access", path)
@@ -221,9 +228,10 @@ def check_personal_access():
     adapter = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(adapter)
     result = adapter.check_access("factor")
-    if not isinstance(result, dict) or result.get("status") != "pass":
-        reason = result.get("reason", "unknown") if isinstance(result, dict) else "invalid_result"
-        raise RuntimeError("personal_access_blocked:" + str(reason))
+    if not isinstance(result, dict):
+        raise RuntimeError("personal_access_blocked:invalid_result")
+    if result.get("status") != "pass":
+        raise PersonalDataAccessBlocked(result)
 
 
 def read_activity(after, until, *, automation=(), query_fn=query):
@@ -318,7 +326,10 @@ def main(argv=None):
     except (RuntimeError, ValueError, OSError) as exc:
         # No subprocess stderr, private paths or raw database rows on failures.
         reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
-        print(json.dumps({"schema": SCHEMA, "status": "error", "reason": reason}))
+        failure = {"schema": SCHEMA, "status": "error", "reason": reason}
+        if isinstance(exc, PersonalDataAccessBlocked) and isinstance(exc.decision.get("diagnostic"), dict):
+            failure["diagnostic"] = exc.decision["diagnostic"]
+        print(json.dumps(failure))
         return 1
 
 
