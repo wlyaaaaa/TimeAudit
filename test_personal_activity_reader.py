@@ -72,7 +72,7 @@ class ActivityTests(unittest.TestCase):
             return [{}] if sql == reader.RANGE_SQL else []
         result = reader.read_activity(BASE-dt.timedelta(days=31), BASE, query_fn=query)
         self.assertEqual(len(result["chunks"]), 31)
-        self.assertEqual(access.call_count, 33)
+        self.assertEqual(access.call_count, 32)
         self.assertTrue(all(end-start <= dt.timedelta(days=1) for sql,start,end in calls[1:]))
 
     @patch.object(reader, "check_personal_access", side_effect=RuntimeError("locked"))
@@ -81,6 +81,17 @@ class ActivityTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "locked"):
                 reader.read_activity(BASE, BASE+dt.timedelta(days=1), query_fn=query)
             query.assert_not_called()
+
+    @patch.object(reader, "check_personal_access", side_effect=[None, RuntimeError("locked")])
+    def test_denial_before_delivery_discards_read_result(self, access):
+        calls = []
+        def query(sql, start, end):
+            calls.append(sql)
+            return [{}] if sql == reader.RANGE_SQL else []
+        with self.assertRaisesRegex(RuntimeError, "locked"):
+            reader.read_activity(BASE, BASE+dt.timedelta(hours=1), query_fn=query)
+        self.assertEqual(calls, [reader.RANGE_SQL, reader.SQL])
+        self.assertEqual(access.call_count, 2)
 
     @patch.object(reader, "check_personal_access")
     def test_load_splits_without_truncation(self, access):
@@ -93,6 +104,7 @@ class ActivityTests(unittest.TestCase):
         result = reader.read_activity(BASE, BASE+dt.timedelta(days=1), query_fn=query)
         self.assertEqual(len(result["chunks"]), 2)
         self.assertEqual(result["chunks"][0]["until_utc"], result["chunks"][1]["after_utc"])
+        self.assertEqual(access.call_count, 4)
 
 
 if __name__ == "__main__":

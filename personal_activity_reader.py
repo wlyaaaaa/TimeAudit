@@ -235,7 +235,7 @@ def check_personal_access():
 
 
 def read_activity(after, until, *, automation=(), query_fn=query):
-    """Check access for each query; split large windows, never truncate a month.
+    """Check access before reading, between chunks and before delivery.
 
     Uses the existing shared personal-data business check without a second lease.
     """
@@ -257,10 +257,15 @@ def read_activity(after, until, *, automation=(), query_fn=query):
     retention = query_fn(RANGE_SQL, after, until)[0]
     sql_seconds = time.monotonic()-query_started
     chunks = []
+    chunk_started = False
 
     def read_chunk(start, end):
-        nonlocal sql_seconds
-        check_personal_access()
+        nonlocal sql_seconds, chunk_started
+        # The entry check just authorized the range query and first chunk.
+        # Recheck before each later chunk, including retries after a timeout.
+        if chunk_started:
+            check_personal_access()
+        chunk_started = True
         tick = time.monotonic()
         try:
             rows = query_fn(SQL, start, end)
