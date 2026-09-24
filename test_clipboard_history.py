@@ -79,6 +79,11 @@ class ModelTests(unittest.TestCase):
             "README.md", "python3.14.exe", "claude-opus-5-5", "v1.2.3",
             "meeting_notes-20260924.DOCX", "archive-20260924.tar.gz",
             "Tool-v12.34.5-rc.1", "Model3.2-70B-Instruct",
+            "Install-PasswordCenterIndependent.ps1", "Module-v2.1.psm1",
+            "clipboard-model-v2.1.ts", "app-bundle-20260924.js",
+            "session-2026-09-24.log", "Backup-2026-09-24.vbk",
+            "settings-v2.1.toml", "driver-2026-09.dll", "Windows11-2026-09.iso",
+            "SystemBackup-20260924.vhdx",
         ):
             with self.subTest(value=value):
                 self.assertEqual(content_kind(value, "text"), "text")
@@ -89,6 +94,7 @@ class ModelTests(unittest.TestCase):
         for value in (
             "Abc123!x", "P@ssw0rd2024", "Abc123!x.pdf", "P!ssw0rd2024.zip",
             "V7!qM2!nR8#pL5$z.txt", "AbC123.xYz789", "V7qM2nR8.pL5zAb3c",
+            "Abc123!x.ps1", "P!ssw0rd2024.vbk", "aB3$xY7!.VHDX",
             "sk-" + "aB3dE5fG7hJ9kL2mN4pQ6rS8",
             "sk-" + "aB3dE5fG7hJ9kL2mN4pQ6rS8" + "-2024-07-18",
             "ghp_" + "aB3dE5fG7hJ9kL2mN4pQ6rS8", jwt,

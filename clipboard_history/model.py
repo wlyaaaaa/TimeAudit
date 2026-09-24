@@ -80,7 +80,10 @@ _RECOVERY_KEY = re.compile(r"^(?:[0-9]{6}-){7}[0-9]{6}$")
 _FILENAME = re.compile(
     r"[A-Za-z0-9][A-Za-z0-9._-]*\."
     r"(?:txt|md|pdf|docx?|xlsx?|pptx?|csv|tsv|json|ya?ml|xml|html?|"
-    r"png|jpe?g|gif|webp|svg|mp[34]|wav|zip|7z|rar|tar|gz|exe|msi|py)",
+    r"png|jpe?g|gif|webp|svg|mp[34]|wav|zip|7z|rar|tar|gz|exe|msi|"
+    r"py|pyw|ps1|psm1|psd1|bat|cmd|vbs|ahk|sh|[cm]?js|jsx|ts|tsx|"
+    r"css|scss|cs|c|cpp|h|hpp|java|go|rs|sql|toml|ini|cfg|conf|log|"
+    r"dll|sys|reg|inf|cab|msix|appx|iso|img|vhdx?|vmdk|wim|bak|vbk|vib)",
     re.IGNORECASE,
 )
 _VERSION_IDENTIFIER = re.compile(
