@@ -7,7 +7,13 @@ from pathlib import Path
 from typing import Any
 
 from . import CONTRACT_VERSION, SCHEMA_VERSION
-from .model import fts_literal_query, payload_sha256
+from .model import (
+    content_kind,
+    fts_literal_query,
+    looks_like_link,
+    looks_like_secret,
+    payload_sha256,
+)
 
 
 SCHEMA_SQL = """
@@ -304,6 +310,15 @@ class ReadOnlyClipboardStore:
         uri = Path(database).resolve().as_uri() + "?mode=ro"
         self.connection = sqlite3.connect(uri, uri=True, timeout=3.0)
         self.connection.row_factory = sqlite3.Row
+        self.connection.create_function(
+            "clipboard_secret_like", 1, looks_like_secret, deterministic=True
+        )
+        self.connection.create_function(
+            "clipboard_link_like", 1, looks_like_link, deterministic=True
+        )
+        self.connection.create_function(
+            "clipboard_content_kind", 2, content_kind, deterministic=True
+        )
         self.connection.execute("PRAGMA query_only=ON")
         self.connection.execute("PRAGMA busy_timeout=3000")
         version = self.connection.execute(
@@ -369,6 +384,107 @@ class ReadOnlyClipboardStore:
             LIMIT ? OFFSET ?
         """
         return [dict(row) for row in self.connection.execute(sql, params)]
+
+    def search_grouped(
+        self,
+        *,
+        query: str = "",
+        date_from: str | None = None,
+        date_to: str | None = None,
+        payload_type: str | None = None,
+        content_filter: str | None = None,
+        include_restores: bool = True,
+        limit: int = 50,
+        offset: int = 0,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Page exact-content groups after filtering the full event history.
+
+        Repeated observations of one clipboard sequence count once. A new
+        sequence with identical content remains a separate copy, including a
+        marked history restore. The append-only source events are untouched.
+        """
+        if limit < 1 or limit > 200 or offset < 0:
+            raise ValueError("invalid_pagination")
+        if content_filter not in (None, "secret_like", "link"):
+            raise ValueError("invalid_content_filter")
+        fts_query = fts_literal_query(query)
+        if query and fts_query is None:
+            return [], 0
+        clauses = ["e.event_kind='observation'", "e.blob_id IS NOT NULL"]
+        params: list[Any] = []
+        joins: list[str] = []
+        if fts_query:
+            joins.append("JOIN content_fts f ON f.event_id=e.event_id")
+            clauses.append("content_fts MATCH ?")
+            params.append(fts_query)
+        if content_filter in ("secret_like", "link"):
+            joins.append("JOIN blobs filtered_blob ON filtered_blob.blob_id=e.blob_id")
+            predicate = (
+                "clipboard_secret_like" if content_filter == "secret_like"
+                else "clipboard_link_like"
+            )
+            clauses.append(f"{predicate}(filtered_blob.content_text)=1")
+        if date_from:
+            clauses.append("e.observed_at_utc>=?")
+            params.append(date_from)
+        if date_to:
+            clauses.append("e.observed_at_utc<?")
+            params.append(date_to)
+        if payload_type:
+            clauses.append("e.payload_type=?")
+            params.append(payload_type)
+        if not include_restores:
+            clauses.append("e.observation_kind<>'history_restore'")
+        copies_sql = f"""
+            WITH filtered AS (
+                SELECT e.event_id,e.observed_at_utc,e.clipboard_sequence,
+                       e.observation_kind,e.payload_type,e.restored_from_event_id,
+                       e.blob_id,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY e.source_instance_id,e.boot_id,e.session_id,
+                                        e.clipboard_sequence,
+                                        CASE WHEN e.clipboard_sequence IS NULL
+                                             THEN e.event_id END
+                           ORDER BY e.observed_at_utc DESC,e.event_id DESC
+                       ) AS observation_rank
+                FROM events e
+                {' '.join(joins)}
+                WHERE {' AND '.join(clauses)}
+            ), copies AS (
+                SELECT * FROM filtered WHERE observation_rank=1
+            )
+        """
+        count_sql = copies_sql + "SELECT COUNT(DISTINCT blob_id) FROM copies"
+        page_sql = copies_sql + """
+            , ranked AS (
+                SELECT copies.*,
+                       COUNT(*) OVER (PARTITION BY blob_id) AS copy_count,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY blob_id
+                           ORDER BY observed_at_utc DESC,event_id DESC
+                       ) AS content_rank
+                FROM copies
+            )
+            SELECT r.event_id,r.observed_at_utc,r.clipboard_sequence,
+                   r.observation_kind,r.payload_type,r.restored_from_event_id,
+                   r.copy_count,
+                   clipboard_content_kind(b.content_text,r.payload_type) AS content_kind,
+                   substr(replace(b.content_text,char(10),' '),1,160) AS preview
+            FROM ranked r JOIN blobs b ON b.blob_id=r.blob_id
+            WHERE r.content_rank=1
+            ORDER BY r.observed_at_utc DESC,r.event_id DESC
+            LIMIT ? OFFSET ?
+        """
+        self.connection.execute("BEGIN")
+        try:
+            total = int(self.connection.execute(count_sql, params).fetchone()[0])
+            rows = [
+                dict(row)
+                for row in self.connection.execute(page_sql, [*params, limit, offset])
+            ]
+            return rows, total
+        finally:
+            self.connection.execute("ROLLBACK")
 
     def get_event(self, event_id: str) -> dict[str, Any] | None:
         row = self.connection.execute(

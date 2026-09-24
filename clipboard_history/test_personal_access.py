@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.machinery
 import importlib.util
 import json
+import os
 from pathlib import Path
 import sys
 import tempfile
@@ -13,6 +14,7 @@ from concurrent.futures import Future
 from unittest import mock
 
 from clipboard_history.personal_access import BROKER, SharedPersonalAccess, permitted
+import clipboard_history.personal_access as access_module
 
 
 def load_module(name, path):
@@ -238,6 +240,7 @@ class SharedAccessTests(unittest.TestCase):
         self.assertFalse(view.tree.items)
         self.assertFalse(view.rows)
 
+
     def test_copy_rechecks_after_detail_read(self):
         self.grant()
         view, store = self.viewer(), self.store()
@@ -271,6 +274,77 @@ class SharedAccessTests(unittest.TestCase):
         view._finish_history()
         self.assertFalse(view.rows)
 
+
+class PolicyReloadTests(unittest.TestCase):
+    @staticmethod
+    def policy_source(version):
+        return (
+            "def public_status(state, **kwargs):\n"
+            f"    allowed = state.get('schema') == 'test-state-{version}' "
+            "and state.get('phase') == 'unlocked'\n"
+            "    return {'schema': 'pcconfig.personal-environment-status.v3', "
+            "'status': 'pass', 'data_state': 'unlocked' if allowed else 'locked', "
+            "'lock_generation': 1, 'privacy_access': "
+            "{'status': 'pass' if allowed else 'blocked', "
+            "'expires_at_unix': 4102444800 if allowed else 0}}\n"
+        )
+
+    def test_installed_policy_change_revalidates_new_state_and_fails_closed(self):
+        with tempfile.TemporaryDirectory(prefix="timeaudit-policy-reload-") as temp:
+            root = Path(temp)
+            broker = root / "Invoke-SecretBroker.ps1"
+            policy_file = broker.with_name("personal_environment.py")
+            state_file = root / "state.json"
+            policy_file.write_text(self.policy_source("v1"), encoding="utf-8")
+            state_file.write_text(json.dumps({"schema": "test-state-v1", "phase": "unlocked"}),
+                                  encoding="utf-8")
+
+            def runner(action):
+                self.assertEqual(action, "StatusPersonalEnvironment")
+                return {"schema": "pcconfig.personal-environment-status.v3",
+                        "status": "pass", "state_path": str(state_file),
+                        "boot_time": {"available": True, "unix": 100}}
+
+            with mock.patch.object(access_module, "BROKER", broker):
+                access = SharedPersonalAccess(runner=runner)
+                self.assertTrue(permitted(access.initialize()))
+                state_file.write_text(json.dumps({"schema": "test-state-v2", "phase": "unlocked"}),
+                                      encoding="utf-8")
+                self.assertFalse(permitted(access.status()))
+                old_stat = policy_file.stat()
+                policy_file.write_text(self.policy_source("v2"), encoding="utf-8")
+                self.assertEqual(policy_file.stat().st_size, old_stat.st_size)
+                os.utime(policy_file, ns=(old_stat.st_atime_ns, old_stat.st_mtime_ns))
+                self.assertTrue(permitted(access.status()))
+                state_file.write_text(json.dumps({"schema": "test-state-v2", "phase": "locked"}),
+                                      encoding="utf-8")
+                self.assertFalse(permitted(access.status()))
+                state_file.write_text(json.dumps({"schema": "test-state-v2", "phase": "unlocked"}),
+                                      encoding="utf-8")
+                policy_file.write_text("invalid python (", encoding="utf-8")
+                self.assertFalse(permitted(access.status()))
+                policy_file.unlink()
+                self.assertFalse(permitted(access.status()))
+                policy_file.write_text(self.policy_source("v2"), encoding="utf-8")
+                self.assertTrue(permitted(access.status()))
+
+    def test_injected_policy_and_runner_remain_supported(self):
+        with tempfile.TemporaryDirectory(prefix="timeaudit-policy-injected-") as temp:
+            root = Path(temp)
+            state_file = root / "state.json"
+            state_file.write_text("{}", encoding="utf-8")
+            injected = types.SimpleNamespace(public_status=lambda state, **kwargs: {
+                "schema": "pcconfig.personal-environment-status.v3", "status": "pass",
+                "data_state": "unlocked", "lock_generation": 1,
+                "privacy_access": {"status": "pass", "expires_at_unix": 4102444800},
+            })
+            runner = lambda action: {
+                "schema": "pcconfig.personal-environment-status.v3", "status": "pass",
+                "state_path": str(state_file), "boot_time": {"available": True, "unix": 100},
+            }
+            with mock.patch.object(access_module, "BROKER", root / "missing-broker.ps1"):
+                access = SharedPersonalAccess(runner=runner, policy=injected)
+                self.assertTrue(permitted(access.initialize()))
 
 if __name__ == "__main__":
     unittest.main()

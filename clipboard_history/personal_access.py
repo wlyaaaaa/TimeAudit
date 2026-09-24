@@ -1,12 +1,13 @@
 """Read the existing PCConfig shared lease; never issue a TimeAudit grant."""
 from __future__ import annotations
 
-import importlib.util
+import hashlib
 import json
 from pathlib import Path
 import subprocess
 import sys
 import threading
+import types
 import uuid
 
 
@@ -26,6 +27,8 @@ class SharedPersonalAccess:
     def __init__(self, *, runner=None, policy=None):
         self._runner = runner or self._run
         self._policy = policy
+        self._policy_injected = policy is not None
+        self._policy_digest = None
         self._source = None
         self._lock = threading.Lock()
         self._caller = "timeaudit-clipboard-" + uuid.uuid4().hex
@@ -56,22 +59,35 @@ class SharedPersonalAccess:
         path = Path(status["state_path"])
         if not path.is_absolute():
             raise ValueError("personal_access_state_path_invalid")
-        if self._policy is None:
-            # Reuse the installed owner's pure B2 decision code, including its
-            # monotonic deadline and required-view checks. No copied policy.
-            directory = str(BROKER.parent)
-            sys.path.insert(0, directory)
-            try:
-                spec = importlib.util.spec_from_file_location(
-                    "_timeaudit_b2_policy", BROKER.with_name("personal_environment.py"))
-                policy = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(policy)
-                self._policy = policy
-            finally:
-                sys.path.remove(directory)
         with self._lock:
             self._source = (path, boot["unix"])
         return self.status()
+
+    def _current_policy(self):
+        """Use the current installed policy without caching an access decision."""
+        if self._policy_injected:
+            return self._policy
+        policy_path = BROKER.with_name("personal_environment.py")
+        source = policy_path.read_bytes()
+        digest = hashlib.sha256(source).digest()
+        with self._lock:
+            if digest == self._policy_digest and self._policy is not None:
+                return self._policy
+            # Compile the exact bytes observed at this trusted installed path.
+            # This avoids a stale timestamp-based .pyc after an atomic release.
+            module = types.ModuleType("_timeaudit_b2_policy")
+            module.__file__ = str(policy_path)
+            directory = str(BROKER.parent)
+            sys.path.insert(0, directory)
+            try:
+                exec(compile(source, str(policy_path), "exec"), module.__dict__)
+            finally:
+                sys.path.remove(directory)
+            if not callable(getattr(module, "public_status", None)):
+                raise ValueError("personal_access_policy_invalid")
+            self._policy = module
+            self._policy_digest = digest
+            return module
 
     def status(self) -> dict:
         """Tiny read on each UI check; no subprocess, grant cache or renewal."""
@@ -81,10 +97,11 @@ class SharedPersonalAccess:
             if source is None:
                 raise ValueError("personal_access_not_initialized")
             path, boot = source
+            policy = self._current_policy()
             state = json.loads(path.read_text(encoding="utf-8"))
             # A process cannot survive a Windows reboot. The canonical boot
             # observation from this viewer launch is stable for its lifetime.
-            return self._policy.public_status(state, state_path=str(path),
+            return policy.public_status(state, state_path=str(path),
                 boot_unix=boot, boot_time_available=True, privacy_level="factor")
         except Exception:
             return {"schema": STATUS_SCHEMA, "status": "blocked", "data_state": "unknown"}

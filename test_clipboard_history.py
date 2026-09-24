@@ -12,7 +12,10 @@ from clipboard_history.model import (
     CAPTURE_LIMIT_BYTES,
     CaptureDecision,
     classify_text,
+    content_kind,
     fts_literal_query,
+    looks_like_link,
+    looks_like_secret,
 )
 from clipboard_history.storage import ClipboardStore, ReadOnlyClipboardStore
 
@@ -37,6 +40,22 @@ class ModelTests(unittest.TestCase):
             '"中文" AND "a" AND "b" AND "emoji🙂"',
         )
         self.assertIsNone(fts_literal_query("  :*  "))
+
+    def test_local_content_hints_use_synthetic_positive_and_negative_examples(self):
+        self.assertTrue(looks_like_secret('API_KEY="Ab3!cD9$eF4@gH8#"'))
+        self.assertTrue(looks_like_secret("V7@qM2!nR8#pL5$z"))
+        for ordinary in (
+            "This is ordinary English copied from a page.",
+            "def process_request(user_id): return user_id",
+            "123e4567-e89b-12d3-a456-426614174000",
+            "a" * 64,
+            "API_KEY=your_api_key_here",
+        ):
+            self.assertFalse(looks_like_secret(ordinary))
+        self.assertTrue(looks_like_link("codex://threads/synthetic-thread"))
+        self.assertTrue(looks_like_link("https://example.invalid/docs"))
+        self.assertFalse(looks_like_link("codex://"))
+        self.assertEqual(content_kind("codex://threads/synthetic-thread", "text"), "link")
 
 
 class StorageTests(unittest.TestCase):
@@ -92,6 +111,61 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(detail["text"], "第一条 中文🙂")
             with self.assertRaises(sqlite3.OperationalError):
                 viewer.connection.execute("delete from events")
+        finally:
+            viewer.close()
+
+    def test_grouped_history_filters_before_count_and_pages_all_content(self):
+        http = "https://example.invalid/docs"
+        codex = "codex://threads/synthetic-thread"
+        self.capture(http, 40, "url")
+        self.capture(http, 40, "url")  # repeated notification, one sequence
+        repeat = self.capture(http, 41, "url")
+        self.capture(codex, 42)
+        self.capture("alpha", 43)
+        self.capture("alpha ", 44)
+        for index in range(51):
+            self.capture(f"item {index:03d}", index + 45)
+        repeat_at = self.store.connection.execute(
+            "SELECT observed_at_utc FROM events WHERE event_id=?", (repeat,)
+        ).fetchone()[0]
+        viewer = ReadOnlyClipboardStore(self.db)
+        try:
+            first, total = viewer.search_grouped(limit=50)
+            last, last_total = viewer.search_grouped(limit=50, offset=50)
+            self.assertEqual((total, last_total, len(first), len(last)), (55, 55, 50, 5))
+            self.assertEqual(len({row["event_id"] for row in first + last}), 55)
+            links, link_total = viewer.search_grouped(content_filter="link", limit=10)
+            self.assertEqual(link_total, 2)
+            by_preview = {row["preview"]: row for row in links}
+            self.assertEqual((by_preview[http]["payload_type"],
+                              by_preview[http]["copy_count"],
+                              by_preview[http]["content_kind"]), ("url", 2, "link"))
+            self.assertEqual((by_preview[codex]["payload_type"],
+                              by_preview[codex]["content_kind"]), ("text", "link"))
+            dated, dated_total = viewer.search_grouped(
+                content_filter="link", payload_type="url", date_from=repeat_at,
+                limit=10,
+            )
+            self.assertEqual((dated_total, dated[0]["copy_count"]), (1, 1))
+            alpha, alpha_total = viewer.search_grouped(query="alpha", limit=10)
+            self.assertEqual((alpha_total, {row["preview"] for row in alpha}),
+                             (2, {"alpha", "alpha "}))
+        finally:
+            viewer.close()
+
+    def test_secret_filter_counts_distinct_sequences_and_history_recopy(self):
+        secret = "V7@qM2!nR8#pL5$z"
+        original = self.capture(secret, 70)
+        self.capture(secret, 70)  # same clipboard state observed twice
+        self.capture(secret, 71, restore=original)
+        self.capture("ordinary English sentence", 72)
+        viewer = ReadOnlyClipboardStore(self.db)
+        try:
+            rows, total = viewer.search_grouped(content_filter="secret_like", limit=10)
+            self.assertEqual(total, 1)
+            self.assertEqual((rows[0]["copy_count"], rows[0]["content_kind"]),
+                             (2, "secret_like"))
+            self.assertEqual(rows[0]["observation_kind"], "history_restore")
         finally:
             viewer.close()
 
