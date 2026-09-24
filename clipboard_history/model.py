@@ -120,6 +120,10 @@ def looks_like_secret(text: str) -> bool:
     value = text.strip()
     if not value:
         return False
+    # The product's secret-like filter is for key-shaped Latin/ASCII text.
+    # An assignment embedded in a Chinese note is still a note, not a key row.
+    if re.search(r"[\u3007\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]", value):
+        return False
     if _KNOWN_PREFIX.fullmatch(value) or _jwt_like(value):
         return True
     if len(value) <= 256 and _tokenish(value):

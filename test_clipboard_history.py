@@ -50,6 +50,10 @@ class ModelTests(unittest.TestCase):
             "123e4567-e89b-12d3-a456-426614174000",
             "a" * 64,
             "API_KEY=your_api_key_here",
+            '备注 API_KEY="Ab3!cD9$eF4@gH8#"',
+            'Bearer V7qM2nR8pL5zAb3cD9eF4gH8 使用说明',
+            "密钥V7@qM2!nR8#pL5$z",
+            "\U00020000V7@qM2!nR8#pL5$z",
         ):
             self.assertFalse(looks_like_secret(ordinary))
         self.assertTrue(looks_like_link("codex://threads/synthetic-thread"))
