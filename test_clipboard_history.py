@@ -84,6 +84,9 @@ class ModelTests(unittest.TestCase):
             "session-2026-09-24.log", "Backup-2026-09-24.vbk",
             "settings-v2.1.toml", "driver-2026-09.dll", "Windows11-2026-09.iso",
             "SystemBackup-20260924.vhdx",
+            "Qwen3.6-35B-A3B", "Qwen3.8-27B-Q4_K_M.gguf", "Qwen3.8-27B:256k",
+            "Model4.2-24B-Q8_0:128k", "Model4.2-24B-A2B-Instruct",
+            "Model4.2-24B.safetensors", "encoder-v2.1.onnx",
         ):
             with self.subTest(value=value):
                 self.assertEqual(content_kind(value, "text"), "text")
@@ -95,6 +98,7 @@ class ModelTests(unittest.TestCase):
             "Abc123!x", "P@ssw0rd2024", "Abc123!x.pdf", "P!ssw0rd2024.zip",
             "V7!qM2!nR8#pL5$z.txt", "AbC123.xYz789", "V7qM2nR8.pL5zAb3c",
             "Abc123!x.ps1", "P!ssw0rd2024.vbk", "aB3$xY7!.VHDX",
+            "Abc123!x.gguf", "P!ssw0rd2024.safetensors", "Ab3!x-27B:256k",
             "sk-" + "aB3dE5fG7hJ9kL2mN4pQ6rS8",
             "sk-" + "aB3dE5fG7hJ9kL2mN4pQ6rS8" + "-2024-07-18",
             "ghp_" + "aB3dE5fG7hJ9kL2mN4pQ6rS8", jwt,
