@@ -61,10 +61,10 @@
         ┌──────────── Docker 容器群 (docker-compose) ────────────┐
         │  audit-postgres   PostgreSQL 15   端口 45432  ← 数据仓库 │
         │  audit-ingester   跑 ingest.py    搬 CSV→app_usage_logs  │
-        │  audit-grafana    Grafana 大盘    端口 53000  ← 看数据   │
+        │  audit-grafana    Grafana 大盘    端口 43000  ← 看数据   │
         └────────────────────────────────────────────────────────┘
                       ▲
-                      │ 浏览器打开 http://localhost:53000
+                      │ 浏览器打开 http://localhost:43000
                   （你在这里看图）
 ```
 
@@ -170,12 +170,12 @@
 | :--- | :--- | :--- | :--- |
 | `audit-postgres` | postgres:15-alpine | `45432→5432` | 数据仓库。数据存在宿主机 `./postgres_data` 目录。 |
 | `audit-ingester` | 本地 Dockerfile 构建 | 无 | 每 10 秒轮转唯一 spool 段并入库；有限连接/语句超时、幂等事件 ID、无 payload heartbeat 和 Docker healthcheck 防止整批静默卡死。 |
-| `audit-grafana` | grafana-oss:13.0.2 | `53000→3000` | 网页大盘。版本固定，避免 `latest` 自动升级再次破坏已验证的面板配置。 |
+| `audit-grafana` | grafana-oss:13.0.2 | `43000→3000` | 网页大盘。版本固定，避免 `latest` 自动升级再次破坏已验证的面板配置。 |
 
 **账号/端口速查**：
 
 - PostgreSQL：`localhost:45432`，库 `time_audit`；本机口令只从当前用户环境变量 `TIMEAUDIT_DB_PASSWORD` 注入，不进入 Git、日志或命令行。固定宿主端口须避开 Windows 动态端口池，必要时用 `TIMEAUDIT_DB_HOST_PORT` 覆盖并先通过 PCConfig 端口门禁。
-- Grafana：浏览器开 `http://localhost:53000`。
+- Grafana：浏览器开 `http://localhost:43000`。
 
 **PostgreSQL 性能配置写在 `docker-compose.yml` 的 `command:` 里**（不是 postgresql.conf）：`shared_buffers=2GB`、`work_mem=16MB`、`effective_cache_size=8GB`，以及 NVMe 友好的 `random_page_cost=1.1` / `effective_io_concurrency=200`；外加 `shm_size: '512mb'`（并行查询大分区时 `/dev/shm` 的上限，防 "could not resize shared memory segment ... No space left on device"）。改这些要编辑 compose 后 `docker compose up -d audit-db` 重建容器才生效。
 
@@ -304,7 +304,7 @@ powershell -ExecutionPolicy Bypass -File E:\Projects\Tools\TimeAudit\backup_all.
 > recovery datasource UID 和完整 `matcher.id`；恢复入口只发现扩展名精确为 `.json` 的现行快照，仓库中保留的
 > 历史 `.json.bak` 不会被自动或 `--file` 手工导入。详见[快速部署.md](快速部署.md)。
 
-**看大盘**：浏览器开 `http://localhost:53000`。
+**看大盘**：浏览器开 `http://localhost:43000`。
 
 **“屏幕使用时间突然近段无数据”的倒查顺序**：先比对 `log/buffer.csv` / `buffer.csv.*.processing` 的文件级元数据、`ingester_heartbeat.json`、容器 health 与 `app_usage_logs` 最新区间结束时间。不要读取或打印窗口标题。AHK 最长 300 秒才强制结算同一前台区间，因此健康状态允许数据库尾部约 5 分钟自然滞后；超过该边界且 heartbeat 陈旧才属于管道异常。`window_title` 使用 `TEXT`，超长标题不会再阻塞整批；spool 只有在事务提交后才删除，重试由 `source_event_id` 去重。
 

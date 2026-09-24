@@ -34,6 +34,30 @@ watchdog outcome; it cannot recursively validate itself. Exit 2 denotes a valid
 unavailable/degraded diagnostic result. A recent heartbeat does not establish
 successful activity persistence. The last watchdog outcome is separate evidence.
 
+The existing watchdog also restores the Docker dependencies before checking
+collectors. If Docker Desktop has exited, it invokes the existing registered
+`TimeAudit_AutoStart` task unless that task is already running, and checks
+readiness on the next minute's cycle. This preserves the registered interactive
+startup context instead of duplicating it in an ad hoc process. An already running but
+unavailable engine is reported as unavailable; the watchdog never restarts the
+shared engine. Existing stopped PostgreSQL and Grafana containers are started
+without recreating containers, volumes or data. Grafana's local `/api/health`
+must report its database `ok`; a running Grafana that still fails after a grace
+period can be restarted individually. Docker commands have bounded waits, and
+an unconfirmed mutation is inspected on the next cycle rather than replayed.
+Shared health includes Grafana, so collectors alone cannot make the service
+healthy. Public HTTPS reachability is a separate tunnel/publication check.
+Recovery does not reconstruct telemetry that was never collected.
+
+Autostart keeps an existing exact `TimeAudit.ahk` process; unhealthy activity
+capture remains the watchdog's responsibility. Bootstrap uses Compose
+`up -d --no-recreate`: it starts or supplies missing services, but does not
+apply configuration changes by replacing existing containers. Maintenance must
+explicitly deploy a configuration change. Grafana now uses host port 43000;
+53000 was inside a Windows excluded dynamic range and caused a real bind
+failure. All local health, backup/restore defaults and the registered tunnel
+origin must agree when this port changes.
+
 ## Measurement semantics
 
 A scheduled hardware slot is consumed only after its monotonic deadline. Early

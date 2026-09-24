@@ -90,7 +90,7 @@ def validate_dashboard_readback(base_url, auth_header, expected_uid):
 
 def main(argv=None):
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:53000"))
+    ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:43000"))
     ap.add_argument("--user", default=os.environ.get("GRAFANA_USER"))
     ap.add_argument("--file", default=None, help="只恢复这一个 JSON 文件")
     ap.add_argument("--dry-run", action="store_true")

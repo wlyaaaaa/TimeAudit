@@ -25,7 +25,7 @@ for _s in (sys.stdout, sys.stderr):
 
 DSN = local_dsn()
 ROOT = os.path.dirname(os.path.abspath(__file__))
-GRAFANA = "http://127.0.0.1:53000"
+GRAFANA = "http://127.0.0.1:43000"
 
 results = []
 def check(name, ok, detail=""):

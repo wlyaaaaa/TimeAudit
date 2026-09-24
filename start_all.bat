@@ -11,8 +11,11 @@ set DB_WAIT_SECONDS=120
 if not defined TIMEAUDIT_DB_HOST_PORT set "TIMEAUDIT_DB_HOST_PORT=45432"
 set "PATH=%PATH%;C:\Program Files\Docker\Docker\resources\bin;C:\Program Files\Git\cmd"
 
-echo [*] 启动 AHK 守护进程...
-start "" "%PROJECT_DIR%\TimeAudit.ahk"
+echo [*] 检查 AHK 守护进程...
+:: Existing healthy activity capture must survive dependency recovery. The
+:: watchdog separately owns recovery of a present but unhealthy AHK instance.
+powershell -NoProfile -NonInteractive -Command "$target=Join-Path $env:PROJECT_DIR 'TimeAudit.ahk'; $pattern='(?i)(?:^|\s|\x22)'+[regex]::Escape($target)+'(?:\x22|\s|$)'; if (Get-CimInstance Win32_Process -Filter \"Name='AutoHotkey64.exe'\" -ErrorAction SilentlyContinue | Where-Object { $_.CommandLine -match $pattern }) { exit 0 }; exit 1" >nul 2>nul
+if %errorlevel% neq 0 start "" "%PROJECT_DIR%\TimeAudit.ahk"
 
 cd /d "%PROJECT_DIR%"
 echo [*] 启动 Docker Desktop 并等待 Linux engine 就绪...
@@ -38,7 +41,7 @@ if %errorlevel% neq 0 (
 echo [+] Docker daemon 已就绪。
 
 echo [*] 启动 Docker 依赖...
-docker compose up -d
+docker compose up -d --no-recreate
 if %errorlevel% neq 0 (
     echo [-] docker compose up -d 失败。
     exit /b 1

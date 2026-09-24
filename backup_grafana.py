@@ -16,7 +16,7 @@ TimeAudit — Grafana 仪表盘自动备份
 常用参数：
     --no-push          只本地 commit，不 push 到 GitHub
     --no-git           只导出文件，不碰 git
-    --url   http://127.0.0.1:53000     Grafana 地址
+    --url   http://127.0.0.1:43000     Grafana 地址
     --source sqlite     默认；只读本机 grafana.db，不需要无人值守凭据
     --source api        远程/手动 API 模式；认证从本机私密环境注入
     GRAFANA_USER / GRAFANA_PASSWORD                     仅 API 模式使用
@@ -740,7 +740,7 @@ def git_commit_and_push(do_push, dashboard_paths):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:53000"))
+    ap.add_argument("--url", default=os.environ.get("GRAFANA_URL", "http://127.0.0.1:43000"))
     ap.add_argument("--source", choices=("sqlite", "api"), default="sqlite")
     ap.add_argument("--user", default=os.environ.get("GRAFANA_USER"))
     ap.add_argument("--keep-db", type=int, default=14)

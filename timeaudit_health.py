@@ -97,6 +97,19 @@ def lhm_health() -> dict:
         return {"status": "unavailable", "reason": "sensor_endpoint_unavailable"}
 
 
+def grafana_health() -> dict:
+    """Read only Grafana's unauthenticated health metadata, never dashboards."""
+    try:
+        with urllib.request.urlopen("http://127.0.0.1:43000/api/health", timeout=3) as response:
+            data = response.read(4097)
+        value = json.loads(data)
+        if len(data) > 4096 or not isinstance(value, dict) or value.get("database") != "ok":
+            raise ValueError()
+        return {"status": "healthy"}
+    except (OSError, ValueError):
+        return {"status": "unavailable", "reason": "grafana_endpoint_unavailable"}
+
+
 def backup_health(directory: Path) -> dict:
     try:
         files = list(directory.glob("time_audit_*.dump"))
@@ -211,6 +224,7 @@ def build_health(*, core_only: bool = False) -> dict:
         "ingester": lambda: heartbeat(ROOT/"log"/"ingester_heartbeat.json", 45, "timeaudit.ingester-heartbeat.v1"),
         "database": database_health,
         "sensors": lhm_health,
+        "grafana": grafana_health,
     }
     if not core_only:
         jobs["backup"] = lambda: backup_health(Path(r"G:\80_Backup\TimeAudit\postgresql"))

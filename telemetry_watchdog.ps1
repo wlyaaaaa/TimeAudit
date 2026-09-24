@@ -1,5 +1,5 @@
 ﻿# TimeAudit telemetry watchdog
-# Restarts a collector if its process has crashed/disappeared. Guards FOUR engines:
+# Restores Docker dependencies before checking these four collectors/sources:
 #   1. main.py            -> the Python hardware/process telemetry engine (writes fact_* tables)
 #   2. LibreHardwareMonitor -> CPU temperature/clock/power/voltage source; endpoint health is authoritative.
 #   3. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
@@ -24,6 +24,7 @@ $ahkHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ahk_heartbeat'
 $ingesterHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ingester_heartbeat.json'
 $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $compose = 'E:\Projects\Tools\TimeAudit\docker-compose.yml'
+$grafanaHealthUrl = 'http://127.0.0.1:43000/api/health'
 $dbHost = '127.0.0.1'
 $dbHostPort = 45432
 $configuredDbHostPort = 0
@@ -126,6 +127,93 @@ function Test-MainWithinStartupGrace($process) {
     }
 }
 
+# Docker can disappear after successful logon bootstrap. Keep recovery in this
+# serialized watchdog, before consumers; never restart the shared Docker engine
+# or recreate containers/data to repair a missing dependency.
+function Invoke-DockerBounded([string]$Arguments, [int]$TimeoutSeconds = 8) {
+    $start = New-Object Diagnostics.ProcessStartInfo
+    $start.FileName = $docker
+    $start.Arguments = $Arguments
+    $start.UseShellExecute = $false
+    $start.CreateNoWindow = $true
+    $start.RedirectStandardOutput = $true
+    $start.RedirectStandardError = $true
+    $process = New-Object Diagnostics.Process
+    $process.StartInfo = $start
+    try {
+        if (-not $process.Start()) { throw 'docker_start_failed' }
+        $stdout = $process.StandardOutput.ReadToEndAsync()
+        $stderr = $process.StandardError.ReadToEndAsync()
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            $process.Kill(); $process.WaitForExit()
+            # A timed-out mutation has an unknown result. The next cycle must
+            # inspect actual state; do not blindly replay it in this cycle.
+            return @{ Success = $false; Output = ''; TimedOut = $true }
+        }
+        $output = $stdout.GetAwaiter().GetResult()
+        $null = $stderr.GetAwaiter().GetResult()
+        return @{ Success = ($process.ExitCode -eq 0); Output = $output.Trim(); TimedOut = $false }
+    } catch {
+        return @{ Success = $false; Output = ''; TimedOut = $false }
+    } finally { $process.Dispose() }
+}
+
+function Test-GrafanaEndpoint {
+    try {
+        $response = Invoke-RestMethod -Uri $grafanaHealthUrl -TimeoutSec 3 -ErrorAction Stop
+        return $response.database -eq 'ok'
+    } catch { return $false }
+}
+
+function Restore-TimeAuditDependencies {
+    $engine = Invoke-DockerBounded 'info --format {{.ServerVersion}}'
+    if (-not $engine.Success) {
+        $desktop = Get-Process -Name 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue
+        if (-not $desktop) {
+            $autostart = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
+            if ($autostart -and $autostart.State -ne 'Running') {
+                Log 'Docker Desktop absent - invoking registered autostart; next cycle verifies readiness'
+                Start-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction Stop
+            } else {
+                Log 'Docker engine unavailable - autostart already running or not registered'
+            }
+        } else {
+            Log 'Docker engine unavailable - waiting for existing Desktop startup; no shared engine restart'
+        }
+        return
+    }
+    $grafanaStartAttempted = $false
+    foreach ($name in 'audit-postgres','audit-grafana') {
+        $state = Invoke-DockerBounded ('inspect --format {{.State.Status}} ' + $name)
+        if (-not $state.Success) {
+            Log ("Dependency {0} state unavailable - preserve data and defer" -f $name)
+            continue
+        }
+        if ($state.Output -in @('created','exited')) {
+            if ($name -eq 'audit-grafana') { $grafanaStartAttempted = $true }
+            Log ("Dependency {0} stopped - starting existing container" -f $name)
+            $result = Invoke-DockerBounded ('start ' + $name) 30
+            if (-not $result.Success) { Log ("Dependency {0} start not confirmed; next cycle inspects state" -f $name) }
+        }
+    }
+    if ($grafanaStartAttempted) { return }
+    if (-not (Test-GrafanaEndpoint)) {
+        $started = Invoke-DockerBounded 'inspect --format {{.State.StartedAt}} audit-grafana'
+        $startedAt = [DateTimeOffset]::MinValue
+        if (-not $started.Success -or -not [DateTimeOffset]::TryParse($started.Output, [ref]$startedAt) -or
+            ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds -lt 120) { return }
+        Start-Sleep -Seconds $sidecarGraceSeconds
+        if (-not (Test-GrafanaEndpoint)) {
+            $state = Invoke-DockerBounded 'inspect --format {{.State.Status}} audit-grafana'
+            if ($state.Success -and $state.Output -eq 'running') {
+                Log 'Grafana health unavailable after startup grace - restarting only audit-grafana'
+                $result = Invoke-DockerBounded 'restart audit-grafana' 30
+                if (-not $result.Success) { Log 'Grafana restart not confirmed; next cycle inspects state' }
+            }
+        }
+    }
+}
+
 function Remove-StaleTask($taskName) {
     $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
     if ($task -and $task.State -ne 'Running') {
@@ -134,6 +222,7 @@ function Remove-StaleTask($taskName) {
 }
 
 function Invoke-TimeAuditWatchdog {
+Restore-TimeAuditDependencies
 Remove-StaleTask 'TimeAudit_WatchdogRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogAhkRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogLhmRestart_tmp'

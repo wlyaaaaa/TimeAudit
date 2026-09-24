@@ -47,6 +47,26 @@ def test_heartbeat_requires_recent_valid_state_and_bounded_counters(tmp_path):
     assert "private" not in json.dumps(value)
 
 
+def test_grafana_requires_health_database_ok_and_does_not_expose_response():
+    for payload in ({}, {"database": "failing"}, [], {"database": "ok", "padding": "x"*4096}):
+        with patch.object(health.urllib.request, "urlopen", return_value=io.BytesIO(json.dumps(payload).encode())):
+            assert health.grafana_health()["status"] == "unavailable"
+    with patch.object(health.urllib.request, "urlopen", return_value=io.BytesIO(b'{"database":"ok","version":"private"}')):
+        assert health.grafana_health() == {"status": "healthy"}
+    with patch.object(health.urllib.request, "urlopen", side_effect=OSError("private")):
+        assert health.grafana_health() == {"status": "unavailable", "reason": "grafana_endpoint_unavailable"}
+
+
+def test_grafana_failure_is_in_watchdog_core_health():
+    with patch.object(health, "database_health", return_value={"status": "healthy"}), \
+         patch.object(health, "heartbeat", return_value={"status": "healthy"}), \
+         patch.object(health, "lhm_health", return_value={"status": "healthy"}), \
+         patch.object(health, "grafana_health", return_value={"status": "unavailable"}):
+        report = health.build_health(core_only=True)
+    assert report["status"] == "degraded"
+    assert report["degraded_components"] == ["grafana"]
+
+
 def test_bad_backup_manifest_cannot_crash_other_health_probes(tmp_path):
     archive = tmp_path / "time_audit_20260917_120000.dump"
     archive.write_bytes(b"PGDMP" + bytes(1024))
