@@ -405,7 +405,7 @@ class ReadOnlyClipboardStore:
         """
         if limit < 1 or limit > 200 or offset < 0:
             raise ValueError("invalid_pagination")
-        if content_filter not in (None, "secret_like", "link"):
+        if content_filter not in (None, "text", "file_paths", "secret_like", "link"):
             raise ValueError("invalid_content_filter")
         fts_query = fts_literal_query(query)
         if query and fts_query is None:
@@ -417,13 +417,6 @@ class ReadOnlyClipboardStore:
             joins.append("JOIN content_fts f ON f.event_id=e.event_id")
             clauses.append("content_fts MATCH ?")
             params.append(fts_query)
-        if content_filter in ("secret_like", "link"):
-            joins.append("JOIN blobs filtered_blob ON filtered_blob.blob_id=e.blob_id")
-            predicate = (
-                "clipboard_secret_like" if content_filter == "secret_like"
-                else "clipboard_link_like"
-            )
-            clauses.append(f"{predicate}(filtered_blob.content_text)=1")
         if date_from:
             clauses.append("e.observed_at_utc>=?")
             params.append(date_from)
@@ -454,8 +447,7 @@ class ReadOnlyClipboardStore:
                 SELECT * FROM filtered WHERE observation_rank=1
             )
         """
-        count_sql = copies_sql + "SELECT COUNT(DISTINCT blob_id) FROM copies"
-        page_sql = copies_sql + """
+        groups_sql = copies_sql + """
             , ranked AS (
                 SELECT copies.*,
                        COUNT(*) OVER (PARTITION BY blob_id) AS copy_count,
@@ -464,7 +456,7 @@ class ReadOnlyClipboardStore:
                            ORDER BY observed_at_utc DESC,event_id DESC
                        ) AS content_rank
                 FROM copies
-            )
+            ), groups AS (
             SELECT r.event_id,r.observed_at_utc,r.clipboard_sequence,
                    r.observation_kind,r.payload_type,r.restored_from_event_id,
                    r.copy_count,
@@ -472,15 +464,24 @@ class ReadOnlyClipboardStore:
                    substr(replace(b.content_text,char(10),' '),1,160) AS preview
             FROM ranked r JOIN blobs b ON b.blob_id=r.blob_id
             WHERE r.content_rank=1
-            ORDER BY r.observed_at_utc DESC,r.event_id DESC
+            )
+        """
+        # Classify the same latest representative displayed in the list. Filtering
+        # after grouping also prevents one payload copied in two formats from
+        # appearing in multiple category totals. Historical copies remain intact.
+        category_where = " WHERE content_kind=?" if content_filter else ""
+        group_params = [*params, content_filter] if content_filter else params
+        count_sql = groups_sql + "SELECT COUNT(*) FROM groups" + category_where
+        page_sql = groups_sql + "SELECT * FROM groups" + category_where + """
+            ORDER BY observed_at_utc DESC,event_id DESC
             LIMIT ? OFFSET ?
         """
         self.connection.execute("BEGIN")
         try:
-            total = int(self.connection.execute(count_sql, params).fetchone()[0])
+            total = int(self.connection.execute(count_sql, group_params).fetchone()[0])
             rows = [
                 dict(row)
-                for row in self.connection.execute(page_sql, [*params, limit, offset])
+                for row in self.connection.execute(page_sql, [*group_params, limit, offset])
             ]
             return rows, total
         finally:

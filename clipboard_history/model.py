@@ -72,6 +72,8 @@ _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
 )
 _URI = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://\S+$")
+_MAILTO = re.compile(r"^mailto:[^\s@?]+@[^\s@?]+(?:\?\S*)?$", re.IGNORECASE)
+_RECOVERY_KEY = re.compile(r"^(?:[0-9]{6}-){7}[0-9]{6}$")
 _PLACEHOLDER = re.compile(
     r"(?i)(?:example|sample|placeholder|changeme|replace[_-]?me|your[_-]?|dummy|"
     r"not[_-]?a[_-]?real|<[^>]+>|\$\{[^}]+\})"
@@ -85,7 +87,7 @@ def _entropy(value: str) -> float:
 
 
 def _tokenish(value: str) -> bool:
-    if not 16 <= len(value) <= 256 or any(c.isspace() for c in value) or _PLACEHOLDER.search(value):
+    if not 8 <= len(value) <= 256 or any(c.isspace() for c in value) or _PLACEHOLDER.search(value):
         return False
     if _UUID.fullmatch(value) or re.fullmatch(r"[0-9a-fA-F]{32,128}", value):
         return False
@@ -101,6 +103,13 @@ def _tokenish(value: str) -> bool:
         any(c.isdigit() for c in value),
         any(not c.isalnum() for c in value),
     ))
+    if len(value) < 16:
+        # Short hints require all four character classes, not merely English
+        # text plus a number. This is a local hint, never credential validation.
+        return classes == 4 and _entropy(value) >= 2.8
+    words = re.split(r"[_-]|(?<=[a-z])(?=[A-Z])|[0-9]+", value)
+    if len([word for word in words if len(word) >= 3]) >= 3 and not re.search(r"[^A-Za-z0-9_-]", value):
+        return False
     return classes >= 3 and _entropy(value) >= 3.4
 
 
@@ -124,7 +133,7 @@ def looks_like_secret(text: str) -> bool:
     # An assignment embedded in a Chinese note is still a note, not a key row.
     if re.search(r"[\u3007\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]", value):
         return False
-    if _KNOWN_PREFIX.fullmatch(value) or _jwt_like(value):
+    if _KNOWN_PREFIX.fullmatch(value) or _jwt_like(value) or _RECOVERY_KEY.fullmatch(value):
         return True
     if len(value) <= 256 and _tokenish(value):
         return True
@@ -138,6 +147,8 @@ def looks_like_secret(text: str) -> bool:
 
 def looks_like_link(text: str) -> bool:
     value = text.strip()
+    if _MAILTO.fullmatch(value):
+        return True
     if not _URI.fullmatch(value):
         return False
     try:
@@ -148,10 +159,10 @@ def looks_like_link(text: str) -> bool:
 
 
 def content_kind(text: str, payload_type: str) -> str:
-    if looks_like_secret(text):
-        return "secret_like"
     if payload_type == "file_paths":
         return "file_paths"
+    if looks_like_secret(text):
+        return "secret_like"
     if looks_like_link(text):
         return "link"
     return "text"

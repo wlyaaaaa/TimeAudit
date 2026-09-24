@@ -61,6 +61,16 @@ class ModelTests(unittest.TestCase):
         self.assertFalse(looks_like_link("codex://"))
         self.assertEqual(content_kind("codex://threads/synthetic-thread", "text"), "link")
 
+    def test_short_secret_and_recovery_hints_do_not_classify_prose_or_file_lists(self):
+        for value in ("aB3$xY7!", "mR8!jT2#vQ5@", "123456-234567-345678-456789-567890-678901-789012-890123"):
+            self.assertTrue(looks_like_secret(value))
+        self.assertFalse(looks_like_secret("Version2024Release_Candidate_Build7"))
+        self.assertFalse(looks_like_secret("Hello123"))
+        self.assertFalse(looks_like_secret("key中文aB3$xY7!"))
+        self.assertEqual(content_kind("API_KEY=V7@qM2!nR8#pL5$z", "file_paths"), "file_paths")
+        self.assertEqual(content_kind("mailto:example@example.invalid", "text"), "link")
+        self.assertFalse(looks_like_link("mailto:"))
+
 
 class StorageTests(unittest.TestCase):
     def setUp(self):
@@ -170,6 +180,35 @@ class StorageTests(unittest.TestCase):
             self.assertEqual((rows[0]["copy_count"], rows[0]["content_kind"]),
                              (2, "secret_like"))
             self.assertEqual(rows[0]["observation_kind"], "history_restore")
+        finally:
+            viewer.close()
+
+    def test_grouped_categories_partition_latest_groups_before_counting_and_paging(self):
+        self.capture("plain text", 80)
+        self.capture("https://example.invalid", 81, "url")
+        self.capture("mailto:example@example.invalid", 82)
+        self.capture("aB3$xY7!", 83)
+        self.capture("E:\\synthetic\\file.txt", 84, "file_paths")
+        # Same bytes, different clipboard format: the newest group presentation
+        # determines one category, but both real copy events remain counted.
+        self.capture("E:\\synthetic\\file.txt", 85, "text")
+        viewer = ReadOnlyClipboardStore(self.db)
+        try:
+            all_rows, all_total = viewer.search_grouped()
+            group_ids = []
+            for kind, expected in (("text", 2), ("link", 2), ("secret_like", 1), ("file_paths", 0)):
+                pages = []
+                for offset in range(expected + 1):
+                    rows, total = viewer.search_grouped(content_filter=kind, offset=offset, limit=1)
+                    self.assertEqual(total, expected)
+                    self.assertTrue(all(row["content_kind"] == kind for row in rows))
+                    pages += rows
+                self.assertEqual(len(pages), expected)
+                group_ids += [row["event_id"] for row in pages]
+            self.assertEqual(len(set(group_ids)), all_total)
+            self.assertEqual(set(group_ids), {row["event_id"] for row in all_rows})
+            file_row = next(row for row in all_rows if row["preview"].startswith("E:"))
+            self.assertEqual(file_row["copy_count"], 2)
         finally:
             viewer.close()
 
