@@ -74,6 +74,23 @@ _UUID = re.compile(
 _URI = re.compile(r"^[a-zA-Z][a-zA-Z0-9+.-]*://\S+$")
 _MAILTO = re.compile(r"^mailto:[^\s@?]+@[^\s@?]+(?:\?\S*)?$", re.IGNORECASE)
 _RECOVERY_KEY = re.compile(r"^(?:[0-9]{6}-){7}[0-9]{6}$")
+# These structured identifiers often have high entropy without being secrets.
+# Restrict filenames to familiar extensions and identifier punctuation; a dot
+# alone (or a password containing !, @, etc.) is not a filename exemption.
+_FILENAME = re.compile(
+    r"[A-Za-z0-9][A-Za-z0-9._-]*\."
+    r"(?:txt|md|pdf|docx?|xlsx?|pptx?|csv|tsv|json|ya?ml|xml|html?|"
+    r"png|jpe?g|gif|webp|svg|mp[34]|wav|zip|7z|rar|tar|gz|exe|msi|py)",
+    re.IGNORECASE,
+)
+_VERSION_IDENTIFIER = re.compile(
+    r"(?:[A-Za-z]+[-_])*[vV]?[0-9]+(?:\.[0-9]+){1,3}"
+    r"(?:[-_][A-Za-z]+(?:[.-]?[0-9]+)?)?"
+)
+_MODEL_IDENTIFIER = re.compile(
+    r"(?:[A-Za-z]+[0-9]+(?:\.[0-9]+)*-[0-9]+(?:\.[0-9]+)?[Bb]"
+    r"(?:-[A-Za-z]+)*|[a-z]+(?:-[a-z0-9]+)*-[0-9]{4}-[0-9]{2}-[0-9]{2})"
+)
 _PLACEHOLDER = re.compile(
     r"(?i)(?:example|sample|placeholder|changeme|replace[_-]?me|your[_-]?|dummy|"
     r"not[_-]?a[_-]?real|<[^>]+>|\$\{[^}]+\})"
@@ -94,6 +111,8 @@ def _tokenish(value: str) -> bool:
     if _URI.fullmatch(value) or "/" in value or "\\" in value:
         return False
     if "@" in value and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
+        return False
+    if any(pattern.fullmatch(value) for pattern in (_FILENAME, _VERSION_IDENTIFIER, _MODEL_IDENTIFIER)):
         return False
     if value.isalnum() and (len(value) < 24 or sum(c.isdigit() for c in value) < 4):
         return False

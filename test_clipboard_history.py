@@ -71,6 +71,33 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(content_kind("mailto:example@example.invalid", "text"), "link")
         self.assertFalse(looks_like_link("mailto:"))
 
+    def test_filenames_versions_and_model_identifiers_remain_text(self):
+        for value in (
+            "report-2026-09-24.pdf", "IMG_20260924_123456.jpg",
+            "node-v22.1.0-x64.msi", "PasswordCenter-d117c05-windows-x64.zip",
+            "Release-v2.0.1", "Qwen2.5-7B-Instruct", "gpt-4o-mini-2024-07-18",
+            "README.md", "python3.14.exe", "claude-opus-5-5", "v1.2.3",
+            "meeting_notes-20260924.DOCX", "archive-20260924.tar.gz",
+            "Tool-v12.34.5-rc.1", "Model3.2-70B-Instruct",
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(content_kind(value, "text"), "text")
+
+    def test_identifier_exceptions_preserve_secret_shapes(self):
+        # Dots or a familiar extension alone must not exempt a mixed password.
+        jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.abcdefghijklmno"
+        for value in (
+            "Abc123!x", "P@ssw0rd2024", "Abc123!x.pdf", "P!ssw0rd2024.zip",
+            "V7!qM2!nR8#pL5$z.txt", "AbC123.xYz789", "V7qM2nR8.pL5zAb3c",
+            "sk-" + "aB3dE5fG7hJ9kL2mN4pQ6rS8",
+            "sk-" + "aB3dE5fG7hJ9kL2mN4pQ6rS8" + "-2024-07-18",
+            "ghp_" + "aB3dE5fG7hJ9kL2mN4pQ6rS8", jwt,
+            "123456-234567-345678-456789-567890-678901-789012-890123",
+            'password="Abc123!x.pdf"',
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(content_kind(value, "text"), "secret_like")
+
 
 class StorageTests(unittest.TestCase):
     def setUp(self):
@@ -209,6 +236,24 @@ class StorageTests(unittest.TestCase):
             self.assertEqual(set(group_ids), {row["event_id"] for row in all_rows})
             file_row = next(row for row in all_rows if row["preview"].startswith("E:"))
             self.assertEqual(file_row["copy_count"], 2)
+        finally:
+            viewer.close()
+
+    def test_identifier_and_secret_filters_partition_synthetic_history(self):
+        identifiers = ("report-2026-09-24.pdf", "Qwen2.5-7B-Instruct", "Release-v2.0.1")
+        secrets = ("Abc123!x.pdf", "P@ssw0rd2024")
+        for sequence, value in enumerate(identifiers + secrets, start=90):
+            self.capture(value, sequence)
+        self.capture(identifiers[0], 95)
+        viewer = ReadOnlyClipboardStore(self.db)
+        try:
+            for kind, expected in (("text", identifiers), ("secret_like", secrets)):
+                rows, total = viewer.search_grouped(content_filter=kind)
+                self.assertEqual(total, len(expected))
+                self.assertEqual({row["preview"] for row in rows}, set(expected))
+                if kind == "text":
+                    repeated = next(row for row in rows if row["preview"] == identifiers[0])
+                    self.assertEqual(repeated["copy_count"], 2)
         finally:
             viewer.close()
 
