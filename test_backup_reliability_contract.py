@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import time
 from unittest.mock import patch
 import pytest
 import timeaudit_backup as backup
@@ -43,13 +44,14 @@ def test_corrupt_or_unbounded_manifest_fails_closed(tmp_path):
             backup.verify(path)
 
 
-def test_failed_export_preserves_good_archive_and_marks_incomplete(tmp_path):
+def test_failed_export_preserves_good_archive_and_cleans_owned_candidate(tmp_path):
     good=make_archive(tmp_path/"time_audit_20260101_120000.dump")
     original=good.read_bytes()
     with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=RuntimeError("failed")):
         with pytest.raises(RuntimeError):backup.backup(tmp_path)
     assert good.read_bytes() == original
-    assert list(tmp_path.glob("*.partial"))
+    assert not list(tmp_path.glob("*.partial"))
+    assert not list(tmp_path.glob("*.transaction"))
     assert list(tmp_path.glob("*.dump")) == [good]
 
 
@@ -58,7 +60,47 @@ def test_verify_failure_cannot_publish_completed_archive(tmp_path):
          patch.object(backup,"verify",side_effect=RuntimeError("bad catalog")):
         with pytest.raises(RuntimeError):backup.backup(tmp_path)
     assert not list(tmp_path.glob("*.dump"))
-    assert list(tmp_path.glob("*.partial"))
+    assert not list(tmp_path.glob("*.partial"))
+    assert not list(tmp_path.glob("*.transaction"))
+
+
+def test_interrupted_publication_is_reconciled_without_touching_unmarked_history(tmp_path):
+    orphan = make_archive(tmp_path/"time_audit_20260101_120000.dump")
+    pending = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump")
+    marker = pending.with_suffix(".dump.transaction")
+    marker.touch()
+    partial = make_archive(tmp_path/"time_audit_20260103_120000_abcdef.dump.partial")
+    partial_marker = tmp_path/"time_audit_20260103_120000_abcdef.dump.transaction"
+    partial_marker.touch()
+    for path in (marker, partial_marker):
+        os.utime(path, (time.time()-7201, time.time()-7201))
+    with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
+         patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
+        result = backup.backup(tmp_path)
+    assert orphan.exists()
+    assert not pending.exists() and not marker.exists()
+    assert not partial.exists()
+    assert not list(tmp_path.glob("*.transaction"))
+    assert (tmp_path/(result["archive"]+".json")).exists()
+
+
+def test_recent_transaction_is_not_taken_from_possible_active_writer(tmp_path):
+    pending = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump.partial")
+    marker = tmp_path/"time_audit_20260102_120000_abcdef.dump.transaction"
+    marker.touch()
+    backup._reconcile_transactions(tmp_path, container="unused")
+    assert pending.exists() and marker.exists()
+
+
+def test_manifest_publication_failure_leaves_no_unowned_final(tmp_path):
+    with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
+         patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7), \
+         patch.object(backup,"atomic_json",side_effect=OSError("synthetic write failure")):
+        with pytest.raises(OSError):
+            backup.backup(tmp_path)
+    assert not list(tmp_path.glob("*.dump"))
+    assert not list(tmp_path.glob("*.partial"))
+    assert not list(tmp_path.glob("*.transaction"))
 
 
 def test_success_publishes_archive_and_manifest_without_deleting_unverified_originals(tmp_path):
@@ -72,6 +114,7 @@ def test_success_publishes_archive_and_manifest_without_deleting_unverified_orig
     assert result["status"] == "pass" and result["removed_expired_verified_pairs"] == 0
     assert len(list(tmp_path.glob("*.dump"))) == 5
     assert not list(tmp_path.glob("*.partial"))
+    assert not list(tmp_path.glob("*.transaction"))
     assert (tmp_path/(result["archive"]+".json")).exists()
 
 

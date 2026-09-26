@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import time
 import uuid
@@ -15,6 +16,7 @@ import uuid
 DEFAULT_BACKUP_DIR = Path(r"G:\80_Backup\TimeAudit\postgresql")
 NAME = re.compile(r"^time_audit_\d{8}_\d{6}(?:_[a-f0-9]{6})?\.dump$")
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
+TRANSACTION = re.compile(r"^(time_audit_\d{8}_\d{6}_[a-f0-9]{6}\.dump)\.transaction$")
 
 
 def command(args, *, timeout=30, stdout=subprocess.PIPE):
@@ -108,21 +110,78 @@ def verify(path: Path, *, container="audit-postgres", record=False):
     return value
 
 
+def _regular_owned_file(path: Path):
+    if not path.exists() and not path.is_symlink():
+        return False
+    info = path.lstat()
+    if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+        raise RuntimeError("backup_transaction_path_invalid")
+    return True
+
+
+def _reconcile_transaction(marker: Path, *, container):
+    match = TRANSACTION.fullmatch(marker.name)
+    if not match or not _regular_owned_file(marker):
+        raise RuntimeError("backup_transaction_invalid")
+    archive = marker.parent / match.group(1)
+    partial = archive.with_suffix(archive.suffix + ".partial")
+    manifest = archive.with_suffix(archive.suffix + ".json")
+    temporary_manifests = [
+        path for path in marker.parent.glob(manifest.name + ".*.tmp")
+        if re.fullmatch(re.escape(manifest.name) + r"\.[a-f0-9]{32}\.tmp", path.name)
+    ]
+    for path in (archive, partial, manifest, *temporary_manifests):
+        _regular_owned_file(path)
+    if manifest.exists():
+        if not archive.exists():
+            raise RuntimeError("backup_transaction_manifest_without_archive")
+        # A crash after manifest publication leaves a valid completed backup.
+        verify(archive, container=container)
+    else:
+        # Only this run's marker authorizes removal; historical unmarked dumps
+        # and partials are outside this transaction's ownership.
+        archive.unlink(missing_ok=True)
+    partial.unlink(missing_ok=True)
+    for path in temporary_manifests:
+        path.unlink()
+    marker.unlink()
+
+
+def _reconcile_transactions(directory: Path, *, container):
+    for marker in sorted(directory.glob("time_audit_*.dump.transaction")):
+        # pg_dump is bounded to one hour. Leave a recent marker alone because
+        # another invocation may still own and write that candidate.
+        if time.time() - marker.stat().st_mtime < 7200:
+            continue
+        _reconcile_transaction(marker, container=container)
+
+
 def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", retention_days=14):
     if not all(IDENTIFIER.fullmatch(v) for v in (container, db_user, db_name)) or not 1 <= retention_days <= 3650:
         raise ValueError("invalid_backup_parameters")
     directory.mkdir(parents=True, exist_ok=True)
+    _reconcile_transactions(directory, container=container)
     filename = "time_audit_" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6] + ".dump"
     final = directory / filename
     partial = final.with_suffix(final.suffix + ".partial")
-    # A failed/aborted export is visibly incomplete and never replaces a good archive.
-    with partial.open("xb") as stream:
-        command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc"], timeout=3600, stdout=stream)
+    marker = final.with_suffix(final.suffix + ".transaction")
+    if final.exists() or partial.exists() or final.with_suffix(final.suffix + ".json").exists():
+        raise RuntimeError("backup_candidate_collision")
+    with marker.open("x") as stream:
         stream.flush()
         os.fsync(stream.fileno())
-    result = verify(partial, container=container)
-    os.rename(partial, final)
-    atomic_json(final.with_suffix(final.suffix + ".json"), result)
+    try:
+        with partial.open("xb") as stream:
+            command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc"], timeout=3600, stdout=stream)
+            stream.flush()
+            os.fsync(stream.fileno())
+        result = verify(partial, container=container)
+        os.rename(partial, final)
+        atomic_json(final.with_suffix(final.suffix + ".json"), result)
+    except BaseException:
+        _reconcile_transaction(marker, container=container)
+        raise
+    marker.unlink()
     cutoff = time.time() - retention_days * 86400
     completed = sorted((p for p in directory.glob("time_audit_*.dump") if NAME.fullmatch(p.name)), key=lambda p: p.stat().st_mtime, reverse=True)
     removed = 0
