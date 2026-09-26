@@ -1,6 +1,7 @@
 """Atomic PostgreSQL archives, integrity manifests and isolated restore checks."""
 from __future__ import annotations
 import argparse
+from contextlib import contextmanager
 import datetime as dt
 import hashlib
 import json
@@ -123,43 +124,98 @@ def _reconcile_transaction(marker: Path, *, container):
     match = TRANSACTION.fullmatch(marker.name)
     if not match or not _regular_owned_file(marker):
         raise RuntimeError("backup_transaction_invalid")
+    identity = marker.stat()
+    if not identity.st_ino:
+        raise RuntimeError("backup_transaction_file_identity_unavailable")
     archive = marker.parent / match.group(1)
     partial = archive.with_suffix(archive.suffix + ".partial")
     manifest = archive.with_suffix(archive.suffix + ".json")
-    temporary_manifests = [
-        path for path in marker.parent.glob(manifest.name + ".*.tmp")
-        if re.fullmatch(re.escape(manifest.name) + r"\.[a-f0-9]{32}\.tmp", path.name)
-    ]
-    for path in (archive, partial, manifest, *temporary_manifests):
-        _regular_owned_file(path)
-    if manifest.exists():
-        if not archive.exists():
-            raise RuntimeError("backup_transaction_manifest_without_archive")
+
+    def owned(path):
+        if not path.exists() and not path.is_symlink():
+            return False, False
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+            return False, True
+        same = (info.st_dev, info.st_ino) == (identity.st_dev, identity.st_ino)
+        return same, not same
+
+    owned_archive, foreign_archive = owned(archive)
+    owned_partial, foreign_partial = owned(partial)
+    if manifest.exists() or manifest.is_symlink():
+        if not _regular_owned_file(manifest) or not owned_archive:
+            raise RuntimeError("backup_transaction_manifest_archive_conflict")
         # A crash after manifest publication leaves a valid completed backup.
         verify(archive, container=container)
-    else:
-        # Only this run's marker authorizes removal; historical unmarked dumps
-        # and partials are outside this transaction's ownership.
-        archive.unlink(missing_ok=True)
-    partial.unlink(missing_ok=True)
-    for path in temporary_manifests:
-        path.unlink()
+    elif owned_archive:
+        archive.unlink()
+    if owned_partial:
+        partial.unlink()
     marker.unlink()
+    if foreign_archive or foreign_partial:
+        raise RuntimeError("backup_transaction_foreign_collision")
 
 
 def _reconcile_transactions(directory: Path, *, container):
     for marker in sorted(directory.glob("time_audit_*.dump.transaction")):
-        # pg_dump is bounded to one hour. Leave a recent marker alone because
-        # another invocation may still own and write that candidate.
-        if time.time() - marker.stat().st_mtime < 7200:
-            continue
         _reconcile_transaction(marker, container=container)
+
+
+@contextmanager
+def _directory_lock(directory: Path):
+    # The OS releases this byte-range lock when a process exits, including a
+    # crash. It covers reconciliation, export, verification and retention.
+    with (directory / ".timeaudit-backup.lock").open("a+b") as stream:
+        stream.seek(0, os.SEEK_END)
+        if stream.tell() == 0:
+            stream.write(b"\0")
+            stream.flush()
+        stream.seek(0)
+        try:
+            if os.name == "nt":
+                import msvcrt
+                msvcrt.locking(stream.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            raise RuntimeError("backup_already_running") from None
+        yield
+
+
+def _completed_manifest_matches(path: Path):
+    manifest = path.with_suffix(path.suffix + ".json")
+    try:
+        if not _regular_owned_file(path) or not _regular_owned_file(manifest):
+            return False
+        if manifest.stat().st_size > 65536:
+            return False
+        meta = json.loads(manifest.read_text(encoding="utf-8"))
+        info = path.stat()
+        return (
+            isinstance(meta, dict)
+            and meta.get("schema") == "timeaudit.backup-manifest.v1"
+            and meta.get("bytes") == info.st_size
+            and meta.get("mtime_ns") == info.st_mtime_ns
+            and isinstance(meta.get("sha256"), str)
+            and re.fullmatch(r"[a-f0-9]{64}", meta["sha256"]) is not None
+            and meta.get("archive_list_verified") is True
+            and isinstance(meta.get("catalog_entries"), int)
+            and meta["catalog_entries"] > 0
+        )
+    except (OSError, ValueError, RuntimeError):
+        return False
 
 
 def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", retention_days=14):
     if not all(IDENTIFIER.fullmatch(v) for v in (container, db_user, db_name)) or not 1 <= retention_days <= 3650:
         raise ValueError("invalid_backup_parameters")
     directory.mkdir(parents=True, exist_ok=True)
+    with _directory_lock(directory):
+        return _backup_locked(directory, container=container, db_user=db_user, db_name=db_name, retention_days=retention_days)
+
+
+def _backup_locked(directory: Path, *, container, db_user, db_name, retention_days):
     _reconcile_transactions(directory, container=container)
     filename = "time_audit_" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6] + ".dump"
     final = directory / filename
@@ -167,11 +223,10 @@ def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_
     marker = final.with_suffix(final.suffix + ".transaction")
     if final.exists() or partial.exists() or final.with_suffix(final.suffix + ".json").exists():
         raise RuntimeError("backup_candidate_collision")
-    with marker.open("x") as stream:
-        stream.flush()
-        os.fsync(stream.fileno())
+    stream = marker.open("xb")
     try:
-        with partial.open("xb") as stream:
+        with stream:
+            os.link(marker, partial)
             command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc"], timeout=3600, stdout=stream)
             stream.flush()
             os.fsync(stream.fileno())
@@ -183,23 +238,18 @@ def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_
         raise
     marker.unlink()
     cutoff = time.time() - retention_days * 86400
-    completed = sorted((p for p in directory.glob("time_audit_*.dump") if NAME.fullmatch(p.name)), key=lambda p: p.stat().st_mtime, reverse=True)
+    completed = sorted(
+        (p for p in directory.glob("time_audit_*.dump") if NAME.fullmatch(p.name) and _completed_manifest_matches(p)),
+        key=lambda p: p.stat().st_mtime, reverse=True,
+    )
     removed = 0
     # Preserve at least three completed archives. Only this tool's old, verified
     # pairs are eligible; historical unverified originals are not silently deleted.
     for path in completed[3:]:
-        manifest = path.with_suffix(path.suffix + ".json")
-        if path.stat().st_mtime < cutoff and manifest.exists():
-            try:
-                if manifest.stat().st_size > 65536:
-                    continue
-                meta = json.loads(manifest.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
-                continue
-            if isinstance(meta, dict) and meta.get("schema") == "timeaudit.backup-manifest.v1" and meta.get("bytes") == path.stat().st_size and meta.get("archive_list_verified") is True:
-                path.unlink()
-                manifest.unlink()
-                removed += 1
+        if path.stat().st_mtime < cutoff:
+            path.unlink()
+            path.with_suffix(path.suffix + ".json").unlink()
+            removed += 1
     return {"status": "pass", "archive": final.name, "bytes": result["bytes"], "archive_list_verified": True, "sha256_recorded": True, "removed_expired_verified_pairs": removed}
 
 
@@ -239,9 +289,10 @@ def main(argv=None):
                 value = restore_check(path, container=args.container)
         print(json.dumps(value, ensure_ascii=True, separators=(",", ":")))
         return 1 if value.get("status") == "failed" else 0
-    except (RuntimeError, ValueError, OSError):
+    except (RuntimeError, ValueError, OSError) as exc:
         # Never forward database stderr or archive/catalog contents into logs.
-        print(json.dumps({"status": "failed", "mode": args.mode, "reason": "backup_or_verification_failed", "completed_archives_preserved": True}))
+        busy = str(exc) == "backup_already_running"
+        print(json.dumps({"status": "busy" if busy else "failed", "mode": args.mode, "reason": "backup_already_running" if busy else "backup_or_verification_failed", "completed_archives_preserved": True}))
         return 1
 
 
