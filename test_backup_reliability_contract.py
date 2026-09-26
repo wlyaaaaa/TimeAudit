@@ -92,6 +92,19 @@ def test_recent_transaction_is_not_taken_from_possible_active_writer(tmp_path):
     assert pending.exists() and marker.exists()
 
 
+def test_completed_archive_survives_interrupted_marker_cleanup(tmp_path):
+    archive = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump")
+    marker = archive.with_suffix(".dump.transaction")
+    marker.touch()
+    os.utime(marker, (time.time()-7201, time.time()-7201))
+    with patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
+        backup.verify(archive, record=True)
+        backup._reconcile_transactions(tmp_path, container="unused")
+    assert archive.exists()
+    assert archive.with_suffix(".dump.json").exists()
+    assert not marker.exists()
+
+
 def test_manifest_publication_failure_leaves_no_unowned_final(tmp_path):
     with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
          patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7), \
