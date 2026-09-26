@@ -21,6 +21,13 @@ def fake_export(args, *, stdout, **kwargs):
     return b""
 
 
+TRANSACTION_ID = "a" * 32
+
+
+def marker_for(archive, token=TRANSACTION_ID):
+    return archive.with_name(archive.name + ".transaction-" + token)
+
+
 def test_manifest_is_atomic_and_checks_hash(tmp_path):
     path=make_archive(tmp_path/"time_audit_20260101_120000.dump")
     with patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
@@ -31,6 +38,15 @@ def test_manifest_is_atomic_and_checks_hash(tmp_path):
         path.write_bytes(path.read_bytes()+b"changed")
         with pytest.raises(RuntimeError,match="manifest_mismatch"):
             backup.verify(path)
+
+
+def test_atomic_manifest_collision_does_not_unlink_other_writer_stage(tmp_path):
+    manifest = tmp_path/"time_audit_20260102_120000_abcdef.dump.json"
+    foreign = tmp_path/(manifest.name+"."+TRANSACTION_ID+".tmp")
+    foreign.write_text("another writer", encoding="utf-8")
+    with pytest.raises(FileExistsError):
+        backup.atomic_json(manifest, {"schema": "synthetic"}, temporary_id=TRANSACTION_ID)
+    assert foreign.read_text(encoding="utf-8") == "another writer"
 
 
 def test_corrupt_or_unbounded_manifest_fails_closed(tmp_path):
@@ -52,7 +68,7 @@ def test_failed_export_preserves_good_archive_and_cleans_owned_candidate(tmp_pat
         with pytest.raises(RuntimeError):backup.backup(tmp_path)
     assert good.read_bytes() == original
     assert not list(tmp_path.glob("*.partial"))
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
     assert list(tmp_path.glob("*.dump")) == [good]
 
 
@@ -62,16 +78,16 @@ def test_verify_failure_cannot_publish_completed_archive(tmp_path):
         with pytest.raises(RuntimeError):backup.backup(tmp_path)
     assert not list(tmp_path.glob("*.dump"))
     assert not list(tmp_path.glob("*.partial"))
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
 
 
 def test_interrupted_publication_is_reconciled_without_touching_unmarked_history(tmp_path):
     orphan = make_archive(tmp_path/"time_audit_20260101_120000.dump")
     pending = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump")
-    marker = pending.with_suffix(".dump.transaction")
+    marker = marker_for(pending)
     os.link(pending, marker)
     partial = make_archive(tmp_path/"time_audit_20260103_120000_abcdef.dump.partial")
-    partial_marker = tmp_path/"time_audit_20260103_120000_abcdef.dump.transaction"
+    partial_marker = marker_for(tmp_path/"time_audit_20260103_120000_abcdef.dump")
     os.link(partial, partial_marker)
     with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
          patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
@@ -79,13 +95,13 @@ def test_interrupted_publication_is_reconciled_without_touching_unmarked_history
     assert orphan.exists()
     assert not pending.exists() and not marker.exists()
     assert not partial.exists()
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
     assert (tmp_path/(result["archive"]+".json")).exists()
 
 
 def test_completed_archive_survives_interrupted_marker_cleanup(tmp_path):
     archive = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump")
-    marker = archive.with_suffix(".dump.transaction")
+    marker = marker_for(archive)
     os.link(archive, marker)
     with patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
         backup.verify(archive, record=True)
@@ -110,11 +126,11 @@ def test_foreign_final_collision_preserves_foreign_bytes(tmp_path):
             backup.backup(tmp_path)
     assert foreign["path"].read_bytes() == b"another writer's archive"
     assert not list(tmp_path.glob("*.partial"))
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
 
 
 def test_crash_recovery_never_removes_foreign_final(tmp_path):
-    marker = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump.transaction")
+    marker = make_archive(marker_for(tmp_path/"time_audit_20260102_120000_abcdef.dump"))
     partial = tmp_path/"time_audit_20260102_120000_abcdef.dump.partial"
     os.link(marker, partial)
     foreign_final = tmp_path/"time_audit_20260102_120000_abcdef.dump"
@@ -126,12 +142,12 @@ def test_crash_recovery_never_removes_foreign_final(tmp_path):
 
 
 def test_crash_before_manifest_replace_cleans_only_owned_manifest_stage(tmp_path):
-    marker = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump.transaction")
+    marker = make_archive(marker_for(tmp_path/"time_audit_20260102_120000_abcdef.dump"))
     final = tmp_path/"time_audit_20260102_120000_abcdef.dump"
     os.link(marker, final)
-    staged = tmp_path/(final.name+".json."+"a"*32+".tmp")
+    staged = tmp_path/(final.name+".json."+TRANSACTION_ID+".tmp")
     staged.write_text('{"incomplete":true}', encoding="utf-8")
-    unrelated = tmp_path/("time_audit_other.dump.json."+"b"*32+".tmp")
+    unrelated = tmp_path/(final.name+".json."+"b"*32+".tmp")
     unrelated.write_text("unrelated", encoding="utf-8")
     backup._reconcile_transactions(tmp_path, container="unused")
     assert not marker.exists() and not final.exists() and not staged.exists()
@@ -143,7 +159,7 @@ def test_os_lock_blocks_second_process_without_touching_its_stage(tmp_path):
         "import os,sys\nfrom pathlib import Path\nimport timeaudit_backup as b\n"
         "p=Path(sys.argv[1])\n"
         "with b._directory_lock(p):\n"
-        " m=p/'time_audit_20260102_120000_abcdef.dump.transaction'\n"
+        " m=p/('time_audit_20260102_120000_abcdef.dump.transaction-'+'a'*32)\n"
         " m.write_bytes(b'PGDMP'+b'fixture'*200)\n"
         " os.link(m,p/'time_audit_20260102_120000_abcdef.dump.partial')\n"
         " print('ready',flush=True)\n sys.stdin.readline()\n"
@@ -159,7 +175,7 @@ def test_os_lock_blocks_second_process_without_touching_its_stage(tmp_path):
         with pytest.raises(RuntimeError, match="backup_already_running"):
             backup.backup(tmp_path)
         assert list(tmp_path.glob("*.partial"))
-        assert list(tmp_path.glob("*.transaction"))
+        assert list(tmp_path.glob("*.transaction-*"))
     finally:
         if child.poll() is None:
             child.terminate()
@@ -168,7 +184,7 @@ def test_os_lock_blocks_second_process_without_touching_its_stage(tmp_path):
     with backup._directory_lock(tmp_path):
         backup._reconcile_transactions(tmp_path, container="unused")
     assert not list(tmp_path.glob("*.partial"))
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
 
 
 def test_cli_reports_busy_backup_without_claiming_completion(capsys):
@@ -187,7 +203,7 @@ def test_manifest_publication_failure_leaves_no_unowned_final(tmp_path):
             backup.backup(tmp_path)
     assert not list(tmp_path.glob("*.dump"))
     assert not list(tmp_path.glob("*.partial"))
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
 
 
 def test_success_publishes_archive_and_manifest_without_deleting_unverified_originals(tmp_path):
@@ -201,7 +217,7 @@ def test_success_publishes_archive_and_manifest_without_deleting_unverified_orig
     assert result["status"] == "pass" and result["removed_expired_verified_pairs"] == 0
     assert len(list(tmp_path.glob("*.dump"))) == 5
     assert not list(tmp_path.glob("*.partial"))
-    assert not list(tmp_path.glob("*.transaction"))
+    assert not list(tmp_path.glob("*.transaction-*"))
     assert (tmp_path/(result["archive"]+".json")).exists()
 
 

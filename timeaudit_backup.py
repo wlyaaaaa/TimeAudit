@@ -17,7 +17,7 @@ import uuid
 DEFAULT_BACKUP_DIR = Path(r"G:\80_Backup\TimeAudit\postgresql")
 NAME = re.compile(r"^time_audit_\d{8}_\d{6}(?:_[a-f0-9]{6})?\.dump$")
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
-TRANSACTION = re.compile(r"^(time_audit_\d{8}_\d{6}_[a-f0-9]{6}\.dump)\.transaction$")
+TRANSACTION = re.compile(r"^(time_audit_\d{8}_\d{6}_[a-f0-9]{6}\.dump)\.transaction-([a-f0-9]{32})$")
 
 
 def command(args, *, timeout=30, stdout=subprocess.PIPE):
@@ -46,16 +46,19 @@ def image_for(container):
     return image
 
 
-def atomic_json(path, value):
-    temporary = path.with_name(path.name + "." + uuid.uuid4().hex + ".tmp")
+def atomic_json(path, value, *, temporary_id=None):
+    temporary = path.with_name(path.name + "." + (temporary_id or uuid.uuid4().hex) + ".tmp")
+    created = False
     try:
         with temporary.open("x", encoding="utf-8", newline="\n") as stream:
+            created = True
             json.dump(value, stream, ensure_ascii=True, sort_keys=True, separators=(",", ":"))
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
     finally:
-        temporary.unlink(missing_ok=True)
+        if created:
+            temporary.unlink(missing_ok=True)
 
 
 def archive_list(path, *, image):
@@ -144,10 +147,8 @@ def _reconcile_transaction(marker: Path, *, container):
     owned_partial, foreign_partial = owned(partial)
     temporary_manifests = []
     if owned_archive and not foreign_partial:
-        temporary_manifests = [
-            path for path in marker.parent.glob(manifest.name + ".*.tmp")
-            if re.fullmatch(re.escape(manifest.name) + r"\.[a-f0-9]{32}\.tmp", path.name)
-        ]
+        temporary = marker.parent / (manifest.name + "." + match.group(2) + ".tmp")
+        temporary_manifests = [temporary] if temporary.exists() or temporary.is_symlink() else []
         for path in temporary_manifests:
             _regular_owned_file(path)
     if manifest.exists() or manifest.is_symlink():
@@ -167,7 +168,7 @@ def _reconcile_transaction(marker: Path, *, container):
 
 
 def _reconcile_transactions(directory: Path, *, container):
-    for marker in sorted(directory.glob("time_audit_*.dump.transaction")):
+    for marker in sorted(directory.glob("time_audit_*.dump.transaction-*")):
         _reconcile_transaction(marker, container=container)
 
 
@@ -230,7 +231,8 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, retention_da
     filename = "time_audit_" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6] + ".dump"
     final = directory / filename
     partial = final.with_suffix(final.suffix + ".partial")
-    marker = final.with_suffix(final.suffix + ".transaction")
+    transaction_id = uuid.uuid4().hex
+    marker = final.with_name(final.name + ".transaction-" + transaction_id)
     if final.exists() or partial.exists() or final.with_suffix(final.suffix + ".json").exists():
         raise RuntimeError("backup_candidate_collision")
     stream = marker.open("xb")
@@ -242,7 +244,7 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, retention_da
             os.fsync(stream.fileno())
         result = verify(partial, container=container)
         os.rename(partial, final)
-        atomic_json(final.with_suffix(final.suffix + ".json"), result)
+        atomic_json(final.with_suffix(final.suffix + ".json"), result, temporary_id=transaction_id)
     except BaseException:
         _reconcile_transaction(marker, container=container)
         raise
