@@ -142,6 +142,14 @@ def _reconcile_transaction(marker: Path, *, container):
 
     owned_archive, foreign_archive = owned(archive)
     owned_partial, foreign_partial = owned(partial)
+    temporary_manifests = []
+    if owned_archive and not foreign_partial:
+        temporary_manifests = [
+            path for path in marker.parent.glob(manifest.name + ".*.tmp")
+            if re.fullmatch(re.escape(manifest.name) + r"\.[a-f0-9]{32}\.tmp", path.name)
+        ]
+        for path in temporary_manifests:
+            _regular_owned_file(path)
     if manifest.exists() or manifest.is_symlink():
         if not _regular_owned_file(manifest) or not owned_archive:
             raise RuntimeError("backup_transaction_manifest_archive_conflict")
@@ -151,6 +159,8 @@ def _reconcile_transaction(marker: Path, *, container):
         archive.unlink()
     if owned_partial:
         partial.unlink()
+    for path in temporary_manifests:
+        path.unlink()
     marker.unlink()
     if foreign_archive or foreign_partial:
         raise RuntimeError("backup_transaction_foreign_collision")

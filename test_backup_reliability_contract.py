@@ -125,6 +125,19 @@ def test_crash_recovery_never_removes_foreign_final(tmp_path):
     assert not marker.exists() and not partial.exists()
 
 
+def test_crash_before_manifest_replace_cleans_only_owned_manifest_stage(tmp_path):
+    marker = make_archive(tmp_path/"time_audit_20260102_120000_abcdef.dump.transaction")
+    final = tmp_path/"time_audit_20260102_120000_abcdef.dump"
+    os.link(marker, final)
+    staged = tmp_path/(final.name+".json."+"a"*32+".tmp")
+    staged.write_text('{"incomplete":true}', encoding="utf-8")
+    unrelated = tmp_path/("time_audit_other.dump.json."+"b"*32+".tmp")
+    unrelated.write_text("unrelated", encoding="utf-8")
+    backup._reconcile_transactions(tmp_path, container="unused")
+    assert not marker.exists() and not final.exists() and not staged.exists()
+    assert unrelated.read_text(encoding="utf-8") == "unrelated"
+
+
 def test_os_lock_blocks_second_process_without_touching_its_stage(tmp_path):
     code = (
         "import os,sys\nfrom pathlib import Path\nimport timeaudit_backup as b\n"
