@@ -27,7 +27,7 @@
 
 启用后，最终退役操作在同一事务内锁定旧分区，按日重建它的汇总，核对应用小时采样总数与原始行数，再 DROP 并推进原始明细起点。锁等待超过 5 秒、回填失败、核对失败或 DROP 失败则整笔回滚，不推进起点。其他维护/CLI 通过数据库建议锁串行，忙时自动维护本轮跳过。分区必须有显式时区、整小时边界且在 `public`；不支持的结构保留并报错。
 
-## 部署顺序（先命令准备，最后由用户操作 GUI）
+## 部署顺序（回填、导入看板、验收后启用）
 
 数据库命令使用已有合法凭据注入的 `TIMEAUDIT_DB_PASSWORD` 环境，不把凭据写进脚本或输出。先合并源码并同步活动检出，再执行：
 
@@ -57,11 +57,13 @@ foreach ($dashboard in $dashboards) {
 }
 ```
 
-本次现场正常 API 返回 401，未取得现役入口可合法注入的 Grafana API 凭据。当前路线是在完成上述数据库准备后继续保持 `enabled=false`，最后由用户登录既有 Grafana，通过 GUI 导入这四份 JSON，选择原文件夹并按原 UID 覆盖已有看板，保留既有数据源。随后通过现有 Grafana SQLite **只读**入口回读四份定义、UID、文件夹与数据源，核对查询及提示已更新；不能直接修改 SQLite 来代替导入。
+看板导入可使用 Chrome 中已有的登录会话，或已有合法凭据环境下的 Grafana API。使用可用的现有方式继续即可，不要求必须由用户手动完成 GUI，也不因缺少无人值守 API 凭据就把已登录的浏览器会话当成不可用。本机 Grafana 入口为 `http://127.0.0.1:43000`；外部入口以现役转发配置为准。
 
-以后只有既有合法凭据环境可用时才可改用 API，并且应先回读原 `meta.folderUid`，按原值导入。当前 `restore_grafana.py` 写接口固定使用空 `folderUid`，所以本次只用它做精确 `--file --dry-run`，不要直接去掉 dry-run 后声称保留了原文件夹。无需为本次更改认证、增建凭据层或写入 SQLite。
+按原 UID 覆盖这四份看板，保留原文件夹和既有数据源。API 导入前回读原 `meta.folderUid` 并按原值请求；当前 `restore_grafana.py` 写接口固定使用空 `folderUid`，只有原看板确在根目录时才能直接用于该目标，其他文件夹使用保留其原值的请求。上面的逐文件 dry-run 不会写入 Grafana。
 
-父任务还应选一个旧完整日和一个近期跨小时窗口，用直接 SQL 与 `activity_app_stats` 核对各指标 sum/count/max、采样数及应用合计峰值，确认最近小时查询和历史统计可见。独立审查、四个看板导入及读回、历史可见验收完成后，才执行下面的实际清理步骤；GUI 尚未完成时不得提前启用：
+导入后通过 Grafana API 或现有 SQLite **只读**入口回读四份定义、UID、文件夹和数据源，核对查询及提示；其他两份未改看板保持不变。仓库快照沿 `backup_grafana._dashboard_documents_from_sqlite` 和 `normalize_dashboard_for_public_backup` 同步正常版本号及默认字段，不复制机器本地数字 ID 或凭据，不直接改 SQLite 代替正常导入。
+
+选一个旧完整日和一个近期跨小时窗口，用直接 SQL 与 `activity_app_stats` 核对各指标 sum/count/max、采样数及应用合计峰值，并在看板中核验近期曲线和历史统计可见。独立审查、四份定义读回及这些真实验收完成后，再执行下面的清理步骤；仅完成源码、回填或导入不表示旧分区已经退役：
 
 ```powershell
 & $python "$ta\process_activity_retention.py" enable
@@ -75,7 +77,7 @@ foreach ($dashboard in $dashboards) {
 
 单独换版优先使用现役 `TimeAudit_Watchdog`（`wscript.exe telemetry_watchdog_hidden.vbs`）。先确认 DB、LHM、ingester 健康且无备份冲突；在同一 `Global\TimeAuditTelemetryWatchdogMutex` 内定向停止精确旧 `main.py` 进程，释放后触发该既有看门狗任务，让它按缺失进程恢复支路创建隐藏 `pythonw.exe`，回读新 PID、心跳和活动落库。不要用 `TimeAudit_AutoStart` 代替纯引擎重启：其批处理会启动 Docker Desktop 程序，可能激活 GUI。源码支持的路线不等于这次已经做过生产重启。
 
-用户最后在原 Grafana 看板中检查三件事即可：最近一小时曲线；三个月资源排行及 CPU/内存趋势；超过 60 天的细节面板保留提示。此项可见体验验收由用户操作，不能用 SQL 测试代替。
+在原 Grafana 看板中检查三件事：最近一小时曲线；三个月资源排行及 CPU/内存趋势；超过 60 天的细节面板保留提示。沿当前可用的浏览器会话完成可见体验验收，SQL 测试不能代替这一步。
 
 ## 回退与恢复边界
 

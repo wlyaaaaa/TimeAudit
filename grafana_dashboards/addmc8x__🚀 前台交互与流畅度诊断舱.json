@@ -15,6 +15,7 @@
       }
     ]
   },
+  "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 0,
@@ -545,6 +546,7 @@
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -704,8 +706,7 @@
         }
       ],
       "title": "前台活动程序资源侵占画像（明细仅近60天）",
-      "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。"
+      "type": "timeseries"
     },
     {
       "datasource": {
@@ -1272,8 +1273,7 @@
   },
   "timezone": "browser",
   "title": "🚀 前台交互与流畅度诊断舱",
-  "uid": "addmc8x",
-  "version": 56,
   "weekStart": "",
-  "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。"
+  "uid": "addmc8x",
+  "version": 57
 }

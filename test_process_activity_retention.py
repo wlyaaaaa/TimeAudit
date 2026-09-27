@@ -236,7 +236,7 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
             for panel in dashboard.get('panels', []):
                 for target in panel.get('targets', []):
                     sql = target.get('rawSql', '')
-                    if 'activity_system_stats' in sql or panel.get('id') in (901, 902):
+                    if 'activity_system_stats' in sql or (panel.get('type') == 'timeseries' and 'activity_app_stats(' in sql):
                         yield panel, sql.replace('$__timeFrom()', repr(start)).replace('$__timeTo()', repr(end)).replace('$__interval', interval)
 
     async def test_chart_missing_hours_and_days_have_null_breaks(self):
@@ -253,7 +253,7 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
                 rows = await self.conn.fetch(sql)
                 breaks = [r for r in rows if r['time'] == instant('2026-06-01T01:00:00+08:00')]
                 self.assertTrue(breaks, panel['title'])
-                if panel.get('id') in (901, 902):
+                if (panel.get('type') == 'timeseries' and 'activity_app_stats(' in sql):
                     self.assertEqual({r['metric'] for r in rows}, {r['metric'] for r in breaks})
                 for row in breaks:
                     self.assertTrue(all(v is None for k, v in row.items() if k not in ('time', 'metric')), panel['title'])

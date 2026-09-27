@@ -15,6 +15,7 @@
       }
     ]
   },
+  "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -26,6 +27,7 @@
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -158,14 +160,14 @@
         }
       ],
       "title": "🏆 全进程 CPU/GPU/内存/显存 Top 25（单进程采样口径）",
-      "type": "table",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "type": "table"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -289,14 +291,14 @@
         }
       ],
       "title": "👿 后台内鬼榜 (is_foreground=0 静默高占用)（明细仅近60天）",
-      "type": "table",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。"
+      "type": "table"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -378,14 +380,14 @@
         }
       ],
       "title": "💾 磁盘 I/O 与 SSD 写入损耗大户（累计量为估算）",
-      "type": "table",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "type": "table"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -444,14 +446,14 @@
         }
       ],
       "title": "🌐 网络流量大户 + 远端 IP 追踪（累计量为估算）",
-      "type": "table",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "type": "table"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -544,14 +546,14 @@
         }
       ],
       "title": "🧵 线程/亲和性/共享显存细览",
-      "type": "table",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "type": "table"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -634,14 +636,14 @@
         }
       ],
       "title": "🔴 无响应卡死进程时间线 (红色:卡死 | 绿色:正常)（明细仅近60天）",
-      "type": "state-timeline",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。"
+      "type": "state-timeline"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -839,14 +841,14 @@
         }
       ],
       "title": "🧪 进程内存/显存泄漏嫌疑榜 (首末差值)（明细仅近60天）",
-      "type": "table",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。"
+      "type": "table"
     },
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
       "fieldConfig": {
         "defaults": {
           "color": {
@@ -994,97 +996,81 @@
         }
       ],
       "title": "⚔️ 前台 vs 后台资源争抢时序 (CPU/GPU)（明细仅近60天）",
-      "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。"
+      "type": "timeseries"
     },
     {
-      "id": 901,
-      "title": "应用 CPU 趋势 · 小时/日均值与应用合计峰值",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 0,
-        "y": 73,
-        "w": 12,
-        "h": 9
-      },
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
+      "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "lineWidth": 1,
+            "spanNulls": false
+          },
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 73
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
       "targets": [
         {
-          "refId": "A",
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
           "format": "time_series",
           "rawQuery": true,
           "rawSql": "WITH series AS (WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 应用合计均值' AS metric,\n sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 应用合计峰值', max(app_total_proc_cpu_usage_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          }
+          "refId": "A"
         }
       ],
-      "fieldConfig": {
-        "defaults": {
-          "unit": "percent",
-          "custom": {
-            "drawStyle": "line",
-            "lineWidth": 1,
-            "fillOpacity": 8,
-            "spanNulls": false
-          }
-        },
-        "overrides": []
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "mode": "multi",
-          "sort": "desc"
-        }
-      },
-      "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。"
+      "title": "应用 CPU 趋势 · 小时/日均值与应用合计峰值",
+      "type": "timeseries"
     },
     {
-      "id": 902,
-      "title": "应用内存趋势 · 小时/日均值与应用合计峰值",
-      "type": "timeseries",
-      "gridPos": {
-        "x": 12,
-        "y": 73,
-        "w": 12,
-        "h": 9
-      },
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
       },
-      "targets": [
-        {
-          "refId": "A",
-          "format": "time_series",
-          "rawQuery": true,
-          "rawSql": "WITH series AS (WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 应用合计均值' AS metric,\n sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 应用合计峰值', max(app_total_proc_ram_mb_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          }
-        }
-      ],
+      "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。",
       "fieldConfig": {
         "defaults": {
-          "unit": "decmbytes",
           "custom": {
             "drawStyle": "line",
-            "lineWidth": 1,
             "fillOpacity": 8,
+            "lineWidth": 1,
             "spanNulls": false
-          }
+          },
+          "unit": "decmbytes"
         },
         "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 73
       },
       "options": {
         "legend": {
@@ -1097,7 +1083,20 @@
           "sort": "desc"
         }
       },
-      "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。"
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "WITH series AS (WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 应用合计均值' AS metric,\n sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 应用合计峰值', max(app_total_proc_ram_mb_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
+          "refId": "A"
+        }
+      ],
+      "title": "应用内存趋势 · 小时/日均值与应用合计峰值",
+      "type": "timeseries"
     }
   ],
   "schemaVersion": 42,
@@ -1129,8 +1128,7 @@
   },
   "timezone": "browser",
   "title": "🐀 资源大户与后台内鬼",
-  "uid": "addrd7x",
-  "version": 21,
   "weekStart": "",
-  "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。"
+  "uid": "addrd7x",
+  "version": 22
 }
