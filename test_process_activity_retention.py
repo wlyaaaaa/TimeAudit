@@ -323,6 +323,34 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(10, await self.conn.fetchval('SELECT sum(proc_cpu_usage_sum) FROM activity_app_hour'))
         self.assertEqual(2, await self.conn.fetchval('SELECT count(*) FROM fact_process_activity'))
 
+    async def test_identity_lookup_is_bounded_to_keys_in_the_activity_window(self):
+        await self.partition('recent', '2026-09-01+08', '2026-10-01+08')
+        await self.conn.execute("""INSERT INTO dim_process_registry(process_name,executable_path)
+            SELECT 'unused-' || n || '.exe', 'E:/unused/' || n FROM generate_series(1,5000) n""")
+        await self.conn.execute('ANALYZE dim_process_registry')
+        for second in range(20):
+            await self.row(f'2026-09-27T00:00:{second:02d}+08:00', 10)
+        await self.row('2026-09-27T00:00:00+08:00', 20, key=999999)
+        raw = retention.raw_source(bounded_identities=True).replace('$1', "'2026-09-27+08'::timestamptz").replace('$2', "'2026-09-28+08'::timestamptz")
+        plan = json.loads(await self.conn.fetchval('EXPLAIN (ANALYZE, FORMAT JSON) SELECT sum(app_total_proc_cpu_usage) FROM (' + raw + ') samples'))
+        lookups = []
+        def walk(node):
+            if isinstance(node, dict):
+                if node.get('Relation Name') == 'dim_process_registry':
+                    lookups.append(node)
+                for value in node.values():
+                    walk(value)
+            elif isinstance(node, list):
+                for value in node:
+                    walk(value)
+        walk(plan)
+        self.assertTrue(lookups)
+        self.assertTrue(all(n['Node Type'] in ('Index Scan', 'Index Only Scan') for n in lookups))
+        self.assertEqual(2, sum(n['Actual Loops'] for n in lookups))
+        await self.summary('2026-09-27T00:00:00+08:00', '2026-09-28T00:00:00+08:00')
+        self.assertEqual(220, await self.conn.fetchval('SELECT sum(proc_cpu_usage_sum) FROM activity_app_hour'))
+        self.assertEqual(2, await self.conn.fetchval('SELECT count(*) FROM activity_app_hour'))
+
     async def test_dashboard_queries_compile_in_postgresql(self):
         checked = 0
         for path in ROOT.joinpath("grafana_dashboards").glob("*.json"):

@@ -64,12 +64,29 @@ IDENTITY_SQL = """COALESCE(r.process_name, '[unregistered:' || a.process_key::te
 COALESCE(r.executable_path, '') AS executable_path"""
 
 
-def raw_source(system=False):
+def raw_source(system=False, *, bounded_identities=False):
     active = ", ".join(f"CASE WHEN {condition} THEN a.{m} END AS active_{m}" for m, condition in FILTERS.items())
     raw = f"""SELECT a.*, 1 AS proc_process_count, {IDENTITY_SQL}, {active}
           FROM public.fact_process_activity a
           LEFT JOIN public.dim_process_registry r USING(process_key)
           WHERE a.timestamp >= $1 AND a.timestamp < $2"""
+    if not system and bounded_identities:
+        # A day can contain millions of samples but only thousands of keys.
+        # Bound identity lookups to those keys, instead of hashing the complete
+        # multi-million-row registry for each requested day.
+        # OFFSET 0 keeps each LATERAL lookup on the registry primary key;
+        # only the small identity set is materialized, not the activity rows.
+        identities = """SELECT keys.process_key, registry.process_name, registry.executable_path
+          FROM (SELECT DISTINCT a.process_key
+                FROM public.fact_process_activity a
+                WHERE a.timestamp >= $1 AND a.timestamp < $2) keys
+          LEFT JOIN LATERAL (
+            SELECT r.process_name, r.executable_path
+            FROM public.dim_process_registry r WHERE r.process_key = keys.process_key OFFSET 0
+          ) registry ON true"""
+        raw = f"WITH identities AS MATERIALIZED ({identities}) " + raw.replace(
+            "LEFT JOIN public.dim_process_registry r", "LEFT JOIN identities r"
+        )
     # One contribution per application and sampling instant. Multiple PIDs
     # sum before the time aggregation; independent metric NULLs stay unknown.
     totals = ", ".join(
@@ -174,7 +191,7 @@ async def refresh_hours(conn, start, end):
         await conn.execute(f"DELETE FROM {table} WHERE bucket_start >= $1 AND bucket_start < $2", start, end, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
         await conn.execute(f"""INSERT INTO {table}
             SELECT date_trunc('hour', timestamp){keys}, {aggregate_columns()}
-            FROM ({raw_source(kind == 'system')}) raw
+            FROM ({raw_source(kind == 'system', bounded_identities=True)}) raw
             GROUP BY 1{keys}""", start, end, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
         day_start = start.astimezone(CN).replace(hour=0)
         day_end = (end - dt.timedelta(microseconds=1)).astimezone(CN).replace(hour=0, minute=0, second=0, microsecond=0) + dt.timedelta(days=1)
