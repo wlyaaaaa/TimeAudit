@@ -91,6 +91,7 @@ from context_worker import WindowStateTracker
 from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
 from runtime_health import write_telemetry_heartbeat
+from process_activity_retention import maintain as maintain_activity_retention
 
 DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
@@ -113,10 +114,8 @@ ACTIVITY_HEALTH_INITIAL_GRACE_SEC = 30.0
 ACTIVITY_HEALTH_MAX_AGE_SEC = 30.0
 CONTEXT_HEALTH_INITIAL_GRACE_SEC = 15.0
 CONTEXT_HEALTH_MAX_AGE_SEC = 15.0
-# 【数据保留 / 三年可行性】高频明细 fact_process_activity 约 2GB/周，三年约 312GB；E 盘 2.3TB 余量充足，
-# 故运行三年完全可行、且无需中途清理。RETENTION_DAYS 仅作超长期 7x24 运行的"防磁盘爆满"兜底底线：
-# 自动 DROP 分区上界早于该天数的周/月子分区，并清理两张非分区表(生命周期事件、AHK 工时)的超期行。
-# 默认 1200 天(≈3.3 年) > 3 年，故运行三年内绝不触发任何删除；置 0 可彻底禁用保留清理(永久保留全史)。
+# Other telemetry keeps its existing 1200-day policy. Activity samples have
+# an independent 60-day policy with durable hour/day summaries (DU3).
 RETENTION_DAYS = 1200
 # 墙钟跨度超过此值即判定刚从系统睡眠/休眠(S3/S4)唤醒。快速遥测节拍为 1s，故 60s 阈值不会被 GC/DB 抖动误触，
 # 而真实睡眠必远超之。用墙钟(time.time())而非 asyncio 的 monotonic 时钟——后者在系统睡眠时会暂停，
@@ -421,10 +420,13 @@ async def auto_warmup_partitions(pool):
         print("[✅ 预热引擎] 当期及未来分区舱室绑定完毕！")
 
 async def auto_retention_cleanup(pool):
-    """【数据保留兜底】超长期 7x24 运行时自动清理超过 RETENTION_DAYS 的历史，防止磁盘被高频明细无限撑爆。
-    用分区的真实上界(绝对 timestamptz)与 cutoff 比较，只 DROP 整段早于保留期的旧周/月分区(元数据级瞬时操作、
-    不产生表膨胀)，绝不误删当期/未来分区；两张非分区表则按时间戳 DELETE 超期行。RETENTION_DAYS=1200(≈3.3 年)
-    时三年内绝不触发。任何异常都吞掉、绝不影响采集主循环。"""
+    """Maintain activity summaries/60-day detail; preserve all other policies."""
+    try:
+        async with pool.acquire() as conn:
+            await maintain_activity_retention(conn)
+    except Exception as exc:
+        print(f"[进程汇总/保留策略] 本轮未完成，稍后重试: {exc}")
+        return False
     if RETENTION_DAYS <= 0:
         return True
     cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=RETENTION_DAYS)
@@ -435,7 +437,7 @@ async def auto_retention_cleanup(pool):
                 FROM pg_inherits i
                 JOIN pg_class child ON child.oid = i.inhrelid
                 JOIN pg_class parent ON parent.oid = i.inhparent
-                WHERE parent.relname IN ('fact_process_activity','fact_process_context','fact_system_hardware')
+                WHERE parent.relname IN ('fact_process_context','fact_system_hardware')
             """)
             dropped = 0
             for r in rows:

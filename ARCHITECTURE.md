@@ -40,7 +40,8 @@
 - `telemetry_watchdog.ps1` 依据精确进程/容器身份和新鲜心跳有界恢复；先给唤醒留宽限，停止旧实例后才替换。任务定义归 PCConfig 的 `Install-TimeAuditRuntimeWatchdog.ps1`，日志在 `telemetry_watchdog.log`。
 - LibreHardwareMonitor 是独立运行任务，硬件 worker 仅读其本机 HTTP 接口；PresentMon 回退由项目管理；RTSS 共享内存只读且不由本项目启停。RTSS 映射存在却无唯一新鲜帧源时是空闲，不能因此启动回退程序。
 - `net_connections()` 在可重启的无状态子进程里运行，避免原生崩溃带走主采集器；`log/python_fatal.log` 保留不含业务正文的栈。启动时闭合未结束前台会话，按墙上时间预建分区。
-- `RETENTION_DAYS` 默认 1200 天，保留至少三年的设计余量；0 表示关闭清理。实际删除由代码按数据时间和分区上界判断，不用旧容量估算承诺磁盘永远够用。
+- 逐进程明细 `fact_process_activity` 保留 60 天，另存长期小时/北京时间日汇总；资源看板通过混合查询继续读取历史统计。首次部署先回填、更新看板，再启用清理，见 [PROCESS_ACTIVITY_RETENTION.md](PROCESS_ACTIVITY_RETENTION.md)。
+- 其他事实表仍使用 `RETENTION_DAYS=1200`；该常量设为 0 只关闭这些表的清理。activity 的启用开关独立，按真实分区上界退役整周，不用旧容量估算承诺磁盘永远够用。
 
 [容器定义](docker-compose.yml)管理 `audit-postgres`、`audit-ingester`、`audit-grafana`。默认 PostgreSQL 宿主端口 45432、库 time_audit，Grafana 宿主端口 43000；数据目录与版本由该文件维护，不在说明中另存机器快照。数据库口令从 `TIMEAUDIT_DB_PASSWORD` 注入，不写 Git、日志或命令行；宿主端口可用 `TIMEAUDIT_DB_HOST_PORT` 配置。
 
