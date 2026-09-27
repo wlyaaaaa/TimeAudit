@@ -122,9 +122,9 @@ def schema_sql():
         returns = f"bucket_start timestamptz, {identity.replace(' NOT NULL', '')}{stat_definitions()}"
         group_identity = ", process_name, executable_path" if kind == "app" else ""
         result_identity = ", process_name, executable_path" if kind == "app" else ""
-        source_head = raw_source(kind == "system").replace("$1", "GREATEST(p_from, cutoff)").replace(
+        source_head = raw_source(kind == "system", bounded_identities=kind == "app").replace("$1", "GREATEST(p_from, cutoff)").replace(
             "$2", "LEAST(p_to, full_from) AND full_to > full_from")
-        source_tail = raw_source(kind == "system").replace("$1", "CASE WHEN full_to > full_from THEN GREATEST(p_from, cutoff, full_to) ELSE GREATEST(p_from, cutoff) END").replace("$2", "p_to")
+        source_tail = raw_source(kind == "system", bounded_identities=kind == "app").replace("$1", "CASE WHEN full_to > full_from THEN GREATEST(p_from, cutoff, full_to) ELSE GREATEST(p_from, cutoff) END").replace("$2", "p_to")
         source = f"({source_head}) UNION ALL ({source_tail})"
         statements.append(f"""CREATE OR REPLACE FUNCTION public.activity_{kind}_stats(
             p_from timestamptz, p_to timestamptz, p_step integer DEFAULT 3600)
@@ -132,7 +132,7 @@ def schema_sql():
           WITH state AS (SELECT raw_since AS cutoff,
               CASE WHEN summaries_ready AND p_step >= 3600 AND p_step % 3600 = 0
                 THEN summarized_until ELSE raw_since END AS covered_until
-              FROM public.activity_retention_state WHERE singleton),
+              FROM public.activity_retention_state WHERE singleton AND p_to > p_from),
           bounds AS (SELECT *,
               date_trunc('hour', greatest(p_from, cutoff)) + CASE
                 WHEN greatest(p_from, cutoff) > date_trunc('hour', greatest(p_from, cutoff))

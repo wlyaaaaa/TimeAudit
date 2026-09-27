@@ -351,6 +351,78 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(220, await self.conn.fetchval('SELECT sum(proc_cpu_usage_sum) FROM activity_app_hour'))
         self.assertEqual(2, await self.conn.fetchval('SELECT count(*) FROM activity_app_hour'))
 
+    async def test_reader_boundaries_match_direct_samples_for_every_statistic(self):
+        await self.partition('recent', '2026-09-01+08', '2026-10-01+08')
+        another_key = await self.conn.fetchval("""INSERT INTO dim_process_registry(process_name,executable_path,command_line)
+            VALUES('example.exe','E:/apps/example.exe','--second-key') RETURNING process_key""")
+        await self.row('2026-09-27T00:05:00+08:00', 99)  # Outside the window.
+        await self.row('2026-09-27T00:45:00+08:00', 10, proc_ram_mb=100, proc_disk_read_rate_mb=0.0005)
+        await self.row('2026-09-27T00:45:00+08:00', 20, pid=2, key=another_key, proc_ram_mb=None)
+        await self.row('2026-09-27T01:00:00+08:00', 30, proc_gpu_usage=None, proc_network_send_kb=5)
+        await self.row('2026-09-27T02:00:00+08:00', None, key=999998, proc_ram_mb=200)
+        await self.row('2026-09-27T03:00:00+08:00', 40, key=999999, proc_disk_write_rate_mb=1)
+        await self.row('2026-09-27T03:45:00+08:00', 99)  # Outside the window.
+        await retention.backfill(self.conn, instant('2026-09-27T03:00:00+08:00'))
+        start, end = instant('2026-09-27T00:30:00+08:00'), instant('2026-09-27T03:30:00+08:00')
+        for step in (60, 3600, 86400):
+            expected_sql = f"""SELECT date_bin(make_interval(secs => {step}),timestamp,'2000-01-01+08'::timestamptz),
+                process_name,executable_path,{retention.aggregate_columns()}
+                FROM ({retention.raw_source()}) samples GROUP BY 1,process_name,executable_path ORDER BY 1,2,3"""
+            expected = await self.conn.fetch(expected_sql, start, end)
+            actual = await self.conn.fetch(f"""SELECT bucket_start,process_name,executable_path,{retention.aggregate_columns(merge=True)}
+                FROM activity_app_stats($1,$2,$3) GROUP BY 1,process_name,executable_path ORDER BY 1,2,3""", start, end, step)
+            self.assertEqual([tuple(row) for row in expected], [tuple(row) for row in actual], step)
+
+    async def test_empty_retired_partial_hour_and_inverted_windows_are_empty(self):
+        await self.partition('old', '2026-06-01+08', '2026-06-02+08')
+        await self.row('2026-06-01T00:05:00+08:00', 10)
+        await retention.backfill(self.conn, instant('2026-06-02T00:00:00+08:00'))
+        await self.conn.execute('UPDATE activity_retention_state SET enabled=true')
+        await retention.maintain(self.conn, instant('2026-09-27T12:00:00+08:00'))
+        for kind in ('app','system'):
+            for start,end in (('00:30','00:30'),('00:45','00:30')):
+                rows = await self.conn.fetch(f"SELECT * FROM activity_{kind}_stats($1,$2,3600)",
+                    instant(f'2026-06-01T{start}:00+08:00'), instant(f'2026-06-01T{end}:00+08:00'))
+                self.assertEqual([], rows)
+
+    async def test_reader_raw_head_and_tail_only_lookup_window_identities(self):
+        await self.partition('recent', '2026-09-01+08', '2026-10-01+08')
+        await self.conn.execute("""INSERT INTO dim_process_registry(process_name,executable_path)
+            SELECT 'unused-' || n || '.exe', 'E:/unused/' || n FROM generate_series(1,5000) n""")
+        await self.conn.execute('ANALYZE dim_process_registry')
+        await self.row('2026-09-27T00:45:00+08:00', 10)
+        await self.row('2026-09-27T01:00:00+08:00', 20)
+        await self.row('2026-09-27T03:00:00+08:00', 30, key=999999)
+        await retention.backfill(self.conn, instant('2026-09-27T03:00:00+08:00'))
+        plan=json.loads(await self.conn.fetchval("""EXPLAIN (ANALYZE, FORMAT JSON)
+            SELECT sum(app_total_proc_cpu_usage_sum)
+            FROM activity_app_stats('2026-09-27 00:30+08','2026-09-27 03:30+08',3600)"""))
+        lookups=[]
+        def walk(node):
+            if isinstance(node,dict):
+                if node.get('Relation Name')=='dim_process_registry':lookups.append(node)
+                for child in node.values():walk(child)
+            elif isinstance(node,list):
+                for child in node:walk(child)
+        walk(plan)
+        self.assertEqual(2,len(lookups))
+        self.assertTrue(all(node['Node Type'] in ('Index Scan','Index Only Scan') for node in lookups))
+        self.assertEqual(2,sum(node['Actual Loops'] for node in lookups))
+
+    async def test_application_trend_projection_keeps_paths_and_mean_peak_series(self):
+        await self.partition('recent', '2026-09-01+08', '2026-10-01+08')
+        second=await self.conn.fetchval("""INSERT INTO dim_process_registry(process_name,executable_path)
+            VALUES('example.exe','E:/other-version/example.exe') RETURNING process_key""")
+        await self.row('2026-09-27T00:00:00+08:00',10,proc_ram_mb=100)
+        await self.row('2026-09-27T00:00:00+08:00',20,key=second,proc_ram_mb=200)
+        for panel,sql in self.chart_queries('2026-09-27+08','2026-09-28+08','1h'):
+            if 'activity_app_stats(' not in sql:continue
+            rows=await self.conn.fetch(sql)
+            self.assertEqual(4,len(rows),panel['title'])
+            self.assertEqual({'均值 · example.exe · E:/apps/example.exe','峰值 · example.exe · E:/apps/example.exe',
+                              '均值 · example.exe · E:/other-version/example.exe','峰值 · example.exe · E:/other-version/example.exe'},
+                             {row['metric'] for row in rows})
+
     async def test_dashboard_queries_compile_in_postgresql(self):
         checked = 0
         for path in ROOT.joinpath("grafana_dashboards").glob("*.json"):
