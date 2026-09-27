@@ -25,9 +25,9 @@
 
 启用后，最终退役操作在同一事务内锁定旧分区，按日重建它的汇总，核对应用小时采样总数与原始行数，再 DROP 并推进原始明细起点。锁等待超过 5 秒、回填失败、核对失败或 DROP 失败则整笔回滚，不推进起点。其他维护/CLI 通过数据库建议锁串行，忙时自动维护本轮跳过。分区必须有显式时区、整小时边界且在 `public`；不支持的结构保留并报错。
 
-## 部署顺序（命令行，无 GUI）
+## 部署顺序（先命令准备，最后由用户操作 GUI）
 
-以下在已有凭据注入环境中执行，使用现有 `TIMEAUDIT_DB_PASSWORD`、`GRAFANA_PASSWORD` 环境变量；不要把凭据写进脚本或命令输出。先合并源码并同步活动检出，再执行：
+数据库命令使用已有合法凭据注入的 `TIMEAUDIT_DB_PASSWORD` 环境，不把凭据写进脚本或输出。先合并源码并同步活动检出，再执行：
 
 ```powershell
 $ta = 'E:\Projects\Tools\TimeAudit'
@@ -37,12 +37,29 @@ $python = "$ta\.venv\Scripts\python.exe"
 # 观察首日实际 source_rows、elapsed_seconds、source_rows_per_second，再接续：
 & $python "$ta\process_activity_retention.py" backfill
 & $python "$ta\process_activity_retention.py" status
-# 回填完成应为 enabled=false、summaries_ready=true，覆盖到运行开始时的整点。
-& $python "$ta\restore_grafana.py" --dry-run
-& $python "$ta\restore_grafana.py"
+# 此时必须保持 enabled=false；完整回填后 summaries_ready=true。
 ```
 
-导入后通过 Grafana API 回读这次改动的 4 个仪表盘，核对查询及面板标题已更新。父任务应选一个旧完整日和一个近期跨小时窗口，用直接 SQL 与 `activity_app_stats` 核对各指标 sum/count/max、采样数；同时确认最近小时查询可返回真实数据。独立代码/数据语义审查完成后，才执行清理部署步骤：
+本次仅部署以下四份 JSON，保留原 UID、原文件夹和数据源 `P7A9DAD60F8AB4C18`；不恢复仓库中另外两份未改动看板：
+
+```powershell
+$dashboards = @(
+  'addforex__🔍 进程取证与安全审计舱.json'
+  'addmc8x__🚀 前台交互与流畅度诊断舱.json'
+  'addrd7x__🐀 资源大户与后台内鬼.json'
+  'b7d809e5-d072-4d24-ae23-c573bfcabc56__🖥️ 整机硬件能效与系统资源大盘.json'
+)
+foreach ($dashboard in $dashboards) {
+  & $python "$ta\restore_grafana.py" --file (Join-Path "$ta\grafana_dashboards" $dashboard) --dry-run
+  if ($LASTEXITCODE -ne 0) { throw "Dashboard validation failed: $dashboard" }
+}
+```
+
+本次现场正常 API 返回 401，未取得现役入口可合法注入的 Grafana API 凭据。当前路线是在完成上述数据库准备后继续保持 `enabled=false`，最后由用户登录既有 Grafana，通过 GUI 导入这四份 JSON，选择原文件夹并按原 UID 覆盖已有看板，保留既有数据源。随后通过现有 Grafana SQLite **只读**入口回读四份定义、UID、文件夹与数据源，核对查询及提示已更新；不能直接修改 SQLite 来代替导入。
+
+以后只有既有合法凭据环境可用时才可改用 API，并且应先回读原 `meta.folderUid`，按原值导入。当前 `restore_grafana.py` 写接口固定使用空 `folderUid`，所以本次只用它做精确 `--file --dry-run`，不要直接去掉 dry-run 后声称保留了原文件夹。无需为本次更改认证、增建凭据层或写入 SQLite。
+
+父任务还应选一个旧完整日和一个近期跨小时窗口，用直接 SQL 与 `activity_app_stats` 核对各指标 sum/count/max、采样数及应用合计峰值，确认最近小时查询和历史统计可见。独立审查、四个看板导入及读回、历史可见验收完成后，才执行下面的实际清理步骤；GUI 尚未完成时不得提前启用：
 
 ```powershell
 & $python "$ta\process_activity_retention.py" enable
