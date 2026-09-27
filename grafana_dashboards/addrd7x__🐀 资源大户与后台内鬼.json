@@ -153,11 +153,11 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "SELECT * FROM (\nSELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(proc_cpu_usage_sum) / NULLIF(sum(proc_cpu_usage_count),0))::numeric,2) AS \"平均 CPU (%)\", ROUND(max(proc_cpu_usage_max)::numeric,2) AS \"峰值 CPU (%)\", ROUND((sum(proc_gpu_usage_sum) / NULLIF(sum(proc_gpu_usage_count),0))::numeric,2) AS \"平均 GPU (%)\", ROUND((sum(proc_ram_mb_sum) / NULLIF(sum(proc_ram_mb_count),0))::numeric,0) AS \"平均内存 (MB)\", ROUND(max(proc_ram_mb_max)::numeric,0) AS \"峰值内存 (MB)\", ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,3) AS \"平均显存 (GB)\", sum(sample_count)::bigint AS \"采样点数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(sample_count) >= 3\n\n) totals ORDER BY \"平均 CPU (%)\" + \"平均 GPU (%)\" + \"平均内存 (MB)\"/1024.0 DESC NULLS LAST LIMIT 25;",
+          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('code.exe', '📝 VS Code 编辑器'),\n    ('idea64.exe', '☕ IntelliJ IDEA'),\n    ('datagrip64.exe', '🛢️ DataGrip 数据库'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('discord.exe', '💬 Discord 社区'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('docker desktop.exe', '🐳 Docker 桌面端'),\n    ('windowsterminal.exe', '💻 Windows 终端'),\n    ('blackmythwukong.exe', '🐒 黑神话：悟空'),\n    ('cyberpunk2077.exe', '🦾 赛博朋克 2077'),\n    ('league of legends.exe', '⚔️ 英雄联盟'),\n    ('cities2.exe', '🏗️ 城市：天际线 2'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2'),\n    ('qq.exe', '🐧 QQ 电脑版'),\n    ('bilibili.exe', '📺 哔哩哔哩')\n)\nSELECT * FROM (\nSELECT COALESCE(pm.alias_name, '⚙️ ' || process_name) AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(proc_cpu_usage_sum) / NULLIF(sum(proc_cpu_usage_count),0))::numeric,2) AS \"平均 CPU (%)\", ROUND(max(proc_cpu_usage_max)::numeric,2) AS \"峰值 CPU (%)\", ROUND((sum(proc_gpu_usage_sum) / NULLIF(sum(proc_gpu_usage_count),0))::numeric,2) AS \"平均 GPU (%)\", ROUND((sum(proc_ram_mb_sum) / NULLIF(sum(proc_ram_mb_count),0))::numeric,0) AS \"平均内存 (MB)\", ROUND(max(proc_ram_mb_max)::numeric,0) AS \"峰值内存 (MB)\", ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,3) AS \"平均显存 (GB)\", sum(sample_count)::bigint AS \"采样点数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nLEFT JOIN process_map pm ON LOWER(process_name)=pm.proc_name\nGROUP BY process_name, executable_path, pm.alias_name\nHAVING sum(sample_count) >= 3\n\n) totals ORDER BY \"平均 CPU (%)\" + \"平均 GPU (%)\" + \"平均内存 (MB)\"/1024.0 DESC NULLS LAST LIMIT 25;",
           "refId": "A"
         }
       ],
-      "title": "🏆 全进程 CPU/GPU/内存/显存 Top 25",
+      "title": "🏆 全进程 CPU/GPU/内存/显存 Top 25（单进程采样口径）",
       "type": "table",
       "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
     },
@@ -999,7 +999,7 @@
     },
     {
       "id": 901,
-      "title": "应用 CPU 趋势 · 小时/日均值与单进程峰值",
+      "title": "应用 CPU 趋势 · 小时/日均值与应用合计峰值",
       "type": "timeseries",
       "gridPos": {
         "x": 0,
@@ -1016,7 +1016,7 @@
           "refId": "A",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(proc_cpu_usage_sum)/NULLIF(sum(proc_cpu_usage_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 均值' AS metric,\n sum(proc_cpu_usage_sum)/NULLIF(sum(proc_cpu_usage_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 单进程峰值', max(proc_cpu_usage_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path ORDER BY 1;",
+          "rawSql": "WITH series AS (WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 应用合计均值' AS metric,\n sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 应用合计峰值', max(app_total_proc_cpu_usage_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
           "datasource": {
             "type": "grafana-postgresql-datasource",
             "uid": "P7A9DAD60F8AB4C18"
@@ -1046,11 +1046,11 @@
           "sort": "desc"
         }
       },
-      "description": "按应用名和程序路径区分，显示所选期间均值最高的10个应用；按有效进程样本加权，峰值为单进程样本峰值。小时/日汇总长期保留；缺测不补零。历史边界不足一小时按整小时统计。"
+      "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。"
     },
     {
       "id": 902,
-      "title": "应用内存趋势 · 小时/日均值与单进程峰值",
+      "title": "应用内存趋势 · 小时/日均值与应用合计峰值",
       "type": "timeseries",
       "gridPos": {
         "x": 12,
@@ -1067,7 +1067,7 @@
           "refId": "A",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(proc_ram_mb_sum)/NULLIF(sum(proc_ram_mb_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 均值' AS metric,\n sum(proc_ram_mb_sum)/NULLIF(sum(proc_ram_mb_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 单进程峰值', max(proc_ram_mb_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path ORDER BY 1;",
+          "rawSql": "WITH series AS (WITH points AS (\n SELECT * FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, process_name || ' · ' || executable_path || ' 应用合计均值' AS metric,\n sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, process_name || ' · ' || executable_path || ' 应用合计峰值', max(app_total_proc_ram_mb_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
           "datasource": {
             "type": "grafana-postgresql-datasource",
             "uid": "P7A9DAD60F8AB4C18"
@@ -1097,7 +1097,7 @@
           "sort": "desc"
         }
       },
-      "description": "按应用名和程序路径区分，显示所选期间均值最高的10个应用；按有效进程样本加权，峰值为单进程样本峰值。小时/日汇总长期保留；缺测不补零。历史边界不足一小时按整小时统计。"
+      "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。"
     }
   ],
   "schemaVersion": 42,

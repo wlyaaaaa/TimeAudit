@@ -3,12 +3,15 @@
 Set TIMEAUDIT_RETENTION_TEST_DSN to a database named timeaudit_retention_test*.
 No production credentials, rows or database are used by these tests.
 """
+import ast
+import asyncio
 import datetime as dt
 import json
 import os
 from pathlib import Path
 import re
 import unittest
+from unittest import mock
 
 import process_activity_retention as retention
 
@@ -37,7 +40,12 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
             VALUES('example.exe', 'E:/apps/example.exe') RETURNING process_key""")
 
     async def asyncTearDown(self):
-        await self.tx.rollback()
+        if self.tx is not None:
+            await self.tx.rollback()
+        else:
+            # Only the explicit pool-wiring test commits its synthetic schema.
+            # asyncSetUp checked the disposable database identity first.
+            await self.conn.execute("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
         await self.conn.close()
 
     async def partition(self, name, start, end):
@@ -199,6 +207,121 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual({"busy": True, "dropped": []}, result)
         finally:
             await other.close()
+
+    async def test_application_totals_survive_retirement_without_summing_separate_peaks(self):
+        await self.partition("old", "2026-06-01+08", "2026-06-02+08")
+        other_key = await self.conn.fetchval("""INSERT INTO dim_process_registry(process_name,executable_path)
+            VALUES('other.exe','E:/apps/other.exe') RETURNING process_key""")
+        await self.row("2026-06-01T00:00:00+08:00", 40, proc_gpu_usage=5)
+        await self.row("2026-06-01T00:00:00+08:00", 30, pid=2)
+        await self.row("2026-06-01T00:00:00+08:00", 20, pid=3, key=other_key)
+        await self.row("2026-06-01T01:00:00+08:00", 40)
+        await self.row("2026-06-01T01:00:03+08:00", 30, pid=2)
+        await retention.backfill(self.conn, instant("2026-06-02T00:00:00+08:00"))
+        hourly = await self.conn.fetch("SELECT * FROM activity_app_hour WHERE process_name='example.exe' ORDER BY bucket_start")
+        self.assertEqual([70, 40], [r['app_total_proc_cpu_usage_max'] for r in hourly])
+        daily = await self.conn.fetchrow("SELECT * FROM activity_app_day WHERE process_name='example.exe'")
+        self.assertEqual((140, 3, 70), (daily['app_total_proc_cpu_usage_sum'], daily['app_total_proc_cpu_usage_count'], daily['app_total_proc_cpu_usage_max']))
+        self.assertEqual((5, 1), (daily['app_total_proc_gpu_usage_sum'], daily['app_total_proc_gpu_usage_count']))
+        self.assertEqual(40, daily['proc_cpu_usage_max'])
+        self.assertEqual(90, await self.conn.fetchval("SELECT proc_cpu_usage_max FROM activity_system_day"))
+        await self.conn.execute("UPDATE activity_retention_state SET enabled=true")
+        await retention.maintain(self.conn, instant("2026-09-27T12:00:00+08:00"))
+        self.assertEqual(70, await self.conn.fetchval("""SELECT max(app_total_proc_cpu_usage_max)
+            FROM activity_app_stats('2026-06-01+08','2026-06-02+08',86400) WHERE process_name='example.exe'"""))
+
+    def chart_queries(self, start, end, interval):
+        for path in ROOT.joinpath('grafana_dashboards').glob('*.json'):
+            dashboard = json.loads(path.read_text('utf-8'))
+            for panel in dashboard.get('panels', []):
+                for target in panel.get('targets', []):
+                    sql = target.get('rawSql', '')
+                    if 'activity_system_stats' in sql or panel.get('id') in (901, 902):
+                        yield panel, sql.replace('$__timeFrom()', repr(start)).replace('$__timeTo()', repr(end)).replace('$__interval', interval)
+
+    async def test_chart_missing_hours_and_days_have_null_breaks(self):
+        await self.partition('old', '2026-06-01+08', '2026-06-05+08')
+        await self.row('2026-06-01T00:00:00+08:00', 10, proc_ram_mb=100)
+        await self.row('2026-06-01T02:00:00+08:00', 20, proc_ram_mb=200)
+        await self.row('2026-06-03T00:00:00+08:00', 30, proc_ram_mb=300)
+        for retired in (False, True):
+            if retired:
+                await retention.backfill(self.conn, instant('2026-06-05T00:00:00+08:00'))
+                await self.conn.execute('UPDATE activity_retention_state SET enabled=true')
+                await retention.maintain(self.conn, instant('2026-09-27T12:00:00+08:00'))
+            for panel, sql in self.chart_queries('2026-06-01 00:00+08', '2026-06-01 03:00+08', '1h'):
+                rows = await self.conn.fetch(sql)
+                breaks = [r for r in rows if r['time'] == instant('2026-06-01T01:00:00+08:00')]
+                self.assertTrue(breaks, panel['title'])
+                if panel.get('id') in (901, 902):
+                    self.assertEqual({r['metric'] for r in rows}, {r['metric'] for r in breaks})
+                for row in breaks:
+                    self.assertTrue(all(v is None for k, v in row.items() if k not in ('time', 'metric')), panel['title'])
+        for panel, sql in self.chart_queries('2026-06-01 00:00+08', '2026-07-02 00:00+08', '1d'):
+            rows = await self.conn.fetch(sql)
+            self.assertTrue(any(r['time'] == instant('2026-06-02T00:00:00+08:00') for r in rows), panel['title'])
+
+    async def test_first_backfill_resumes_completed_batches_without_claiming_complete(self):
+        await self.partition('old', '2026-06-01+08', '2026-06-03+08')
+        await self.row('2026-06-01T00:00:00+08:00', 10)
+        await self.row('2026-06-02T00:00:00+08:00', 20)
+        result = await retention.backfill(self.conn, instant('2026-06-03T00:00:00+08:00'), max_days=1)
+        self.assertFalse(result['complete'])
+        self.assertFalse(await self.conn.fetchval('SELECT summaries_ready FROM activity_retention_state'))
+        original = retention.refresh_hours
+        with mock.patch.object(retention, 'refresh_hours', wraps=original) as refresh:
+            await retention.backfill(self.conn, instant('2026-06-03T00:00:00+08:00'))
+            self.assertEqual(1, refresh.await_count)
+            self.assertEqual(instant('2026-06-02T00:00:00+08:00'), refresh.await_args.args[1])
+        self.assertTrue(await self.conn.fetchval('SELECT summaries_ready FROM activity_retention_state'))
+        self.assertEqual(30, await self.conn.fetchval('SELECT sum(proc_cpu_usage_sum) FROM activity_app_hour'))
+
+    async def test_real_main_maintenance_overrides_pool_timeout_without_changing_collector(self):
+        import asyncpg
+        tree = ast.parse(ROOT.joinpath('main.py').read_text('utf-8-sig'))
+        pools = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == 'create_pool']
+        self.assertEqual([5.0, 5.0], [ast.literal_eval(next(k.value for k in n.keywords if k.arg == 'command_timeout')) for n in pools])
+        function = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == 'auto_retention_cleanup')
+        namespace = {'maintain_activity_retention': retention.maintain, 'RETENTION_DAYS': 0}
+        exec(compile(ast.Module(body=[function], type_ignores=[]), str(ROOT / 'main.py'), 'exec'), namespace)
+        await self.partition('recent', '2000-01-01+08', '2100-01-01+08')
+        now = dt.datetime.now(dt.timezone.utc).replace(minute=0, second=0, microsecond=0) - dt.timedelta(hours=1)
+        await self.row(now.isoformat(), 10)
+        await self.conn.execute("""CREATE FUNCTION slow_summary() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN PERFORM pg_sleep(0.05); RETURN NULL; END $$;
+            CREATE TRIGGER slow_summary BEFORE INSERT ON activity_app_hour FOR EACH STATEMENT EXECUTE FUNCTION slow_summary()""")
+        await self.tx.commit()
+        self.tx = None
+        pool = await asyncpg.create_pool(DSN, min_size=1, max_size=2, command_timeout=0.01)
+        try:
+            async with pool.acquire() as conn:
+                with self.assertRaises(asyncio.TimeoutError):
+                    await conn.execute('SELECT pg_sleep(0.05)')
+            self.assertTrue(await namespace['auto_retention_cleanup'](pool))
+            self.assertEqual(10, await self.conn.fetchval('SELECT sum(proc_cpu_usage_sum) FROM activity_app_hour'))
+            async with pool.acquire() as conn:
+                with self.assertRaises(asyncio.TimeoutError):
+                    await conn.execute('SELECT pg_sleep(0.05)')
+        finally:
+            try:
+                await pool.close()
+            except asyncio.TimeoutError:
+                # The deliberately 10ms default also bounds asyncpg.close().
+                pool.terminate()
+
+    async def test_cancelled_maintenance_rolls_back_current_summary_batch(self):
+        await self.partition('recent', '2026-09-01+08', '2026-10-01+08')
+        await self.row('2026-09-27T00:00:00+08:00', 10)
+        await self.summary('2026-09-27T00:00:00+08:00', '2026-09-27T01:00:00+08:00')
+        await self.row('2026-09-27T00:00:03+08:00', 30)
+        await self.conn.execute("""CREATE FUNCTION slow_summary() RETURNS trigger LANGUAGE plpgsql AS $$
+            BEGIN PERFORM pg_sleep(0.3); RETURN NULL; END $$;
+            CREATE TRIGGER slow_summary BEFORE INSERT ON activity_app_hour FOR EACH STATEMENT EXECUTE FUNCTION slow_summary()""")
+        with mock.patch.object(retention, 'install', new=mock.AsyncMock()):
+            with self.assertRaises(asyncio.TimeoutError):
+                await asyncio.wait_for(retention.maintain(self.conn, instant('2026-09-28T00:00:00+08:00')), timeout=0.05)
+        self.assertEqual(10, await self.conn.fetchval('SELECT sum(proc_cpu_usage_sum) FROM activity_app_hour'))
+        self.assertEqual(2, await self.conn.fetchval('SELECT count(*) FROM fact_process_activity'))
 
     async def test_dashboard_queries_compile_in_postgresql(self):
         checked = 0

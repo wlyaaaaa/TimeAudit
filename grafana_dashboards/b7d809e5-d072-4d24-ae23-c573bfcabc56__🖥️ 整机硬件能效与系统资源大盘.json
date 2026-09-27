@@ -1896,13 +1896,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT bucket_start AS time, ROUND((sum(proc_active_connections_sum) / NULLIF(sum(proc_active_connections_count),0))::numeric,2) AS \"活跃 TCP 连接数\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start ORDER BY bucket_start;",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, ROUND((sum(proc_active_connections_sum) / NULLIF(sum(proc_active_connections_count),0))::numeric,2) AS \"活跃 TCP 连接数\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"活跃 TCP 连接数\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"活跃 TCP 连接数\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
           "refId": "A"
         }
       ],
       "title": "整机活跃 TCP 连接数",
       "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。 缺测处插入NULL断线点；近期按所选细粒度、旧段至少按小时，不补零。"
     },
     {
       "datasource": {
@@ -2014,13 +2014,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT bucket_start AS time, ROUND((sum(proc_disk_iops_sum) / NULLIF(sum(proc_disk_iops_count),0))::numeric,2) AS \"磁盘 IOPS\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start ORDER BY bucket_start;",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, ROUND((sum(proc_disk_iops_sum) / NULLIF(sum(proc_disk_iops_count),0))::numeric,2) AS \"磁盘 IOPS\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"磁盘 IOPS\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"磁盘 IOPS\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
           "refId": "A"
         }
       ],
       "title": "系统磁盘 IOPS",
       "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。 缺测处插入NULL断线点；近期按所选细粒度、旧段至少按小时，不补零。"
     },
     {
       "datasource": {
@@ -2152,13 +2152,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT bucket_start AS time, sum(proc_process_count_sum)/NULLIF(sum(proc_process_count_count),0) AS \"活跃进程数\", ROUND((sum(proc_thread_count_sum) / NULLIF(sum(proc_thread_count_count),0))::numeric,2) AS \"线程总数\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start ORDER BY bucket_start;",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, sum(proc_process_count_sum)/NULLIF(sum(proc_process_count_count),0) AS \"活跃进程数\", ROUND((sum(proc_thread_count_sum) / NULLIF(sum(proc_thread_count_count),0))::numeric,2) AS \"线程总数\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"活跃进程数\", \"线程总数\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"活跃进程数\", NULL::double precision AS \"线程总数\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
           "refId": "A"
         }
       ],
       "title": "整机活跃进程数 / 线程总数",
       "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。 缺测处插入NULL断线点；近期按所选细粒度、旧段至少按小时，不补零。"
     },
     {
       "datasource": {
@@ -2287,13 +2287,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT bucket_start AS time, ROUND((sum(proc_disk_read_rate_mb_sum) / NULLIF(sum(proc_disk_read_rate_mb_count),0))::numeric,6)*1048576.0 AS \"磁盘读取速度\", ROUND((sum(proc_disk_write_rate_mb_sum) / NULLIF(sum(proc_disk_write_rate_mb_count),0))::numeric,6)*1048576.0 AS \"磁盘写入速度\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start ORDER BY bucket_start;",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, ROUND((sum(proc_disk_read_rate_mb_sum) / NULLIF(sum(proc_disk_read_rate_mb_count),0))::numeric,6)*1048576.0 AS \"磁盘读取速度\", ROUND((sum(proc_disk_write_rate_mb_sum) / NULLIF(sum(proc_disk_write_rate_mb_count),0))::numeric,6)*1048576.0 AS \"磁盘写入速度\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"磁盘读取速度\", \"磁盘写入速度\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"磁盘读取速度\", NULL::double precision AS \"磁盘写入速度\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
           "refId": "A"
         }
       ],
       "title": "系统磁盘读写速度 (MB/s)",
       "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。 缺测处插入NULL断线点；近期按所选细粒度、旧段至少按小时，不补零。"
     },
     {
       "datasource": {
@@ -2405,13 +2405,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT bucket_start AS time, ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,6)*1073741824.0 AS \"显存占用\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start ORDER BY bucket_start;",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,6)*1073741824.0 AS \"显存占用\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"显存占用\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"显存占用\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
           "refId": "A"
         }
       ],
       "title": "整机显存总占用",
       "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。 缺测处插入NULL断线点；近期按所选细粒度、旧段至少按小时，不补零。"
     },
     {
       "datasource": {
@@ -2540,13 +2540,13 @@
             "uid": "P7A9DAD60F8AB4C18"
           },
           "format": "time_series",
-          "rawSql": "SELECT bucket_start AS time, ROUND((sum(proc_network_send_kb_sum) / NULLIF(sum(proc_network_send_kb_count),0))::numeric,6)*1024.0 AS \"网络发送速度\", ROUND((sum(proc_network_recv_kb_sum) / NULLIF(sum(proc_network_recv_kb_count),0))::numeric,6)*1024.0 AS \"网络接收速度\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start ORDER BY bucket_start;",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, ROUND((sum(proc_network_send_kb_sum) / NULLIF(sum(proc_network_send_kb_count),0))::numeric,6)*1024.0 AS \"网络发送速度\", ROUND((sum(proc_network_recv_kb_sum) / NULLIF(sum(proc_network_recv_kb_count),0))::numeric,6)*1024.0 AS \"网络接收速度\" FROM public.activity_system_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(3, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"网络发送速度\", \"网络接收速度\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"网络发送速度\", NULL::double precision AS \"网络接收速度\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
           "refId": "A"
         }
       ],
       "title": "系统网络收发速度",
       "type": "timeseries",
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。"
+      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。 缺测处插入NULL断线点；近期按所选细粒度、旧段至少按小时，不补零。"
     },
     {
       "datasource": {
