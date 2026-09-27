@@ -25,7 +25,11 @@
 
 周期维护重算最近两天，并补齐上次维护结束之后的所有时间，跨长停机/维护失败不会跳过中段。小时覆盖窗口采用替换写入，日汇总由持久小时重新合并；相邻分区在同一天分界、前一半日已经退役时，也不会擦掉前半日汇总。超过两天才补写的旧活动数据，可运行 `backfill` 更新；最终退役前始终再扫描源分区。
 
-启用后，最终退役操作在同一事务内锁定旧分区，按日重建它的汇总，核对应用小时采样总数与原始行数，再 DROP 并推进原始明细起点。锁等待超过 5 秒、回填失败、核对失败或 DROP 失败则整笔回滚，不推进起点。其他维护/CLI 通过数据库建议锁串行，忙时自动维护本轮跳过。分区必须有显式时区、整小时边界且在 `public`；不支持的结构保留并报错。
+启用后，最终退役操作在同一事务内对旧分区持 `SHARE` 锁，按日重建它的汇总并核对应用小时采样数与原始行数。该锁阻止旧分区迟到写入，允许普通 SELECT 和当前分区实时写入继续。只有最后 DROP 前，才按顺序请求 `ONLY` 父表和目标旧分区的 `ACCESS EXCLUSIVE NOWAIT`；任一处忙即回滚当前分区，不等待成环，不继续越过它删除后续分区。已经提交的较早分区保留成果；当前失败分区的原始明细和本事务开始前的汇总保持，明细起点不会跨过它。
+
+取得初始旧分区锁最多等待 5 秒；回填、核对或 DROP 失败也回滚当前分区。最终短锁忙会沿原异常路径让 `main.py` 的本轮维护返回失败，使用已有 30–300 秒有界退避重试；CLI 本次失败退出，之后重跑同一 `maintain` 即可，不必踢掉读者或重置进度。既有数据库建议锁仍负责多个维护/CLI 的串行。分区必须有显式时区、整小时边界且在 `public`；不支持的结构保留并报错。
+
+锁顺序依据 PostgreSQL 15 官方文档：[删除分区还需要父表排它锁](https://www.postgresql.org/docs/15/ddl-partitioning.html#DDL-PARTITIONING-DECLARATIVE-MAINTENANCE)、[`SHARE`、`NOWAIT` 与 `ONLY` 的含义](https://www.postgresql.org/docs/15/sql-lock.html)。不能在持旧 child 锁时等待父表排它锁，因为普通 reader 或迟到 writer 可以先持父锁再请求 child；父表排它锁也不能覆盖整个汇总阶段。
 
 ## 部署顺序（回填、导入看板、验收后启用）
 
@@ -97,7 +101,7 @@ foreach ($dashboard in $dashboards) {
 
 ```powershell
 $env:TIMEAUDIT_RETENTION_TEST_DSN = 'postgresql://postgres@127.0.0.1:<测试端口>/timeaudit_retention_test'
-& $python -m unittest test_process_activity_retention test_main_cadence test_grafana_dashboard_contract test_restore_grafana -q
+& $python -m unittest test_process_activity_retention test_process_activity_retention_concurrency test_main_cadence test_grafana_dashboard_contract test_restore_grafana -q
 ```
 
-覆盖 NULL/加权、多 PID 应用合计与错时峰值、每条曲线的小时/日缺测断线、真实 main 入口的短超时池接线和取消回滚、首次回填断点接续、日界与非日界分区、重复回填、晚到样本、60 天跨界、长维护中断、混合查询边界、细粒度分辨率、整小时原始表零行索引探测、DROP 失败回滚、并行维护互斥和所有改后 SQL。合成回归通过不等于生产回填、看板发布或空间回收已经完成。
+覆盖 NULL/加权、多 PID 应用合计与错时峰值、每条曲线的小时/日缺测断线、真实 main 入口的短超时池接线和取消回滚、首次回填断点接续、日界与非日界分区、重复回填、晚到样本、60 天跨界、长维护中断、混合查询边界、细粒度分辨率、整小时原始表零行索引探测、DROP 失败回滚、并行维护互斥和所有改后 SQL。三连接并发反例覆盖普通父表查询、迟到 writer 先持父锁等待 child、直接 child reader、汇总期间当前分区 INSERT、失败回滚后的完整重试和保留起点连续性。合成回归通过不等于生产回填、看板发布或空间回收已经完成。

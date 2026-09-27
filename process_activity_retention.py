@@ -258,8 +258,10 @@ async def maintain(conn, now=None):
     """Refresh recent statistics; summarize and retire whole old partitions.
 
     The state switch is enabled only after the migration's dashboard deployment.
-    Lock the candidate before its last summary so concurrent late writes cannot
-    land between the summary and DROP. Failed refresh/DROP rolls back together.
+    Hold SHARE on the old child while summarizing: readers and current-partition
+    inserts continue, but late writes to that child wait. The final parent/child
+    exclusive locks never wait, avoiding the inverse parent-first reader/writer
+    lock order. Any conflict rolls back this partition and the caller retries.
     """
     now = now or dt.datetime.now(UTC)
     if not await conn.fetchval("SELECT pg_try_advisory_lock($1)", LOCK_ID, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC):
@@ -288,7 +290,7 @@ async def maintain(conn, now=None):
                     continue
                 async with conn.transaction():
                     await conn.execute("SET LOCAL lock_timeout = '5s'", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
-                    await conn.execute(f"LOCK TABLE public.{quote_ident(name)} IN ACCESS EXCLUSIVE MODE", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
+                    await conn.execute(f"LOCK TABLE public.{quote_ident(name)} IN SHARE MODE", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
                     cursor = start
                     while cursor < upper:
                         stop = min(cursor + dt.timedelta(days=1), upper)
@@ -300,6 +302,12 @@ async def maintain(conn, now=None):
                          WHERE bucket_start >= $1 AND bucket_start < $2) AS summary_count""", start, upper, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
                     if counts['raw_count'] != counts['summary_count']:
                         raise RuntimeError("activity summary row count mismatch; partition retained")
+                    # DROP also locks the parent. Never wait here while holding
+                    # the child's SHARE lock: a late writer can already hold
+                    # RowExclusive on the parent while waiting for this child.
+                    # ONLY avoids recursively locking unrelated/current leaves.
+                    await conn.execute("LOCK TABLE ONLY public.fact_process_activity IN ACCESS EXCLUSIVE MODE NOWAIT", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
+                    await conn.execute(f"LOCK TABLE public.{quote_ident(name)} IN ACCESS EXCLUSIVE MODE NOWAIT", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
                     await conn.execute(f"DROP TABLE public.{quote_ident(name)}", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
                     await conn.execute("UPDATE public.activity_retention_state SET raw_since=$1 WHERE singleton", upper, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
                 dropped.append(name)
