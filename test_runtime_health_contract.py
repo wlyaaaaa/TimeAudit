@@ -9,7 +9,8 @@ import timeaudit_health as health
 
 def database_row(**changes):
     value = dict(age_seconds=1, fps_state="active", quality_contract="2", cpu_temperature_available=True,
-                 cpu_power_available=True, gpu_hotspot_available=False, disk_latency_available=True)
+                 cpu_power_available=True, gpu_hotspot_available=False, gpu_hotspot_source="unsupported",
+                 disk_latency_available=True)
     value.update(changes)
     return value
 

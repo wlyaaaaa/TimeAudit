@@ -181,6 +181,24 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             self.assertEqual(json.load(handle)["version"], 9)
 
+    def test_same_version_semantic_match_preserves_manual_formatting(self):
+        os.makedirs(backup.DASH_DIR)
+        path = os.path.join(backup.DASH_DIR, "dash-1__Main Dashboard.json")
+        dashboard = {"uid": "dash-1", "title": "Main Dashboard", "version": 8, "panels": []}
+        original = json.dumps(dashboard, ensure_ascii=False, separators=(",", ":")) + "\n"
+        with open(path, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(original)
+        changed = set()
+
+        written = backup.write_dashboard_documents(
+            [("dash-1", dashboard)], changed_paths=changed, before_write=lambda: None,
+        )
+
+        self.assertEqual(written, {"dash-1__Main Dashboard.json"})
+        self.assertEqual(changed, set())
+        with open(path, encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), original)
+
     def test_consistent_database_backup_passes_quick_check(self):
         self.create_unified_database()
 

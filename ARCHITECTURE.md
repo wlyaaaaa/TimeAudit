@@ -47,4 +47,4 @@
 
 PostgreSQL 会话时区保持 `Asia/Shanghai`，否则按本地日界计算的功耗看板会偏移。面板与 provisioning 必须使用同一已登记数据源 UID，恢复不引入已退役数据源。性能参数、共享内存和固定镜像版本以 compose 为准，恢复步骤见 [快速部署](快速部署.md)。
 
-跨项目读取入口见 [个人活动接口](PERSONAL_ACTIVITY_READER.md)、[机器异常摘要](PCCONFIG_ANOMALY_DIGEST_CONTRACT.md)和[诊断摘要](TIMEAUDIT_DIAGNOSTIC_SUMMARY_CONTRACT.md)；诊断操作见 [DIAGNOSTICS_OPERATIONS.md](DIAGNOSTICS_OPERATIONS.md)。
+跨项目读取入口见 [个人活动接口](PERSONAL_ACTIVITY_READER.md)和[诊断摘要](TIMEAUDIT_DIAGNOSTIC_SUMMARY_CONTRACT.md)；诊断操作见 [DIAGNOSTICS_OPERATIONS.md](DIAGNOSTICS_OPERATIONS.md)。

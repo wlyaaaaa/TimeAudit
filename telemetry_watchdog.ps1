@@ -168,6 +168,12 @@ function Test-GrafanaEndpoint {
 function Restore-TimeAuditDependencies {
     $engine = Invoke-DockerBounded 'info --format {{.ServerVersion}}'
     if (-not $engine.Success) {
+        if ($engine.TimedOut) {
+            # A slow CLI says nothing conclusive about engine state. In
+            # particular, do not launch autostart on this evidence alone.
+            Log 'Docker status probe timed out - engine state unknown; next cycle will retry'
+            return
+        }
         $desktop = Get-Process -Name 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue
         if (-not $desktop) {
             $autostart = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
@@ -175,10 +181,10 @@ function Restore-TimeAuditDependencies {
                 Log 'Docker Desktop absent - invoking registered autostart; next cycle verifies readiness'
                 Start-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction Stop
             } else {
-                Log 'Docker engine unavailable - autostart already running or not registered'
+                Log 'Docker status probe failed - autostart already running or not registered'
             }
         } else {
-            Log 'Docker engine unavailable - waiting for existing Desktop startup; no shared engine restart'
+            Log 'Docker status probe failed - waiting for existing Desktop startup; no shared engine restart'
         }
         return
     }

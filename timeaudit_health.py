@@ -65,10 +65,11 @@ def database_health() -> dict:
       'cpu_temperature_available', cpu_package_temp IS NOT NULL,
       'cpu_power_available', cpu_package_power IS NOT NULL,
       'gpu_hotspot_available', gpu_hotspot_temp IS NOT NULL,
+      'gpu_hotspot_source', measurement_quality->>'gpu_hotspot_source',
       'disk_latency_available', disk_max_latency_ms IS NOT NULL)
       FROM public.fact_system_hardware ORDER BY timestamp DESC LIMIT 1;"""
     value = _run([docker, "exec", "-i", "-e", "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=2500 -c lock_timeout=500", "audit-postgres", "psql", "-X", "-U", "leyang", "-d", "time_audit", "-At", "-v", "ON_ERROR_STOP=1"], sql=sql)
-    fields = {"age_seconds", "fps_state", "quality_contract", "cpu_temperature_available", "cpu_power_available", "gpu_hotspot_available", "disk_latency_available"}
+    fields = {"age_seconds", "fps_state", "quality_contract", "cpu_temperature_available", "cpu_power_available", "gpu_hotspot_available", "gpu_hotspot_source", "disk_latency_available"}
     if not isinstance(value, dict) or set(value) != fields or type(value["age_seconds"]) not in (int, float) or not math.isfinite(value["age_seconds"]):
         return {"status": "unavailable", "reason": "database_evidence_unavailable"}
     if not math.isfinite(value["age_seconds"]):
@@ -76,6 +77,8 @@ def database_health() -> dict:
     if value["fps_state"] not in {"active", "gated_idle", "starting", "waiting_frames", "error", "source_unavailable", "unknown"} or value["quality_contract"] not in {None, "2"}:
         return {"status": "degraded", "reason": "invalid_database_evidence"}
     if any(type(value[key]) is not bool for key in fields if key.endswith("available")):
+        return {"status": "degraded", "reason": "invalid_database_evidence"}
+    if value["gpu_hotspot_source"] not in {None, "lhm", "unsupported", "unavailable"}:
         return {"status": "degraded", "reason": "invalid_database_evidence"}
     value["status"] = "healthy" if 0 <= value["age_seconds"] <= 15 else "stale"
     value["age_seconds"] = round(value["age_seconds"], 2)

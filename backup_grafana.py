@@ -234,6 +234,16 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
             with open(fpath, "r", encoding="utf-8", newline="") as f:
                 previous = f.read()
         if previous != content:
+            # A human-edited snapshot may use a different key order or layout.
+            # Compare the parsed document before treating equal versions as a
+            # conflict; semantic divergence must still fail closed below.
+            try:
+                if previous is not None and json.loads(previous) == dash:
+                    written.add(fname)
+                    log(f"  ✓ {fname}  (面板 {len(dash.get('panels', []))} 个，内容已一致)")
+                    continue
+            except (ValueError, TypeError):
+                pass
             _assert_dashboard_export_is_not_stale(
                 fpath,
                 previous,

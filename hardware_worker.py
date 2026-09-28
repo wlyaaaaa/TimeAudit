@@ -156,6 +156,7 @@ class HardwareTelemetryWorker:
         self.cached_cpu_vcore = None        # CPU Vcore (LHM: 主板 Super I/O 真实读数)
         self.cached_gpu_voltage = None      # NVIDIA GPU 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
         self.cached_gpu_hotspot = None      # NVIDIA GPU 核心热点实测温度 (LHM)
+        self.cached_gpu_hotspot_supported = None  # None=endpoint unknown, False=sensor absent
         self.cached_lhm_gpu_usage = None    # LHM: Load/GPU Core，NVML 失效时的门控回退
         self.cached_lhm_gpu_core_temp = None
         self.cached_lhm_gpu_board_power = None
@@ -1314,6 +1315,17 @@ class HardwareTelemetryWorker:
         return result
 
     @classmethod
+    def _extract_lhm_hotspot_metrics(cls, flat):
+        temperatures = {
+            key: raw for key, raw in (flat or {}).items()
+            if "nvidia" in key and "/temperatures/" in key
+        }
+        if not temperatures:
+            return None, None
+        readings = [cls._lhm_num(raw) for key, raw in temperatures.items() if "hot spot" in key]
+        return next((value for value in readings if value is not None), None), bool(readings)
+
+    @classmethod
     def _merge_gpu_metrics(cls, nvml_metrics, lhm_metrics):
         nvml_metrics = nvml_metrics or {}
         lhm_metrics = lhm_metrics or {}
@@ -1359,6 +1371,7 @@ class HardwareTelemetryWorker:
         try:
             while not self.stop_event.is_set():
                 cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
+                gpu_hotspot_supported = None
                 lhm_gpu_metrics = {
                     "gpu_usage": None,
                     "gpu_core_temp": None,
@@ -1371,6 +1384,9 @@ class HardwareTelemetryWorker:
                         flatten(_json.loads(resp.read().decode("utf-8", "ignore")), "", flat)
                     json_ok = True
 
+                    # Memory Junction is a different sensor and cannot be
+                    # substituted for a core hot-spot reading.
+                    gpu_hotspot, gpu_hotspot_supported = self._extract_lhm_hotspot_metrics(flat)
                     for key, raw in flat.items():
                         if key.endswith("/voltages/vcore"):
                             cpu_vcore = self._lhm_num(raw)
@@ -1380,11 +1396,6 @@ class HardwareTelemetryWorker:
                             cpu_temp = self._lhm_num(raw)
                         elif "nvidia" in key and key.endswith("gpu core voltage"):
                             gpu_voltage = self._lhm_num(raw)
-                        elif "nvidia" in key and "/temperatures/" in key and "hot spot" in key:
-                            v = self._lhm_num(raw)
-                            # 优先真正的核心热点(Hot Spot)，否则采用显存结点(Memory Junction)。
-                            if v is not None and (gpu_hotspot is None or "hot spot" in key):
-                                gpu_hotspot = v
                     lhm_gpu_metrics = self._extract_lhm_gpu_metrics(flat)
                 except Exception:
                     pass
@@ -1403,6 +1414,7 @@ class HardwareTelemetryWorker:
                     self.cached_cpu_vcore = cpu_vcore
                     self.cached_gpu_voltage = gpu_voltage
                     self.cached_gpu_hotspot = gpu_hotspot
+                    self.cached_gpu_hotspot_supported = gpu_hotspot_supported
                     self.cached_lhm_gpu_usage = lhm_gpu_metrics["gpu_usage"]
                     self.cached_lhm_gpu_core_temp = lhm_gpu_metrics["gpu_core_temp"]
                     self.cached_lhm_gpu_board_power = lhm_gpu_metrics["gpu_board_power"]
@@ -1688,6 +1700,7 @@ class HardwareTelemetryWorker:
             cpu_vcore = self.cached_cpu_vcore
             lhm_gpu_voltage = self.cached_gpu_voltage
             lhm_gpu_hotspot = self.cached_gpu_hotspot
+            lhm_hotspot_supported = getattr(self, "cached_gpu_hotspot_supported", None)
 
         # Only real package / hotspot sensors can populate these fields.
         # ACPI thermal zones and whole-machine power are not CPU package data.
@@ -1729,7 +1742,11 @@ class HardwareTelemetryWorker:
         measurement_quality = {
             "contract": 2,
             "cpu_package_source": "lhm" if lhm_fresh else "unavailable",
-            "gpu_hotspot_source": "lhm" if gpu_hotspot_temp is not None else "unavailable",
+            "gpu_hotspot_source": (
+                "lhm" if gpu_hotspot_temp is not None else
+                "unsupported" if lhm_fresh and lhm_hotspot_supported is False else
+                "unavailable"
+            ),
             "lhm_age_seconds": None if lhm_age is None else round(lhm_age, 3),
             "pdh_age_seconds": None if pdh_age is None else round(pdh_age, 3),
             "disk_source": "pdh" if disk_max_latency_ms is not None else "unavailable",

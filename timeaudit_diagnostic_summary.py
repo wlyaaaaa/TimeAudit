@@ -26,7 +26,7 @@ DEFAULT_LOOKBACK_HOURS = 24
 MAX_WINDOW_HOURS = 168
 MAX_CLOCK_SKEW_SECONDS = 300
 FRESHNESS_SECONDS = 60
-QUERY_TIMEOUT_SECONDS = 10
+QUERY_TIMEOUT_SECONDS = 14
 MAX_OUTPUT_BYTES = 1_048_576
 CONTAINER_NAME = "audit-postgres"
 AGGREGATE_FIELDS = frozenset("""main_cpu_core_pct_avg main_cpu_core_pct_max main_working_set_mib_max hardware_sample_count distinct_sample_seconds rapid_sample_count collector_instance_count cpu_temp_missing_samples cpu_power_missing_samples gpu_hotspot_missing_samples disk_missing_samples legacy_quality_samples fps_state_counts first_sample_utc last_sample_utc max_internal_gap_seconds cpu_usage_avg_pct cpu_usage_max_pct cpu_temp_avg_c cpu_temp_max_c cpu_power_avg_w cpu_power_max_w gpu_usage_avg_pct gpu_usage_max_pct gpu_temp_avg_c gpu_temp_max_c gpu_hotspot_max_c gpu_power_avg_w gpu_power_max_w ram_usage_avg_pct ram_usage_max_pct disk_latency_avg_ms disk_latency_p95_ms disk_latency_max_ms network_ping_avg_ms network_ping_max_ms packet_loss_samples fps_positive_sample_count fps_sample_count fps_avg fps_min fps_one_percent_low_avg frametime_p95_ms frametime_max_ms frametime_spike_samples cpu_thermal_samples gpu_thermal_samples memory_pressure_samples storage_latency_samples telemetry_out_of_bounds_samples state_event_count collection_gap_seconds active_seconds idle_seconds display_off_seconds lock_seconds sleep_seconds summed_state_seconds recorded_coverage_seconds requested_window_seconds uncovered_seconds cross_state_overlap_seconds""".split())
@@ -55,7 +55,7 @@ WITH bounds AS (
   SELECT :'after_utc'::timestamptz AS t_from,
          :'until_utc'::timestamptz AS t_to
 ),
-hardware AS MATERIALIZED (
+hardware AS (
   SELECT
     h."timestamp", h.current_fps, h.average_fps,
     h.one_percent_low_fps, h.frametime_ms,
@@ -63,27 +63,30 @@ hardware AS MATERIALIZED (
     h.system_dpc_latency, h.gpu_usage, h.gpu_core_temp,
     h.gpu_hotspot_temp, h.gpu_board_power, h.system_ram_usage_pct,
     h.disk_max_latency_ms, h.network_ping_ms, h.is_packet_loss,
-    h.fps_capture_status, h.fps_capture_detail, h.measurement_quality, h.collector_instance_id
+    h.fps_capture_status, h.measurement_quality, h.collector_instance_id,
+    CASE WHEN h.current_fps BETWEEN 0.5 AND 1000 THEN
+      (h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
+      AND (h.fps_capture_status = 'active' OR h.fps_capture_status IS NULL)
+      AND h.frametime_ms BETWEEN 0.5 AND 2000
+      AND ((h.fps_capture_detail = 'rtss_shared_memory_frame' AND h.measurement_quality IS NULL)
+           OR ABS(h.frametime_ms - 1000.0 / h.current_fps)
+              <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35))
+    ELSE false END AS valid_frame
   FROM public.fact_system_hardware h, bounds b
   WHERE h."timestamp" > b.t_from AND h."timestamp" <= b.t_to
 ),
-valid_frames AS MATERIALIZED (
-  SELECT h.*
-  FROM hardware h
-  WHERE h.current_fps BETWEEN 0.5 AND 1000
-    AND (h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
-    AND (h.fps_capture_status = 'active' OR h.fps_capture_status IS NULL)
-    AND h.frametime_ms BETWEEN 0.5 AND 2000
-    AND ((h.fps_capture_detail = 'rtss_shared_memory_frame' AND h.measurement_quality IS NULL)
-         OR ABS(h.frametime_ms - 1000.0 / h.current_fps)
-            <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35))
-),
 hardware_gaps AS (
-  SELECT h.*,
+  SELECT
          EXTRACT(EPOCH FROM (
            h."timestamp" - LAG(h."timestamp") OVER (ORDER BY h."timestamp")
          )) AS gap_seconds
-  FROM hardware h
+  FROM public.fact_system_hardware h, bounds b
+  WHERE h."timestamp" > b.t_from AND h."timestamp" <= b.t_to
+),
+gap_summary AS (
+  SELECT COUNT(*) FILTER (WHERE gap_seconds < 0.8)::bigint AS rapid_sample_count,
+         ROUND(COALESCE(MAX(gap_seconds), 0)::numeric, 3) AS max_internal_gap_seconds
+  FROM hardware_gaps
 ),
 hardware_summary AS (
   SELECT
@@ -92,22 +95,14 @@ hardware_summary AS (
     MAX(CASE WHEN jsonb_typeof(measurement_quality->'main_working_set_mib') = 'number' THEN (measurement_quality->>'main_working_set_mib')::double precision END) AS main_working_set_mib_max,
     COUNT(*)::bigint AS hardware_sample_count,
     COUNT(DISTINCT date_trunc('second', "timestamp"))::bigint AS distinct_sample_seconds,
-    COUNT(*) FILTER (WHERE gap_seconds < 0.8)::bigint AS rapid_sample_count,
     COUNT(DISTINCT collector_instance_id)::bigint AS collector_instance_count,
     COUNT(*) FILTER (WHERE cpu_package_temp IS NULL)::bigint AS cpu_temp_missing_samples,
     COUNT(*) FILTER (WHERE cpu_package_power IS NULL)::bigint AS cpu_power_missing_samples,
     COUNT(*) FILTER (WHERE gpu_hotspot_temp IS NULL)::bigint AS gpu_hotspot_missing_samples,
     COUNT(*) FILTER (WHERE disk_max_latency_ms IS NULL)::bigint AS disk_missing_samples,
     COUNT(*) FILTER (WHERE measurement_quality IS NULL)::bigint AS legacy_quality_samples,
-    (SELECT COALESCE(json_object_agg(k, n), '{}'::json) FROM (
-       SELECT CASE WHEN fps_capture_status IN ('active','gated_idle','starting','waiting_frames','error','source_unavailable')
-                   THEN fps_capture_status WHEN fps_capture_status IS NULL THEN 'legacy_missing' ELSE 'unknown' END AS k,
-              COUNT(*)::bigint AS n FROM hardware GROUP BY k
-    ) states) AS fps_state_counts,
     MIN("timestamp")::text AS first_sample_utc,
     MAX("timestamp")::text AS last_sample_utc,
-    ROUND(COALESCE(MAX(gap_seconds), 0)::numeric, 3)
-      AS max_internal_gap_seconds,
 
     ROUND(AVG(cpu_total_usage)::numeric, 3) AS cpu_usage_avg_pct,
     ROUND(MAX(cpu_total_usage)::numeric, 3) AS cpu_usage_max_pct,
@@ -135,22 +130,28 @@ hardware_summary AS (
     MAX(network_ping_ms)::bigint AS network_ping_max_ms,
     COUNT(*) FILTER (WHERE is_packet_loss = 1)::bigint AS packet_loss_samples,
 
-    (SELECT COUNT(*) FROM hardware WHERE current_fps > 0)::bigint
-      AS fps_positive_sample_count,
-    (SELECT COUNT(*) FROM valid_frames)::bigint AS fps_sample_count,
-    (SELECT ROUND(AVG(current_fps)::numeric, 3) FROM valid_frames) AS fps_avg,
-    (SELECT ROUND(MIN(current_fps)::numeric, 3) FROM valid_frames) AS fps_min,
-    (SELECT ROUND(AVG(one_percent_low_fps)::numeric, 3)
-       FROM valid_frames
-      WHERE one_percent_low_fps BETWEEN 0.1 AND 1000)
-      AS fps_one_percent_low_avg,
-    (SELECT ROUND((percentile_cont(0.95) WITHIN GROUP (
-       ORDER BY frametime_ms))::numeric, 3) FROM valid_frames)
-      AS frametime_p95_ms,
-    (SELECT ROUND(MAX(frametime_ms)::numeric, 3) FROM valid_frames)
-      AS frametime_max_ms,
-    (SELECT COUNT(*) FROM valid_frames WHERE frametime_ms >= 50)::bigint
-      AS frametime_spike_samples,
+    COUNT(*) FILTER (WHERE current_fps > 0)::bigint AS fps_positive_sample_count,
+    COUNT(*) FILTER (WHERE valid_frame)::bigint AS fps_sample_count,
+    ROUND(AVG(current_fps) FILTER (WHERE valid_frame)::numeric, 3) AS fps_avg,
+    ROUND(MIN(current_fps) FILTER (WHERE valid_frame)::numeric, 3) AS fps_min,
+    ROUND(AVG(one_percent_low_fps) FILTER (
+      WHERE valid_frame AND one_percent_low_fps BETWEEN 0.1 AND 1000
+    )::numeric, 3) AS fps_one_percent_low_avg,
+    ROUND((percentile_cont(0.95) WITHIN GROUP (ORDER BY frametime_ms)
+      FILTER (WHERE valid_frame))::numeric, 3) AS frametime_p95_ms,
+    ROUND(MAX(frametime_ms) FILTER (WHERE valid_frame)::numeric, 3) AS frametime_max_ms,
+    COUNT(*) FILTER (WHERE valid_frame AND frametime_ms >= 50)::bigint AS frametime_spike_samples,
+    jsonb_strip_nulls(jsonb_build_object(
+      'active', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status = 'active'), 0),
+      'gated_idle', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status = 'gated_idle'), 0),
+      'starting', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status = 'starting'), 0),
+      'waiting_frames', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status = 'waiting_frames'), 0),
+      'error', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status = 'error'), 0),
+      'source_unavailable', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status = 'source_unavailable'), 0),
+      'legacy_missing', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status IS NULL), 0),
+      'unknown', NULLIF(COUNT(*) FILTER (WHERE fps_capture_status IS NOT NULL AND fps_capture_status NOT IN
+        ('active','gated_idle','starting','waiting_frames','error','source_unavailable')), 0)
+    )) AS fps_state_counts,
 
     COUNT(*) FILTER (
       WHERE cpu_package_temp >= 95 AND cpu_package_temp <= 120
@@ -174,7 +175,7 @@ hardware_summary AS (
          OR cpu_package_power < 0 OR gpu_board_power < 0
          OR disk_max_latency_ms < 0 OR system_dpc_latency < 0
     )::bigint AS telemetry_out_of_bounds_samples
-  FROM hardware_gaps
+  FROM hardware
 ),
 state_clip AS MATERIALIZED (
   SELECT
@@ -275,7 +276,7 @@ coverage_summary AS (
 )
 SELECT row_to_json(summary_row)
 FROM (
-  SELECT h.*, s.*,
+  SELECT h.*, g.*, s.*,
          c.recorded_coverage_seconds,
          ROUND(EXTRACT(EPOCH FROM (b.t_to - b.t_from)))::bigint
            AS requested_window_seconds,
@@ -289,6 +290,7 @@ FROM (
            0
          )::bigint AS cross_state_overlap_seconds
   FROM hardware_summary h
+  CROSS JOIN gap_summary g
   CROSS JOIN state_summary s
   CROSS JOIN coverage_summary c
   CROSS JOIN bounds b
@@ -311,7 +313,7 @@ def query_aggregate(
         "exec",
         "-i",
         "-e",
-        "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=8000 -c lock_timeout=1000",
+        "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=12000 -c lock_timeout=1000",
         CONTAINER_NAME,
         "psql",
         "-X",

@@ -148,6 +148,17 @@ class FpsCaptureContractTest(unittest.TestCase):
         self.assertIsNone(unavailable["gpu_core_temp"])
         self.assertIsNone(unavailable["gpu_board_power"])
 
+    def test_lhm_memory_junction_is_not_core_hotspot(self):
+        parse = hardware_worker.HardwareTelemetryWorker._extract_lhm_hotspot_metrics
+        value, supported = parse({
+            "/nvidia/temperatures/gpu core": "51.9 °C",
+            "/nvidia/temperatures/gpu memory junction": "62.0 °C",
+        })
+        self.assertIsNone(value)
+        self.assertIs(supported, False)
+        self.assertEqual(parse({"/nvidia/temperatures/gpu hot spot": "69.0 °C"}), (69.0, True))
+        self.assertEqual(parse({}), (None, None))
+
     def test_status_mapping_has_six_safe_states_and_bounded_starting(self):
         map_state = hardware_worker.HardwareTelemetryWorker._map_fps_capture_state
         cases = [

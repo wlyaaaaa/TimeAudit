@@ -8,6 +8,6 @@
 - 活跃进程扫描留在 `asyncio.to_thread`，进程差分基线即使单项异常也继续推进；PG 断连时池关闭要有超时和 terminate 兜底，避免阻塞采集节拍。
 - Grafana SQL 的 Windows 路径匹配避免反斜杠被 LIKE 转义；时间网格先对齐桶边界。PG 会话时区保持 `Asia/Shanghai`，以正确计算本地日界。
 - 分区事实表查询和关联都要下推明确时间界。`app_usage_logs` 是可重叠的区间事件：按查询窗裁剪并对重叠区间求并集，空集归零；不能仅按起点筛选后直接求和。
-- 诊断中缺测、旧尾段和实际覆盖分开报告；心跳新鲜不等于活动已经落库。业务读取和跨库接口分别见 `PERSONAL_ACTIVITY_READER.md`、`PCCONFIG_ANOMALY_DIGEST_CONTRACT.md`、`TIMEAUDIT_DIAGNOSTIC_SUMMARY_CONTRACT.md`。
+- 诊断中缺测、旧尾段和实际覆盖分开报告；心跳新鲜不等于活动已经落库。业务读取和历史诊断接口分别见 `PERSONAL_ACTIVITY_READER.md`、`TIMEAUDIT_DIAGNOSTIC_SUMMARY_CONTRACT.md`。
 - 实机在线检查与离线回归分开。离线回归按改动选择 `test_*.py`；全量 `pytest` 包含依赖和在线环境要求，运行时诊断见 `DIAGNOSTICS_OPERATIONS.md`。NVML mock 不可把假句柄传到真实原生函数。
 - 剪贴板历史是独立 sidecar，见 `clipboard_history/README.md`；不将其内容写入 TimeAudit 数据库。

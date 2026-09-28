@@ -41,6 +41,7 @@ $exitCode = 0
 # 1) PostgreSQL —— 用独立 powershell 进程跑，隔离它内部的 exit 调用
 "[backup-all] 1/2 备份 PostgreSQL 数据库..." | Out-File $log -Append -Encoding utf8
 $dbExit = Invoke-LoggedCommand { powershell -NoProfile -ExecutionPolicy Bypass -File "E:\Projects\Tools\TimeAudit\backup_db.ps1" }
+$dbStatus = if ($dbExit -eq 0) { 'pass' } else { 'failed' }
 if ($dbExit -ne 0) {
     "[backup-all] PostgreSQL 备份失败，exit=$dbExit" | Out-File $log -Append -Encoding utf8
     $exitCode = $dbExit
@@ -49,10 +50,18 @@ if ($dbExit -ne 0) {
 # 2) Grafana 仪表盘 —— 用系统级 py 启动器，免疫 PATH 顺序/uv shim 问题
 "[backup-all] 2/2 备份 Grafana 仪表盘(导出JSON + git提交 + grafana.db)..." | Out-File $log -Append -Encoding utf8
 $grafanaExit = Invoke-LoggedCommand { py "E:\Projects\Tools\TimeAudit\backup_grafana.py" }
+$grafanaStatus = if ($grafanaExit -eq 0) { 'pass' } else { 'failed' }
 if ($grafanaExit -ne 0) {
     "[backup-all] Grafana 备份失败，exit=$grafanaExit" | Out-File $log -Append -Encoding utf8
     if ($exitCode -eq 0) { $exitCode = $grafanaExit }
 }
 
+$receipt = [ordered]@{
+    schema = 'timeaudit.daily-backup-receipt.v1'
+    database_backup = [ordered]@{ status = $dbStatus; exit_code = $dbExit }
+    dashboard_configuration = [ordered]@{ status = $grafanaStatus; exit_code = $grafanaExit }
+    overall_status = if ($exitCode -eq 0) { 'pass' } else { 'failed' }
+}
+($receipt | ConvertTo-Json -Compress -Depth 4) | Out-File $log -Append -Encoding utf8
 "[backup-all] done $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $log -Append -Encoding utf8
 exit $exitCode
