@@ -27,7 +27,7 @@ function Invoke-LoggedCommand {
             if ($null -ne $Receipt -and "$_".StartsWith('{')) {
                 try {
                     $parsed = "$_" | ConvertFrom-Json -ErrorAction Stop
-                    if ($parsed.mode -eq 'backup' -and $parsed.status) { $Receipt.Value = $parsed }
+                    if ($parsed.mode -in @('backup','grafana') -and $parsed.status) { $Receipt.Value = $parsed }
                 } catch { }
             }
         }
@@ -56,7 +56,8 @@ if ($dbExit -ne 0) {
 
 # 2) Grafana 仪表盘 —— 用系统级 py 启动器，免疫 PATH 顺序/uv shim 问题
 "[backup-all] 2/2 备份 Grafana 仪表盘(导出JSON + git提交 + grafana.db)..." | Out-File $log -Append -Encoding utf8
-$grafanaExit = Invoke-LoggedCommand { py "E:\Projects\Tools\TimeAudit\backup_grafana.py" }
+$grafanaReceipt = $null
+$grafanaExit = Invoke-LoggedCommand -Receipt ([ref]$grafanaReceipt) -Command { py "E:\Projects\Tools\TimeAudit\backup_grafana.py" }
 $grafanaStatus = if ($grafanaExit -eq 0) { 'pass' } else { 'failed' }
 if ($grafanaExit -ne 0) {
     "[backup-all] Grafana 备份失败，exit=$grafanaExit" | Out-File $log -Append -Encoding utf8
@@ -65,8 +66,9 @@ if ($grafanaExit -ne 0) {
 
 $receipt = [ordered]@{
     schema = 'timeaudit.daily-backup-receipt.v1'
-    database_backup = [ordered]@{ status = $dbStatus; exit_code = $dbExit; failure = $databaseReceipt }
-    dashboard_configuration = [ordered]@{ status = $grafanaStatus; exit_code = $grafanaExit }
+    database_backup = [ordered]@{ status = $dbStatus; exit_code = $dbExit; failure = $(if($dbExit -ne 0){$databaseReceipt}else{$null}); result = $databaseReceipt }
+    dashboard_configuration = [ordered]@{ status = $grafanaStatus; exit_code = $grafanaExit; result = $grafanaReceipt }
+    file_warnings = @(@($databaseReceipt.file_warnings) + @($grafanaReceipt.file_warnings) | Where-Object { $null -ne $_ })
     overall_status = if ($exitCode -eq 0) { 'pass' } else { 'failed' }
 }
 ($receipt | ConvertTo-Json -Compress -Depth 4) | Out-File $log -Append -Encoding utf8

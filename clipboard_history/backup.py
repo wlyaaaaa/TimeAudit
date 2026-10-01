@@ -12,6 +12,7 @@ import uuid
 from pathlib import Path
 
 from .paths import DEFAULT_BACKUP_ROOT, runtime_paths
+from backup_file_warnings import file_warning
 
 
 BACKUP_SCHEMA = "timeaudit.clipboard-backup.v1"
@@ -69,12 +70,23 @@ def create_backup(source_root: Path, backup_root: Path) -> dict[str, object]:
         raise RuntimeError("backup_integrity_failed")
     os.replace(temporary, destination)
     control_destination = backup_root / "control.json"
+    file_warnings = []
     if source.control.exists():
         control_temp = backup_root / f".control.{uuid.uuid4().hex}.tmp"
-        shutil.copyfile(source.control, control_temp)
-        os.replace(control_temp, control_destination)
+        try:
+            shutil.copyfile(source.control, control_temp)
+        except OSError as exc:
+            warning = file_warning(exc, "control.json", "control_copy", enumerated=True)
+            # A missing target parent is a destination failure, not source churn.
+            if warning is None or not source.root.is_dir() or not backup_root.is_dir() or (isinstance(exc, FileNotFoundError) and source.control.exists()):
+                raise
+            file_warnings.append(warning)
+        else:
+            os.replace(control_temp, control_destination)
     manifest = {
         "schema": BACKUP_SCHEMA,
+        "status": "complete",
+        "file_warnings": file_warnings,
         "created_at_unix_ms": int(time.time() * 1000),
         "database_file": BACKUP_FILENAME,
         "database_sha256": _sha256(destination),
@@ -105,7 +117,8 @@ def verify_backup(backup_root: Path) -> dict[str, object]:
         and manifest.get("blob_count") == facts["blob_count"]
         and manifest.get("fts_count") == facts["fts_count"]
     )
-    return {"valid": valid, **facts, "database_sha256": _sha256(database)}
+    return {"valid": valid, **facts, "database_sha256": _sha256(database),
+            "file_warnings": manifest.get("file_warnings", [])}
 
 
 def restore_backup(backup_root: Path, target_root: Path) -> dict[str, object]:

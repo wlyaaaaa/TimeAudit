@@ -13,6 +13,7 @@ import stat
 import subprocess
 import time
 import uuid
+from backup_file_warnings import file_warning
 
 DEFAULT_BACKUP_DIR = Path(r"G:\80_Backup\TimeAudit\postgresql")
 NAME = re.compile(r"^time_audit_\d{8}_\d{6}(?:_[a-f0-9]{6})?\.dump$")
@@ -357,6 +358,17 @@ def main(argv=None):
         return 1 if value.get("status") == "failed" else 0
     except (RuntimeError, ValueError, OSError) as exc:
         original_error = getattr(exc, "original_error", exc)
+        filename = getattr(original_error, "filename", None)
+        if args.mode == "backup" and original_error is exc and filename:
+            path = Path(filename).absolute()
+            root = args.backup_dir.absolute()
+            if path.is_relative_to(root) and root.is_dir():
+                warning = file_warning(original_error, path.relative_to(root), getattr(original_error, "stage", "archive_copy"))
+                if warning is not None:
+                    print(json.dumps({"mode": "backup", "status": "complete", "file_warnings": [warning],
+                                      "current_data_copied": False, "completed_archives_preserved": True,
+                                      "verification_scope": "previous_completed_archives_only"}))
+                    return 0
         busy = str(exc) == "backup_already_running"
         value = {"status": "busy" if busy else "failed", "mode": args.mode, **failure_details(original_error, args.mode), "completed_archives_preserved": getattr(original_error, "stage", None) != "retention"}
         if original_error is not exc:

@@ -41,6 +41,7 @@ import time
 import urllib.request
 
 from grafana_dashboard_contract import validate_dashboard_document
+from backup_file_warnings import file_warning
 
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
 for _s in (sys.stdout, sys.stderr):
@@ -361,13 +362,13 @@ def export_dashboards_from_db(database_path=None, changed_paths=None, before_wri
 def backup_grafana_db(keep):
     """Create a consistent SQLite backup and rotate old snapshots."""
     if not os.path.exists(GRAFANA_DB):
-        log(f"未找到 {GRAFANA_DB}，跳过二进制库备份。")
-        return
+        raise FileNotFoundError("required_grafana_database_missing")
     os.makedirs(DB_BACKUP_DIR, exist_ok=True)
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     dst = os.path.join(DB_BACKUP_DIR, f"grafana_{ts}.db")
+    candidate = dst + ".partial"
     source = sqlite3.connect(f"file:{os.path.abspath(GRAFANA_DB)}?mode=ro", uri=True)
-    target = sqlite3.connect(dst)
+    target = sqlite3.connect(candidate)
     try:
         source.backup(target)
         result = target.execute("PRAGMA quick_check").fetchone()
@@ -376,7 +377,8 @@ def backup_grafana_db(keep):
     finally:
         target.close()
         source.close()
-    shutil.copystat(GRAFANA_DB, dst)
+    shutil.copystat(GRAFANA_DB, candidate)
+    os.replace(candidate, dst)
     size_mb = round(os.path.getsize(dst) / (1024 * 1024), 2)
     log(f"已复制 grafana.db → {os.path.basename(dst)} ({size_mb} MB)")
     backups = sorted(glob.glob(os.path.join(DB_BACKUP_DIR, "grafana_*.db")))
@@ -757,6 +759,7 @@ def main():
     ap.add_argument("--no-git", action="store_true")
     ap.add_argument("--no-push", action="store_true")
     args = ap.parse_args()
+    file_warnings = []
     if initialize_windows_user_proxy():
         log("已应用当前用户 Windows 代理设置。")
 
@@ -788,6 +791,12 @@ def main():
                     )
                 dashboard_paths = assert_dashboard_change_allowlist(changed_paths)
             except Exception as e:
+                warning = file_warning(e, "grafana.db", "dashboard_source")
+                if warning is not None:
+                    file_warnings.append(warning)
+                    print(json.dumps({"mode": "grafana", "status": "complete", "file_warnings": file_warnings,
+                                      "current_data_copied": False, "retained_previous_backup": True}))
+                    return 0
                 log(f"❌ 仪表盘导出失败: {e}")
                 log("  SQLite 模式请检查本机 grafana.db；API 模式请检查服务与认证。")
                 return 1
@@ -795,7 +804,12 @@ def main():
             try:
                 backup_grafana_db(args.keep_db)
             except Exception as e:
-                log(f"⚠️ grafana.db 复制失败(不影响 JSON 备份): {e}")
+                warning = file_warning(e, "grafana.db", "database_copy")
+                if warning is None:
+                    log(f"❌ grafana.db 复制失败: {e}")
+                    return 1
+                file_warnings.append(warning)
+                log("⚠️ grafana.db 被杀毒拦截，保留此前备份，下轮重试。")
 
             if not args.no_git:
                 try:
@@ -811,6 +825,8 @@ def main():
         return 1
 
     log("✅ 完成。")
+    print(json.dumps({"mode": "grafana", "status": "complete", "file_warnings": file_warnings,
+                      "database_current_data_copied": not bool(file_warnings)}))
     return 0
 
 
