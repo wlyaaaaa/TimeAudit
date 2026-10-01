@@ -12,7 +12,7 @@ import uuid
 from pathlib import Path
 
 from .paths import DEFAULT_BACKUP_ROOT, runtime_paths
-from backup_file_warnings import file_warning
+from backup_file_warnings import file_warning, sqlite_warning
 
 
 BACKUP_SCHEMA = "timeaudit.clipboard-backup.v1"
@@ -51,13 +51,39 @@ def _safe_database_facts(path: Path) -> dict[str, object]:
 
 
 def create_backup(source_root: Path, backup_root: Path) -> dict[str, object]:
+    started = time.time()
+    candidates = []
+    try:
+        result = _create_backup(source_root, backup_root, candidates)
+    except sqlite3.OperationalError as exc:
+        source = runtime_paths(source_root)
+        if not source.root.is_dir() or not backup_root.is_dir():
+            raise
+        warning = sqlite_warning(exc, candidates, started, "database_backup")
+        if warning is None:
+            raise
+        result = {"schema": BACKUP_SCHEMA, "status": "complete", "file_warnings": [warning] + _backup_control(source, backup_root),
+                  "current_data_copied": False, "retained_previous_backup": (backup_root / BACKUP_FILENAME).is_file(),
+                  "verification_scope": "database_not_updated"}
+    run_temp = backup_root / f".last-run.{uuid.uuid4().hex}.tmp"
+    run_temp.write_text(json.dumps(result, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.replace(run_temp, backup_root / "backup-last-run.json")
+    return result
+
+
+def _create_backup(source_root, backup_root, candidates):
     source = runtime_paths(source_root)
     backup_root.mkdir(parents=True, exist_ok=True)
     destination = backup_root / BACKUP_FILENAME
     temporary = backup_root / f".{BACKUP_FILENAME}.{uuid.uuid4().hex}.tmp"
+    candidates.extend([(source.database, source.database.name), (temporary, BACKUP_FILENAME)])
     source_uri = source.database.resolve().as_uri() + "?mode=ro"
     read_connection = sqlite3.connect(source_uri, uri=True, timeout=10)
-    write_connection = sqlite3.connect(temporary)
+    try:
+        write_connection = sqlite3.connect(temporary)
+    except BaseException:
+        read_connection.close()
+        raise
     try:
         read_connection.backup(write_connection)
         write_connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -69,6 +95,24 @@ def create_backup(source_root: Path, backup_root: Path) -> dict[str, object]:
         temporary.unlink(missing_ok=True)
         raise RuntimeError("backup_integrity_failed")
     os.replace(temporary, destination)
+    file_warnings = _backup_control(source, backup_root)
+    manifest = {
+        "schema": BACKUP_SCHEMA,
+        "status": "complete",
+        "file_warnings": file_warnings,
+        "created_at_unix_ms": int(time.time() * 1000),
+        "database_file": BACKUP_FILENAME,
+        "database_sha256": _sha256(destination),
+        "database_bytes": destination.stat().st_size,
+        **facts,
+    }
+    manifest_temp = backup_root / f".manifest.{uuid.uuid4().hex}.tmp"
+    manifest_temp.write_text(json.dumps(manifest, ensure_ascii=True, separators=(",", ":")) + "\n", encoding="utf-8")
+    os.replace(manifest_temp, backup_root / MANIFEST_FILENAME)
+    return manifest
+
+
+def _backup_control(source, backup_root):
     control_destination = backup_root / "control.json"
     file_warnings = []
     if source.control.exists():
@@ -83,23 +127,7 @@ def create_backup(source_root: Path, backup_root: Path) -> dict[str, object]:
             file_warnings.append(warning)
         else:
             os.replace(control_temp, control_destination)
-    manifest = {
-        "schema": BACKUP_SCHEMA,
-        "status": "complete",
-        "file_warnings": file_warnings,
-        "created_at_unix_ms": int(time.time() * 1000),
-        "database_file": BACKUP_FILENAME,
-        "database_sha256": _sha256(destination),
-        "database_bytes": destination.stat().st_size,
-        **facts,
-    }
-    manifest_temp = backup_root / f".manifest.{uuid.uuid4().hex}.tmp"
-    manifest_temp.write_text(
-        json.dumps(manifest, ensure_ascii=True, separators=(",", ":")) + "\n",
-        encoding="utf-8",
-    )
-    os.replace(manifest_temp, backup_root / MANIFEST_FILENAME)
-    return manifest
+    return file_warnings
 
 
 def verify_backup(backup_root: Path) -> dict[str, object]:
@@ -117,8 +145,10 @@ def verify_backup(backup_root: Path) -> dict[str, object]:
         and manifest.get("blob_count") == facts["blob_count"]
         and manifest.get("fts_count") == facts["fts_count"]
     )
+    run_path = backup_root / "backup-last-run.json"
+    last_run = json.loads(run_path.read_text(encoding="utf-8")) if run_path.is_file() else manifest
     return {"valid": valid, **facts, "database_sha256": _sha256(database),
-            "file_warnings": manifest.get("file_warnings", [])}
+            "file_warnings": last_run.get("file_warnings", [])}
 
 
 def restore_backup(backup_root: Path, target_root: Path) -> dict[str, object]:

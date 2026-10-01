@@ -41,7 +41,7 @@ import time
 import urllib.request
 
 from grafana_dashboard_contract import validate_dashboard_document
-from backup_file_warnings import file_warning
+from backup_file_warnings import file_warning, sqlite_warning
 
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
 for _s in (sys.stdout, sys.stderr):
@@ -360,6 +360,16 @@ def export_dashboards_from_db(database_path=None, changed_paths=None, before_wri
 
 
 def backup_grafana_db(keep):
+    started = time.time()
+    candidates = [(GRAFANA_DB, "grafana.db")]
+    try:
+        return _backup_grafana_db(keep, candidates)
+    except (sqlite3.OperationalError, FileNotFoundError) as exc:
+        exc.antivirus_warning = sqlite_warning(exc, candidates, started, "database_copy")
+        raise
+
+
+def _backup_grafana_db(keep, candidates):
     """Create a consistent SQLite backup and rotate old snapshots."""
     if not os.path.exists(GRAFANA_DB):
         raise FileNotFoundError("required_grafana_database_missing")
@@ -367,8 +377,13 @@ def backup_grafana_db(keep):
     ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     dst = os.path.join(DB_BACKUP_DIR, f"grafana_{ts}.db")
     candidate = dst + ".partial"
+    candidates.append((candidate, "grafana.db"))
     source = sqlite3.connect(f"file:{os.path.abspath(GRAFANA_DB)}?mode=ro", uri=True)
-    target = sqlite3.connect(candidate)
+    try:
+        target = sqlite3.connect(candidate)
+    except BaseException:
+        source.close()
+        raise
     try:
         source.backup(target)
         result = target.execute("PRAGMA quick_check").fetchone()
@@ -760,6 +775,7 @@ def main():
     ap.add_argument("--no-push", action="store_true")
     args = ap.parse_args()
     file_warnings = []
+    started = time.time()
     if initialize_windows_user_proxy():
         log("已应用当前用户 Windows 代理设置。")
 
@@ -792,6 +808,8 @@ def main():
                 dashboard_paths = assert_dashboard_change_allowlist(changed_paths)
             except Exception as e:
                 warning = file_warning(e, "grafana.db", "dashboard_source")
+                if warning is None:
+                    warning = sqlite_warning(e, [(GRAFANA_DB, "grafana.db")], started, "dashboard_source")
                 if warning is not None:
                     file_warnings.append(warning)
                     print(json.dumps({"mode": "grafana", "status": "complete", "file_warnings": file_warnings,
@@ -805,6 +823,8 @@ def main():
                 backup_grafana_db(args.keep_db)
             except Exception as e:
                 warning = file_warning(e, "grafana.db", "database_copy")
+                if warning is None:
+                    warning = getattr(e, "antivirus_warning", None)
                 if warning is None:
                     log(f"❌ grafana.db 复制失败: {e}")
                     return 1
