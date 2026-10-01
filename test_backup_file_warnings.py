@@ -35,7 +35,7 @@ class FileWarningTests(unittest.TestCase):
                 raise sqlite3.OperationalError("generic target error")
             with patch.object(grafana, "_backup_grafana_db", side_effect=target_failure), \
                  patch.object(warnings, "defender_records", side_effect=lambda paths, started: [
-                     {"path": str(paths[-1]), "success": True, "observed_unix": time.time()}]):
+                     {"path": str(paths[-1]), "success": True, "status": 3, "observed_unix": time.time()}]):
                 self.assertEqual(grafana.main(), 0)
                 git.assert_called_once()
             git.reset_mock()
@@ -47,10 +47,11 @@ class FileWarningTests(unittest.TestCase):
     def test_sqlite_evidence_requires_current_exact_successful_path(self):
         with tempfile.TemporaryDirectory() as name:
             path = Path(name) / "database.sqlite3"; started = time.time() - 2
-            good = {"path": str(path), "success": True, "observed_unix": started + 1}
+            good = {"path": str(path), "success": True, "status": 3, "observed_unix": started + 1}
             exc = sqlite3.OperationalError("generic error, no Windows code")
             for record in ({**good, "path": str(path.parent / "different.sqlite3")},
-                           {**good, "observed_unix": started - 1}, {**good, "success": False}):
+                           {**good, "observed_unix": started - 1}, {**good, "success": False},
+                           {**good, "status": 1}, {**good, "status": 2}, {**good, "status": 5}):
                 self.assertIsNone(warnings.sqlite_warning(exc, [(path, path.name)], started, "test", records=[record]))
             result = warnings.sqlite_warning(exc, [(path, path.name)], started, "test", records=[good])
             self.assertEqual(result["reason"], "antivirus_removed")
@@ -67,7 +68,7 @@ class FileWarningTests(unittest.TestCase):
                 candidates.append((source_root / "clipboard_history.sqlite3", "clipboard_history.sqlite3"))
                 raise sqlite3.OperationalError("generic missing source database")
             def records(paths, started):
-                return [{"path": str(paths[0]), "success": True, "observed_unix": time.time()}]
+                return [{"path": str(paths[0]), "success": True, "status": 4, "observed_unix": time.time()}]
             with patch.object(backup, "_create_backup", side_effect=unavailable), \
                  patch.object(warnings, "defender_records", side_effect=records):
                 result = backup.create_backup(source, target)
@@ -90,7 +91,7 @@ class FileWarningTests(unittest.TestCase):
             with patch.object(warnings, "defender_records", return_value=[]):
                 self.assertEqual(grafana.main(), 1)
             with patch.object(warnings, "defender_records", side_effect=lambda paths, started: [
-                {"path": str(paths[0]), "success": True, "observed_unix": time.time()}]):
+                {"path": str(paths[0]), "success": True, "status": 3, "observed_unix": time.time()}]):
                 self.assertEqual(grafana.main(), 0)
 
     def test_postgres_archive_av_warns_but_ordinary_io_fails(self):

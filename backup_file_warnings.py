@@ -30,7 +30,7 @@ def defender_records(paths, started):
     env = os.environ.copy()
     env["BACKUP_AV_PATHS"] = json.dumps([str(Path(p).absolute()) for p in paths])
     env["BACKUP_AV_STARTED"] = str(started)
-    script = """$paths=@($env:BACKUP_AV_PATHS|ConvertFrom-Json); $start=[double]::Parse($env:BACKUP_AV_STARTED,[cultureinfo]::InvariantCulture); $rows=@(); Get-MpThreatDetection -ErrorAction Stop | ForEach-Object {$d=$_; if($d.ActionSuccess){$observed=([DateTimeOffset]$d.LastThreatStatusChangeTime).ToUnixTimeMilliseconds()/1000.0; if($observed -ge $start){foreach($r in $d.Resources){$p=$r -replace '^file:_',''; foreach($candidate in $paths){if($p -ieq $candidate){$rows+=@{path=$candidate;success=$true;observed_unix=$observed}}}}}}}; ConvertTo-Json -InputObject $rows -Compress"""
+    script = """$paths=@($env:BACKUP_AV_PATHS|ConvertFrom-Json); $start=[double]::Parse($env:BACKUP_AV_STARTED,[cultureinfo]::InvariantCulture); $rows=@(); Get-MpThreatDetection -ErrorAction Stop | ForEach-Object {$d=$_; if($d.ActionSuccess -and $d.ThreatStatusID -in @(3,4)){$observed=([DateTimeOffset]$d.LastThreatStatusChangeTime).ToUnixTimeMilliseconds()/1000.0; if($observed -ge $start){foreach($r in $d.Resources){$p=$r -replace '^file:_',''; foreach($candidate in $paths){if($p -ieq $candidate){$rows+=@{path=$candidate;success=$true;status=[int]$d.ThreatStatusID;observed_unix=$observed}}}}}}}; ConvertTo-Json -InputObject $rows -Compress"""
     try:
         result = subprocess.run(["powershell.exe", "-NoProfile", "-NonInteractive", "-Command", script],
                                 capture_output=True, text=True, env=env, timeout=15,
@@ -61,7 +61,7 @@ def sqlite_warning(exc, candidates, started, stage, *, records=None):
                 current = started <= float(record["observed_unix"]) <= now
             except (KeyError, TypeError, ValueError):
                 continue
-            if exact and current and record.get("success") is True:
+            if exact and current and record.get("success") is True and record.get("status") in (3, 4):
                 return {"relative_path": str(relative).replace("\\", "/"), "reason": "antivirus_removed",
                         "error_code": 226, "stage": stage}
     return None
