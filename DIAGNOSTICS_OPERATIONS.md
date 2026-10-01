@@ -127,6 +127,13 @@ Failed exports never replace a completed archive. Retention keeps at least three
 completed archives and removes only eligible old, verified pairs. Unverified
 historical originals are preserved rather than silently classified as disposable.
 
+Failures report the specific `reason`, `stage`, child `exit_code` and bounded
+`error_summary`; the daily receipt retains the same diagnostic under
+`database_backup.failure`. Command stderr is summarized with known credential
+values and explicit credential fields removed; successful output and archive
+catalogs are never logged. If candidate cleanup also fails, the original error
+remains primary and `cleanup_failure` records the cleanup problem separately.
+
 ```powershell
 # Read verification, or explicitly record integrity metadata.
 & .\.venv\Scripts\python.exe -B .\timeaudit_backup.py verify

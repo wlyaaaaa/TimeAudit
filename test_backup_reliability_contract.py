@@ -195,6 +195,62 @@ def test_cli_reports_busy_backup_without_claiming_completion(capsys):
     assert result["reason"] == "backup_already_running"
 
 
+def test_command_failure_keeps_stage_exit_and_safe_stderr(tmp_path, capsys):
+    result = subprocess.CompletedProcess([], 2, b"private success output", b"pg_dump: server unavailable password=secret-value postgresql://user:pass@host/db")
+    with patch.object(backup.subprocess, "run", return_value=result), patch.object(backup, "docker_path", return_value="docker"):
+        assert backup.main(["backup", "--backup-dir", str(tmp_path)]) == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["stage"] == "pg_dump" and receipt["exit_code"] == 2
+    assert receipt["reason"] == "backup_command_failed"
+    assert "server unavailable" in receipt["error_summary"]
+    assert not any(value in receipt["error_summary"] for value in ("secret-value", "user:pass", "private success output"))
+
+
+def test_timeout_keeps_command_stage_and_stderr():
+    with patch.object(backup.subprocess, "run", side_effect=subprocess.TimeoutExpired([], 30, stderr=b"daemon unavailable")):
+        with pytest.raises(backup.BackupCommandError) as caught:
+            backup.command(["docker", "run", "pg_restore"])
+    assert caught.value.stage == "archive_catalog"
+    assert str(caught.value) == "backup_command_timed_out"
+    assert caught.value.detail == "daemon unavailable"
+
+
+def test_manifest_failure_receipt_names_publication_step(tmp_path, capsys):
+    with patch.object(backup, "docker_path", return_value="docker"), patch.object(backup, "command", side_effect=fake_export), \
+         patch.object(backup, "image_for", return_value="image"), patch.object(backup, "archive_list", return_value=7), \
+         patch.object(backup, "atomic_json", side_effect=OSError("disk unavailable")):
+        assert backup.main(["backup", "--backup-dir", str(tmp_path)]) == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["stage"] == "manifest_publish" and receipt["error_summary"] == "disk unavailable"
+    assert not list(tmp_path.glob("*.dump"))
+
+
+def test_error_summary_redacts_known_environment_secret_and_bounds_output():
+    with patch.dict(os.environ, {"TIMEAUDIT_DB_PASSWORD": "known-secret"}):
+        summary = backup.error_summary(b"known-secret\n" + b"x" * 3000)
+    assert "known-secret" not in summary and "\n" not in summary and len(summary) <= 1200
+
+
+def test_summary_redacts_quoted_keys_and_short_pgpassword():
+    summary = backup.error_summary('PGPASSWORD=x "password": "json-secret" token=token-secret')
+    assert 'PGPASSWORD=[redacted]' in summary
+    assert not any(value in summary for value in ("json-secret", "token-secret"))
+    with patch.dict(os.environ, {"PGPASSWORD": "abc"}):
+        assert backup.error_summary("authentication failed abc") == "authentication failed [redacted]"
+
+
+def test_cleanup_failure_cannot_hide_original_export_error(tmp_path, capsys):
+    original = backup.BackupCommandError("backup_command_failed", "pg_dump", exit_code=7, detail="server unavailable")
+    with patch.object(backup, "docker_path", return_value="docker"), patch.object(backup, "command", side_effect=original), \
+         patch.object(backup, "_reconcile_transaction", side_effect=OSError("cleanup disk error")):
+        assert backup.main(["backup", "--backup-dir", str(tmp_path)]) == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["stage"] == "pg_dump" and receipt["exit_code"] == 7
+    assert receipt["error_summary"] == "server unavailable"
+    assert receipt["cleanup_failure"]["stage"] == "transaction_cleanup"
+    assert receipt["cleanup_failure"]["error_summary"] == "cleanup disk error"
+
+
 def test_manifest_publication_failure_leaves_no_unowned_final(tmp_path):
     with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
          patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7), \

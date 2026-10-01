@@ -20,13 +20,50 @@ IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 TRANSACTION = re.compile(r"^(time_audit_\d{8}_\d{6}_[a-f0-9]{6}\.dump)\.transaction-([a-f0-9]{32})$")
 
 
+class BackupCommandError(RuntimeError):
+    def __init__(self, reason, stage, *, exit_code=None, detail=""):
+        super().__init__(reason)
+        self.stage = stage
+        self.exit_code = exit_code
+        self.detail = detail
+
+
+def error_summary(raw):
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw or "")
+    # Preserve diagnostic stderr, never command arguments or successful output.
+    text = re.sub(r"(?i)(postgres(?:ql)?://)[^\s]+", r"\1[redacted]", text)
+    text = re.sub(r"(?i)((?:pgpassword|password|passwd|pwd|token|secret|api_key)[\"']?\s*[=:]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)", r"\1[redacted]", text)
+    for key, value in os.environ.items():
+        if value and re.search(r"(?i)password|passwd|token|secret|dsn|api_key|credential", key):
+            text = text.replace(value, "[redacted]")
+    return " ".join(text.split())[:1200]
+
+
+@contextmanager
+def failure_stage(stage):
+    try:
+        yield
+    except (RuntimeError, ValueError, OSError) as exc:
+        if not getattr(exc, "stage", None):
+            exc.stage = stage
+        raise
+
+
+def failure_details(exc, mode):
+    reason = str(exc) if isinstance(exc, RuntimeError) and re.fullmatch(r"[a-z_]+", str(exc)) else type(exc).__name__
+    return {"reason": reason, "stage": getattr(exc, "stage", mode), "exit_code": getattr(exc, "exit_code", None), "error_summary": getattr(exc, "detail", error_summary(exc))}
+
+
 def command(args, *, timeout=30, stdout=subprocess.PIPE):
+    stage = "pg_dump" if "pg_dump" in args else "archive_catalog" if "pg_restore" in args else "container_inspect" if "inspect" in args else "docker_command"
     try:
         result = subprocess.run(args, stdout=stdout, stderr=subprocess.PIPE, timeout=timeout, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except (OSError, subprocess.TimeoutExpired):
-        raise RuntimeError("backup_command_unavailable_or_timed_out") from None
+    except subprocess.TimeoutExpired as exc:
+        raise BackupCommandError("backup_command_timed_out", stage, detail=error_summary(exc.stderr) or f"timeout after {timeout} seconds") from None
+    except OSError as exc:
+        raise BackupCommandError("backup_command_unavailable", stage, detail=error_summary(exc)) from None
     if result.returncode:
-        raise RuntimeError("backup_command_failed")
+        raise BackupCommandError("backup_command_failed", stage, exit_code=result.returncode, detail=error_summary(result.stderr))
     return result.stdout or b""
 
 
@@ -76,6 +113,11 @@ def archive_list(path, *, image):
 
 
 def verify(path: Path, *, container="audit-postgres", record=False):
+    with failure_stage("archive_verification"):
+        return _verify(path, container=container, record=record)
+
+
+def _verify(path: Path, *, container, record):
     path = path.resolve(strict=True)
     before = path.stat()
     if before.st_size < 1024:
@@ -221,13 +263,15 @@ def _completed_manifest_matches(path: Path):
 def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", retention_days=14):
     if not all(IDENTIFIER.fullmatch(v) for v in (container, db_user, db_name)) or not 1 <= retention_days <= 3650:
         raise ValueError("invalid_backup_parameters")
-    directory.mkdir(parents=True, exist_ok=True)
-    with _directory_lock(directory):
+    with failure_stage("backup_directory"):
+        directory.mkdir(parents=True, exist_ok=True)
+    with failure_stage("backup_lock"), _directory_lock(directory):
         return _backup_locked(directory, container=container, db_user=db_user, db_name=db_name, retention_days=retention_days)
 
 
 def _backup_locked(directory: Path, *, container, db_user, db_name, retention_days):
-    _reconcile_transactions(directory, container=container)
+    with failure_stage("transaction_recovery"):
+        _reconcile_transactions(directory, container=container)
     filename = "time_audit_" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6] + ".dump"
     final = directory / filename
     partial = final.with_suffix(final.suffix + ".partial")
@@ -235,33 +279,43 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, retention_da
     marker = final.with_name(final.name + ".transaction-" + transaction_id)
     if final.exists() or partial.exists() or final.with_suffix(final.suffix + ".json").exists():
         raise RuntimeError("backup_candidate_collision")
-    stream = marker.open("xb")
+    with failure_stage("candidate_create"):
+        stream = marker.open("xb")
     try:
-        with stream:
+        with failure_stage("archive_export"), stream:
             os.link(marker, partial)
             command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc"], timeout=3600, stdout=stream)
             stream.flush()
             os.fsync(stream.fileno())
         result = verify(partial, container=container)
-        os.rename(partial, final)
-        atomic_json(final.with_suffix(final.suffix + ".json"), result, temporary_id=transaction_id)
-    except BaseException:
-        _reconcile_transaction(marker, container=container)
+        with failure_stage("archive_publish"):
+            os.rename(partial, final)
+        with failure_stage("manifest_publish"):
+            atomic_json(final.with_suffix(final.suffix + ".json"), result, temporary_id=transaction_id)
+    except BaseException as original_error:
+        try:
+            with failure_stage("transaction_cleanup"):
+                _reconcile_transaction(marker, container=container)
+        except (RuntimeError, ValueError, OSError) as cleanup_error:
+            cleanup_error.original_error = original_error
+            raise
         raise
-    marker.unlink()
+    with failure_stage("transaction_marker_cleanup"):
+        marker.unlink()
     cutoff = time.time() - retention_days * 86400
-    completed = sorted(
-        (p for p in directory.glob("time_audit_*.dump") if NAME.fullmatch(p.name) and _completed_manifest_matches(p)),
-        key=lambda p: p.stat().st_mtime, reverse=True,
-    )
     removed = 0
     # Preserve at least three completed archives. Only this tool's old, verified
     # pairs are eligible; historical unverified originals are not silently deleted.
-    for path in completed[3:]:
-        if path.stat().st_mtime < cutoff:
-            path.unlink()
-            path.with_suffix(path.suffix + ".json").unlink()
-            removed += 1
+    with failure_stage("retention"):
+        completed = sorted(
+            (p for p in directory.glob("time_audit_*.dump") if NAME.fullmatch(p.name) and _completed_manifest_matches(p)),
+            key=lambda p: p.stat().st_mtime, reverse=True,
+        )
+        for path in completed[3:]:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                path.with_suffix(path.suffix + ".json").unlink()
+                removed += 1
     return {"status": "pass", "archive": final.name, "bytes": result["bytes"], "archive_list_verified": True, "sha256_recorded": True, "removed_expired_verified_pairs": removed}
 
 
@@ -302,9 +356,12 @@ def main(argv=None):
         print(json.dumps(value, ensure_ascii=True, separators=(",", ":")))
         return 1 if value.get("status") == "failed" else 0
     except (RuntimeError, ValueError, OSError) as exc:
-        # Never forward database stderr or archive/catalog contents into logs.
+        original_error = getattr(exc, "original_error", exc)
         busy = str(exc) == "backup_already_running"
-        print(json.dumps({"status": "busy" if busy else "failed", "mode": args.mode, "reason": "backup_already_running" if busy else "backup_or_verification_failed", "completed_archives_preserved": True}))
+        value = {"status": "busy" if busy else "failed", "mode": args.mode, **failure_details(original_error, args.mode), "completed_archives_preserved": getattr(original_error, "stage", None) != "retention"}
+        if original_error is not exc:
+            value["cleanup_failure"] = failure_details(exc, args.mode)
+        print(json.dumps(value))
         return 1
 
 

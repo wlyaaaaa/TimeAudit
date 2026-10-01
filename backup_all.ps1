@@ -18,12 +18,18 @@ $env:PATH = $env:PATH + ";C:\Program Files\Git\cmd;C:\Program Files\Docker\Docke
 $env:PYTHONUTF8 = "1"
 
 function Invoke-LoggedCommand {
-    param([scriptblock]$Command)
+    param([scriptblock]$Command, [ref]$Receipt)
 
     try {
         $global:LASTEXITCODE = 0
         & $Command 2>&1 | ForEach-Object {
             "$_" | Out-File $log -Append -Encoding utf8
+            if ($null -ne $Receipt -and "$_".StartsWith('{')) {
+                try {
+                    $parsed = "$_" | ConvertFrom-Json -ErrorAction Stop
+                    if ($parsed.mode -eq 'backup' -and $parsed.status) { $Receipt.Value = $parsed }
+                } catch { }
+            }
         }
         if ($null -eq $global:LASTEXITCODE) { return 0 }
         return [int]$global:LASTEXITCODE
@@ -40,7 +46,8 @@ $exitCode = 0
 
 # 1) PostgreSQL —— 用独立 powershell 进程跑，隔离它内部的 exit 调用
 "[backup-all] 1/2 备份 PostgreSQL 数据库..." | Out-File $log -Append -Encoding utf8
-$dbExit = Invoke-LoggedCommand { powershell -NoProfile -ExecutionPolicy Bypass -File "E:\Projects\Tools\TimeAudit\backup_db.ps1" }
+$databaseReceipt = $null
+$dbExit = Invoke-LoggedCommand -Receipt ([ref]$databaseReceipt) -Command { powershell -NoProfile -ExecutionPolicy Bypass -File "E:\Projects\Tools\TimeAudit\backup_db.ps1" }
 $dbStatus = if ($dbExit -eq 0) { 'pass' } else { 'failed' }
 if ($dbExit -ne 0) {
     "[backup-all] PostgreSQL 备份失败，exit=$dbExit" | Out-File $log -Append -Encoding utf8
@@ -58,7 +65,7 @@ if ($grafanaExit -ne 0) {
 
 $receipt = [ordered]@{
     schema = 'timeaudit.daily-backup-receipt.v1'
-    database_backup = [ordered]@{ status = $dbStatus; exit_code = $dbExit }
+    database_backup = [ordered]@{ status = $dbStatus; exit_code = $dbExit; failure = $databaseReceipt }
     dashboard_configuration = [ordered]@{ status = $grafanaStatus; exit_code = $grafanaExit }
     overall_status = if ($exitCode -eq 0) { 'pass' } else { 'failed' }
 }
