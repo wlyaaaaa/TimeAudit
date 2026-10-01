@@ -48,7 +48,7 @@ def sqlite_warning(exc, candidates, started, stage, *, records=None):
     for path, relative in candidates:
         path = Path(path).absolute()
         if not path.parent.is_dir():
-            continue  # A missing source/target root is never a file-level warning.
+            return None  # A missing source/target root is never a file-level warning.
         available.append((path, relative))
     if not available:
         return None
