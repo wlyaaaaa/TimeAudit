@@ -113,7 +113,69 @@ def grafana_health() -> dict:
         return {"status": "unavailable", "reason": "grafana_endpoint_unavailable"}
 
 
+def daily_backup_receipt(path: Path | None = None) -> dict:
+    # backup_all.ps1 owns this locator and overwrites the log for every run.
+    path = path if path is not None else ROOT / "log" / "backup.log"
+    result = {"daily_backup_status": "unavailable", "file_warnings": [], "file_warning_count": 0}
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, 2)
+            size = stream.tell()
+            stream.seek(max(0, size - 65536))
+            lines = stream.read(65536).decode("utf-8-sig", errors="replace").splitlines()
+        for line in reversed(lines):
+            if not line.startswith("{"):
+                continue
+            try:
+                receipt = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(receipt, dict) or receipt.get("schema") != "timeaudit.daily-backup-receipt.v1":
+                continue
+            state = receipt.get("overall_status")
+            if state not in {"pass", "complete", "failed"}:
+                raise ValueError()
+            warnings = receipt.get("file_warnings", [])
+            if not isinstance(warnings, list) or len(warnings) > 256:
+                raise ValueError()
+            projected = []
+            for item in warnings:
+                if not isinstance(item, dict):
+                    raise ValueError()
+                relative, reason, code, stage = (item.get(k) for k in ("relative_path", "reason", "error_code", "stage"))
+                if (not isinstance(relative, str) or not 0 < len(relative) <= 1024 or relative.startswith(("/", "\\"))
+                        or ":" in relative or ".." in relative.replace("\\", "/").split("/")
+                        or reason not in {"antivirus_blocked", "antivirus_removed", "source_disappeared"}
+                        or type(code) is not int or code not in (2, 3, 225, 226)
+                        or not isinstance(stage, str) or not re.fullmatch(r"[a-z_]{1,64}", stage)):
+                    raise ValueError()
+                projected.append(dict(relative_path=relative, reason=reason, error_code=code, stage=stage))
+            failed = state == "failed"
+            for branch in ("database_backup", "dashboard_configuration"):
+                value = receipt.get(branch)
+                if (not isinstance(value, dict) or value.get("status") not in {"pass", "complete", "failed"}
+                        or type(value.get("exit_code")) is not int):
+                    raise ValueError()
+                failed = failed or value["status"] == "failed" or value["exit_code"] != 0
+            return {"daily_backup_status": "failed" if failed else "complete", "file_warnings": projected,
+                    "file_warning_count": len(projected), "daily_receipt_metadata_status": "readable"}
+        return {**result, "daily_receipt_metadata_status": "missing_or_outside_bounded_tail"}
+    except FileNotFoundError:
+        return {**result, "daily_receipt_metadata_status": "unavailable"}
+    except (OSError, ValueError, TypeError):
+        return {**result, "daily_receipt_metadata_status": "invalid_or_unreadable"}
+
+
 def backup_health(directory: Path) -> dict:
+    archive = _archive_backup_health(directory)
+    daily = daily_backup_receipt()
+    result = {**archive, "archive_status": archive["status"], **daily}
+    if daily["daily_backup_status"] == "failed" or daily.get("daily_receipt_metadata_status") == "invalid_or_unreadable":
+        result["status"] = "degraded"
+    return result
+
+
+def _archive_backup_health(directory: Path) -> dict:
     try:
         files = list(directory.glob("time_audit_*.dump"))
         if not files:
@@ -251,7 +313,10 @@ def build_health(*, core_only: bool = False) -> dict:
                 # One broken sensor must not discard the other components.
                 components[key] = {"status": "unavailable", "reason": "component_probe_failed"}
     failed = [key for key, value in components.items() if value.get("status") != "healthy"]
-    return {"schema": SCHEMA, "owner_ref": "timeaudit:runtime-health", "status": "healthy" if not failed else "degraded", "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "components": components, "degraded_components": failed, "elapsed_seconds": round(time.monotonic()-started, 3), "scope": "watchdog_core" if core_only else "full", "privacy": PRIVACY.copy()}
+    file_warnings = components.get("backup", {}).get("file_warnings", [])
+    warnings = ([{"component": "backup", "reason": "backup_file_warnings", "file_warning_count": len(file_warnings)}]
+                if file_warnings else [])
+    return {"schema": SCHEMA, "owner_ref": "timeaudit:runtime-health", "status": "healthy" if not failed else "degraded", "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(), "components": components, "degraded_components": failed, "warnings": warnings, "file_warning_count": len(file_warnings), "elapsed_seconds": round(time.monotonic()-started, 3), "scope": "watchdog_core" if core_only else "full", "privacy": PRIVACY.copy()}
 
 
 def main(argv=None) -> int:

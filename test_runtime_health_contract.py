@@ -82,6 +82,61 @@ def test_bad_backup_manifest_cannot_crash_other_health_probes(tmp_path):
     assert value["hash_recomputed_by_health_probe"] is False
 
 
+def daily_receipt(**changes):
+    value = {"schema": "timeaudit.daily-backup-receipt.v1", "overall_status": "pass",
+             "database_backup": {"status": "pass", "exit_code": 0},
+             "dashboard_configuration": {"status": "pass", "exit_code": 0},
+             "file_warnings": [{"relative_path": "grafana.db", "reason": "antivirus_removed", "error_code": 226, "stage": "database_copy"}]}
+    return {**value, **changes}
+
+
+def test_daily_receipt_is_bounded_metadata_and_projects_only_warning_fields(tmp_path):
+    path = tmp_path / "backup.log"
+    receipt = daily_receipt()
+    receipt["private_unused_field"] = "do not return"
+    path.write_text("arbitrary private log padding\n" * 5000 + json.dumps(receipt) + "\n[backup-all] done\n", encoding="utf-8")
+    value = health.daily_backup_receipt(path)
+    assert value["daily_backup_status"] == "complete"
+    assert value["file_warning_count"] == 1
+    assert value["file_warnings"] == receipt["file_warnings"]
+    assert "do not return" not in json.dumps(value)
+    assert "padding" not in json.dumps(value)
+    path.write_text(json.dumps(daily_receipt(file_warnings=[receipt["file_warnings"][0]] * 257)))
+    assert health.daily_backup_receipt(path)["daily_receipt_metadata_status"] == "invalid_or_unreadable"
+
+
+def test_receipt_warning_does_not_override_failed_branch_or_archive_corruption(tmp_path):
+    archive = tmp_path / "time_audit_20260917_120000.dump"; archive.write_bytes(b"synthetic")
+    manifest = archive.with_suffix(".dump.json")
+    manifest.write_text(json.dumps(dict(schema="timeaudit.backup-manifest.v1", bytes=archive.stat().st_size,
+        archive_list_verified=True, sha256="a"*64)))
+    with patch.object(health, "daily_backup_receipt", return_value={"daily_backup_status": "complete", "file_warnings": daily_receipt()["file_warnings"], "file_warning_count": 1}):
+        value = health.backup_health(tmp_path)
+        assert value["status"] == "healthy" and value["daily_backup_status"] == "complete"
+        manifest.write_text("{}")
+        assert health.backup_health(tmp_path)["status"] == "degraded"
+    path = tmp_path / "backup.log"
+    path.write_text(json.dumps(daily_receipt(database_backup={"status": "failed", "exit_code": 1})))
+    assert health.daily_backup_receipt(path)["daily_backup_status"] == "failed"
+    path.write_text(json.dumps(daily_receipt(file_warnings=[{"relative_path": "C:/private", "reason": "antivirus_removed", "error_code": 226, "stage": "copy"}])))
+    assert health.daily_backup_receipt(path)["file_warning_count"] == 0
+    assert health.daily_backup_receipt(path)["daily_receipt_metadata_status"] == "invalid_or_unreadable"
+
+
+def test_completed_file_warning_is_visible_in_health_summary_without_degradation():
+    clean = {"status": "healthy"}
+    backup = {**clean, "daily_backup_status": "complete", "file_warnings": daily_receipt()["file_warnings"], "file_warning_count": 1}
+    with patch.object(health, "database_health", return_value=clean), patch.object(health, "heartbeat", return_value=clean), \
+         patch.object(health, "lhm_health", return_value=clean), patch.object(health, "grafana_health", return_value=clean), \
+         patch.object(health, "blackbox_health", return_value=clean), patch.object(health, "watchdog_health", return_value=clean), \
+         patch.object(health, "backup_health", return_value=backup):
+        result = health.build_health()
+    assert result["status"] == "healthy"
+    assert result["degraded_components"] == []
+    assert result["warnings"] == [{"component": "backup", "reason": "backup_file_warnings", "file_warning_count": 1}]
+    assert result["file_warning_count"] == 1
+
+
 def test_one_failed_probe_does_not_erase_available_evidence():
     with patch.object(health, "database_health", side_effect=RuntimeError("private failure")), \
          patch.object(health, "heartbeat", return_value={"status": "healthy"}), \
