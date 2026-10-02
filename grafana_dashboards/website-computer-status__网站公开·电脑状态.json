@@ -1,0 +1,658 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "近 24 小时硬件状态；一分钟聚合，缺测保留断点。准备稿：各盘剩余空间尚缺现有时序指标，外部分享尚未启用。",
+  "editable": false,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#15803d",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 占用"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#15803d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "interval": "1m",
+      "maxDataPoints": 1441,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "WITH bounds AS (\n  SELECT GREATEST($__timeFrom()::timestamptz, now() - interval '24 hours') AS start_time,\n         LEAST($__timeTo()::timestamptz, now()) AS end_time\n), time_grid AS (\n  SELECT generate_series(date_trunc('minute', start_time), date_trunc('minute', end_time), interval '1 minute') AS time\n  FROM bounds\n), points AS (\n  SELECT date_trunc('minute', timestamp) AS time, AVG(cpu_total_usage) AS value\n  FROM public.fact_system_hardware, bounds\n  WHERE timestamp >= bounds.start_time AND timestamp <= bounds.end_time\n  GROUP BY 1\n)\nSELECT g.time AS \"time\", p.value AS \"CPU 占用\"\nFROM time_grid g LEFT JOIN points p ON p.time = g.time\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU 占用",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#15803d",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "CPU 封装温度"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#15803d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "interval": "1m",
+      "maxDataPoints": 1441,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "WITH bounds AS (\n  SELECT GREATEST($__timeFrom()::timestamptz, now() - interval '24 hours') AS start_time,\n         LEAST($__timeTo()::timestamptz, now()) AS end_time\n), time_grid AS (\n  SELECT generate_series(date_trunc('minute', start_time), date_trunc('minute', end_time), interval '1 minute') AS time\n  FROM bounds\n), points AS (\n  SELECT date_trunc('minute', timestamp) AS time, AVG(cpu_package_temp) AS value\n  FROM public.fact_system_hardware, bounds\n  WHERE timestamp >= bounds.start_time AND timestamp <= bounds.end_time\n  GROUP BY 1\n)\nSELECT g.time AS \"time\", p.value AS \"CPU 封装温度\"\nFROM time_grid g LEFT JOIN points p ON p.time = g.time\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU 温度",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#15803d",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "显卡占用"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#15803d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "interval": "1m",
+      "maxDataPoints": 1441,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "WITH bounds AS (\n  SELECT GREATEST($__timeFrom()::timestamptz, now() - interval '24 hours') AS start_time,\n         LEAST($__timeTo()::timestamptz, now()) AS end_time\n), time_grid AS (\n  SELECT generate_series(date_trunc('minute', start_time), date_trunc('minute', end_time), interval '1 minute') AS time\n  FROM bounds\n), points AS (\n  SELECT date_trunc('minute', timestamp) AS time, AVG(gpu_usage) AS value\n  FROM public.fact_system_hardware, bounds\n  WHERE timestamp >= bounds.start_time AND timestamp <= bounds.end_time\n  GROUP BY 1\n)\nSELECT g.time AS \"time\", p.value AS \"显卡占用\"\nFROM time_grid g LEFT JOIN points p ON p.time = g.time\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "显卡占用",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#15803d",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "celsius"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "显卡核心温度"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#15803d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "interval": "1m",
+      "maxDataPoints": 1441,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "WITH bounds AS (\n  SELECT GREATEST($__timeFrom()::timestamptz, now() - interval '24 hours') AS start_time,\n         LEAST($__timeTo()::timestamptz, now()) AS end_time\n), time_grid AS (\n  SELECT generate_series(date_trunc('minute', start_time), date_trunc('minute', end_time), interval '1 minute') AS time\n  FROM bounds\n), points AS (\n  SELECT date_trunc('minute', timestamp) AS time, AVG(gpu_core_temp) AS value\n  FROM public.fact_system_hardware, bounds\n  WHERE timestamp >= bounds.start_time AND timestamp <= bounds.end_time\n  GROUP BY 1\n)\nSELECT g.time AS \"time\", p.value AS \"显卡核心温度\"\nFROM time_grid g LEFT JOIN points p ON p.time = g.time\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "显卡温度",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#15803d",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "percent"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "物理内存占用"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#15803d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "interval": "1m",
+      "maxDataPoints": 1441,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "WITH bounds AS (\n  SELECT GREATEST($__timeFrom()::timestamptz, now() - interval '24 hours') AS start_time,\n         LEAST($__timeTo()::timestamptz, now()) AS end_time\n), time_grid AS (\n  SELECT generate_series(date_trunc('minute', start_time), date_trunc('minute', end_time), interval '1 minute') AS time\n  FROM bounds\n), points AS (\n  SELECT date_trunc('minute', timestamp) AS time, AVG(system_ram_usage_pct) AS value\n  FROM public.fact_system_hardware, bounds\n  WHERE timestamp >= bounds.start_time AND timestamp <= bounds.end_time\n  GROUP BY 1\n)\nSELECT g.time AS \"time\", p.value AS \"物理内存占用\"\nFROM time_grid g LEFT JOIN points p ON p.time = g.time\nORDER BY 1;",
+          "refId": "A"
+        }
+      ],
+      "title": "内存占用",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P7A9DAD60F8AB4C18"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "#15803d",
+            "mode": "fixed"
+          },
+          "custom": {
+            "axisColorMode": "text",
+            "axisPlacement": "auto",
+            "drawStyle": "line",
+            "fillOpacity": 8,
+            "gradientMode": "none",
+            "hideFrom": {
+              "legend": false,
+              "tooltip": false,
+              "viz": false
+            },
+            "lineInterpolation": "linear",
+            "lineWidth": 2,
+            "scaleDistribution": {
+              "type": "linear"
+            },
+            "showPoints": "never",
+            "spanNulls": false,
+            "stacking": {
+              "group": "A",
+              "mode": "none"
+            }
+          },
+          "decimals": 1,
+          "mappings": [],
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          },
+          "unit": "Bps"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "上传"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#15803d",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "下载"
+            },
+            "properties": [
+              {
+                "value": {
+                  "fixedColor": "#34a853",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "interval": "1m",
+      "maxDataPoints": 1441,
+      "options": {
+        "legend": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P7A9DAD60F8AB4C18"
+          },
+          "editorMode": "code",
+          "format": "time_series",
+          "rawSql": "WITH points AS (SELECT bucket_start AS time, ROUND((sum(proc_network_send_kb_sum) / NULLIF(sum(proc_network_send_kb_count),0))::numeric,6)*1024.0 AS \"上传\", ROUND((sum(proc_network_recv_kb_sum) / NULLIF(sum(proc_network_recv_kb_count),0))::numeric,6)*1024.0 AS \"下载\" FROM public.activity_system_stats(GREATEST($__timeFrom()::timestamptz, now() - interval '24 hours'), LEAST($__timeTo()::timestamptz, now()), GREATEST(60, extract(epoch FROM ('$__interval')::interval)::integer)) GROUP BY bucket_start),\nordered AS (\n SELECT *, lag(time) OVER (ORDER BY time) AS previous_time FROM points\n), gaps AS (\n SELECT *, make_interval(secs => CASE\n   WHEN previous_time < (SELECT raw_since FROM public.activity_retention_state WHERE singleton)\n   THEN GREATEST(GREATEST(60, extract(epoch FROM ('$__interval')::interval)::integer),3600) ELSE GREATEST(60, extract(epoch FROM ('$__interval')::interval)::integer) END) AS expected_step FROM ordered\n)\nSELECT time, \"上传\", \"下载\" FROM points\nUNION ALL\nSELECT previous_time + expected_step AS time, NULL::double precision AS \"上传\", NULL::double precision AS \"下载\" FROM gaps\nWHERE time > previous_time + expected_step\nORDER BY time;",
+          "refId": "A"
+        }
+      ],
+      "title": "网络上下行",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 42,
+  "style": "light",
+  "tags": [
+    "website-public",
+    "hardware-only"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {
+    "hidden": true,
+    "refresh_intervals": [
+      "1m",
+      "5m"
+    ]
+  },
+  "timezone": "Asia/Shanghai",
+  "title": "网站公开·电脑状态",
+  "uid": "website-computer-status",
+  "version": 1
+}
