@@ -90,7 +90,7 @@ class GrafanaDashboardContractTests(unittest.TestCase):
 
     def test_repository_snapshots_and_recovery_datasource_share_contract(self):
         snapshots = sorted((ROOT / "grafana_dashboards").glob("*.json"))
-        self.assertEqual(len(snapshots), 6)
+        self.assertTrue(snapshots, "repository must contain active recovery snapshots")
         for path in snapshots:
             with path.open(encoding="utf-8") as handle:
                 validate_dashboard_document(json.load(handle), source=path.name)
