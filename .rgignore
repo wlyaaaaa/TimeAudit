@@ -1,0 +1,19 @@
+# 默认搜索只排除生成物、缓存和依赖；不改变 Git 跟踪或文件内容。
+# 现行源码、配置、文档和有用的合成夹具保留。
+/telemetry_perfect_archive.txt
+/time_audit_perfect_archive.sql
+/postgres_data/
+/grafana_data/
+/backups/
+/grafana_backups/
+/log/
+/tmp/
+/clipboard_history/runtime/
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.log
+*.pdb
+/docs/search-hygiene-candidates.md
