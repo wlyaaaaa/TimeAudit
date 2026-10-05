@@ -29,6 +29,7 @@ class FileWarningTests(unittest.TestCase):
              patch.object(grafana, "assert_dashboard_worktree_clean"), \
              patch.object(grafana, "export_dashboards_from_db"), \
              patch.object(grafana, "assert_dashboard_change_allowlist", return_value=set()), \
+             patch.object(grafana, "git_remote_state"), \
              patch.object(grafana, "git_commit_and_push") as git:
             def target_failure(keep, candidates):
                 candidates.append((Path(name) / "target.partial", "grafana.db"))

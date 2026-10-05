@@ -121,7 +121,7 @@ class GitSyncTests(unittest.TestCase):
             run_git(remote, "rev-parse", "refs/heads/main").stdout.strip(),
         )
 
-    def test_behind_and_diverged_are_blocked(self):
+    def test_post_export_sync_blocks_behind_and_diverged(self):
         _, local, peer = self.bare_topology("behind")
         commit_file(peer, "remote.txt", "remote\n")
         run_git(peer, "push", "--quiet", "origin", "main")
@@ -136,6 +136,72 @@ class GitSyncTests(unittest.TestCase):
         self.use_backup_checkout(local)
         with self.assertRaisesRegex(backup.GitSyncError, r"\bdiverged\b"):
             backup.git_commit_and_push(do_push=True, dashboard_paths=[])
+
+    def test_pre_export_clean_default_branch_fast_forwards_before_export(self):
+        remote, local, peer = self.bare_topology("pre-export-ff")
+        commit_file(peer, "remote.txt", "remote\n")
+        run_git(peer, "push", "--quiet", "origin", "main")
+        self.use_backup_checkout(local)
+        remote_oid = run_git(remote, "rev-parse", "refs/heads/main").stdout.strip()
+
+        def export(**kwargs):
+            self.assertEqual(run_git(local, "rev-parse", "HEAD").stdout.strip(), remote_oid)
+            self.assertTrue(os.path.exists(os.path.join(local, "remote.txt")))
+
+        with (
+            mock.patch.object(backup, "grafana_backup_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(backup, "initialize_windows_user_proxy", return_value=False),
+            mock.patch.object(backup, "export_dashboards_from_db", side_effect=export),
+            mock.patch.object(backup, "backup_grafana_db"),
+            mock.patch("sys.argv", ["backup_grafana.py"]),
+        ):
+            self.assertEqual(backup.main(), 0)
+        self.assertEqual(run_git(local, "status", "--porcelain").stdout, "")
+        self.assertEqual(run_git(remote, "rev-parse", "refs/heads/main").stdout.strip(), remote_oid)
+
+    def test_pre_export_behind_preserves_all_local_dirty_changes(self):
+        _, local, peer = self.bare_topology("pre-export-dirty")
+        commit_file(peer, "remote.txt", "remote\n")
+        run_git(peer, "push", "--quiet", "origin", "main")
+        self.use_backup_checkout(local)
+        initial_oid = run_git(local, "rev-parse", "HEAD").stdout.strip()
+        with open(os.path.join(local, "seed.txt"), "w", encoding="utf-8") as handle:
+            handle.write("manual edit\n")
+        with open(os.path.join(local, "untracked.txt"), "w", encoding="utf-8") as handle:
+            handle.write("untracked work\n")
+        run_git(local, "add", "--", "seed.txt")
+        before_status = run_git(local, "status", "--porcelain").stdout
+        with self.assertRaisesRegex(backup.GitSyncError, "worktree is not clean"):
+            backup.git_remote_state(allow_clean_default_ff=True)
+        self.assertEqual(run_git(local, "rev-parse", "HEAD").stdout.strip(), initial_oid)
+        self.assertEqual(run_git(local, "status", "--porcelain").stdout, before_status)
+        with open(os.path.join(local, "seed.txt"), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "manual edit\n")
+        with open(os.path.join(local, "untracked.txt"), encoding="utf-8") as handle:
+            self.assertEqual(handle.read(), "untracked work\n")
+
+    def test_pre_export_diverged_preserves_unique_commit(self):
+        _, local, peer = self.bare_topology("pre-export-diverged")
+        commit_file(local, "local.txt", "unique local commit\n")
+        initial_oid = run_git(local, "rev-parse", "HEAD").stdout.strip()
+        commit_file(peer, "remote.txt", "remote\n")
+        run_git(peer, "push", "--quiet", "origin", "main")
+        self.use_backup_checkout(local)
+        with self.assertRaisesRegex(backup.GitSyncError, r"\bdiverged\b"):
+            backup.git_remote_state(allow_clean_default_ff=True)
+        self.assertEqual(run_git(local, "rev-parse", "HEAD").stdout.strip(), initial_oid)
+        self.assertEqual(run_git(local, "show", "HEAD:local.txt").stdout, "unique local commit\n")
+
+    def test_pre_export_behind_non_default_branch_is_not_fast_forwarded(self):
+        _, local, peer = self.bare_topology("pre-export-other-branch")
+        run_git(local, "checkout", "-b", "feature", "--track", "origin/main")
+        initial_oid = run_git(local, "rev-parse", "HEAD").stdout.strip()
+        commit_file(peer, "remote.txt", "remote\n")
+        run_git(peer, "push", "--quiet", "origin", "main")
+        self.use_backup_checkout(local)
+        with self.assertRaisesRegex(backup.GitSyncError, "not the remote default branch"):
+            backup.git_remote_state(allow_clean_default_ff=True)
+        self.assertEqual(run_git(local, "rev-parse", "HEAD").stdout.strip(), initial_oid)
 
     def test_push_failure_propagates(self):
         _, local = self.non_bare_topology("push-failure")
@@ -162,6 +228,7 @@ class GitSyncTests(unittest.TestCase):
             mock.patch.object(backup, "dashboard_json_paths", return_value=set()),
             mock.patch.object(backup, "export_dashboards_from_db", return_value=set()),
             mock.patch.object(backup, "backup_grafana_db", return_value=None),
+            mock.patch.object(backup, "git_remote_state"),
             mock.patch.object(
                 backup,
                 "git_commit_and_push",

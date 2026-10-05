@@ -642,8 +642,8 @@ def current_branch():
     return branch
 
 
-def git_remote_state():
-    """Fetch the configured upstream and reject remote-newer/diverged history."""
+def git_remote_state(*, allow_clean_default_ff=False):
+    """Fetch upstream; only pre-export may fast-forward a clean default branch."""
     branch = current_branch()
     remote = git(["config", "--get", f"branch.{branch}.remote"], check=True).stdout.strip()
     merge_ref = git(["config", "--get", f"branch.{branch}.merge"], check=True).stdout.strip()
@@ -662,6 +662,27 @@ def git_remote_state():
     if len(counts) != 2:
         raise GitSyncError(f"unexpected git divergence output: {' '.join(counts)}")
     ahead, behind = (int(value) for value in counts)
+    if behind and not ahead and allow_clean_default_ff:
+        default_head = git_network(["ls-remote", "--symref", remote, "HEAD"])
+        default_refs = [line.split() for line in default_head.stdout.splitlines()]
+        if (branch != remote_branch
+                or ["ref:", merge_ref, "HEAD"] not in default_refs):
+            raise GitSyncError(
+                f"local branch {branch} is behind but is not the remote default branch; "
+                "refusing automatic fast-forward"
+            )
+        if git(["status", "--porcelain=v1", "--untracked-files=all"], check=True).stdout:
+            raise GitSyncError(
+                f"local branch {branch} is behind and the worktree is not clean; "
+                "preserving local changes instead of fast-forwarding"
+            )
+        target_oid = git(["rev-parse", tracking_ref], check=True).stdout.strip()
+        git(["merge", "--ff-only", "--no-edit", "--no-overwrite-ignore", target_oid], check=True)
+        if (git(["rev-parse", "HEAD"], check=True).stdout.strip() != target_oid
+                or git(["status", "--porcelain=v1", "--untracked-files=all"], check=True).stdout):
+            raise GitSyncError("fast-forward readback did not leave the expected clean checkout")
+        log("干净默认分支已仅快进到远端；开始本轮仪表盘导出。")
+        ahead, behind = 0, 0
     if behind:
         kind = "diverged" if ahead else "behind"
         raise GitSyncError(
@@ -786,6 +807,11 @@ def main():
                 # Check before source extraction, then once more immediately before writes.
                 # A scheduled job must never overwrite or delete a human's dashboard work.
                 assert_dashboard_worktree_clean()
+                if not args.no_git and not args.no_push:
+                    # Repair clean-behind before this run generates any files.
+                    # Later checks stay strict if the remote moves during export.
+                    git_remote_state(allow_clean_default_ff=True)
+                    assert_dashboard_worktree_clean()
                 if args.source == "sqlite":
                     export_dashboards_from_db(
                         changed_paths=changed_paths,
