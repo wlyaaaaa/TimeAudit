@@ -416,8 +416,8 @@ class ProcessLifecycleWorker:
             native = fetch_system_processes()
             if native is not None:
                 return {
-                    # psutil reports the System process creation time as zero.
-                    (p['pid'], 0.0 if p['pid'] == 4 else p['create_time']): p for p in native
+                    # psutil reports Idle/System creation times as zero.
+                    (p['pid'], 0.0 if p['pid'] in (0, 4) else p['create_time']): p for p in native
                     if p['threads'] > 0 and p['create_time'] > 0
                 }
             snapshot = {}
