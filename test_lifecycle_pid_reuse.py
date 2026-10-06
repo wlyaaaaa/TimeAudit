@@ -3,7 +3,7 @@ import datetime
 import unittest
 from contextlib import ExitStack
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from lifecycle_worker import ProcessLifecycleWorker
 
@@ -58,6 +58,7 @@ class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
         worker = ProcessLifecycleWorker({})
         worker.is_running = True
         worker.pid_handles[(42, 100.0)] = 99
+        worker.pid_handles[(43, 100.0)] = 100  # Registration finished after EXIT was scanned.
         snapshots = [
             [SimpleNamespace(info=dict(pid=42, name="crash.exe", create_time=100.0, num_threads=n))]
             for n in (1, 0)
@@ -74,7 +75,8 @@ class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
             close = stack.enter_context(patch("lifecycle_worker.kernel32.CloseHandle"))
             worker._differential_scanner_loop(loop)
         self.assertEqual({}, worker.pid_handles)
-        close.assert_called_once_with(99)
+        close.assert_has_calls([call(99), call(100)], any_order=True)
+        self.assertEqual(2, close.call_count)
         self.assertEqual("EXIT", worker.event_queue.get_nowait()["type"])
 
     async def test_old_exit_stays_bound_when_pid_is_reused(self):
