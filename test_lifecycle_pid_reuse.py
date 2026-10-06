@@ -1,6 +1,9 @@
 # -*- coding: utf-8 -*-
 import datetime
 import unittest
+from contextlib import ExitStack
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from lifecycle_worker import ProcessLifecycleWorker
 
@@ -51,6 +54,29 @@ def _metadata(name):
 
 
 class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
+    def test_zero_thread_crash_object_releases_handle(self):
+        worker = ProcessLifecycleWorker({})
+        worker.is_running = True
+        worker.pid_handles[(42, 100.0)] = 99
+        snapshots = [
+            [SimpleNamespace(info=dict(pid=42, name="crash.exe", create_time=100.0, num_threads=n))]
+            for n in (1, 0)
+        ]
+        loop = SimpleNamespace(call_soon_threadsafe=lambda fn, event: fn(event))
+        def snapshot(_):
+            worker.is_running = len(snapshots) > 1
+            return snapshots.pop(0)
+        with ExitStack() as stack:
+            stack.enter_context(patch("activity_worker.fetch_system_processes", return_value=None))
+            stack.enter_context(patch("lifecycle_worker.psutil.process_iter", side_effect=snapshot))
+            stack.enter_context(patch("lifecycle_worker.time.sleep"))
+            stack.enter_context(patch("lifecycle_worker.kernel32.GetExitCodeProcess", return_value=0))
+            close = stack.enter_context(patch("lifecycle_worker.kernel32.CloseHandle"))
+            worker._differential_scanner_loop(loop)
+        self.assertEqual({}, worker.pid_handles)
+        close.assert_called_once_with(99)
+        self.assertEqual("EXIT", worker.event_queue.get_nowait()["type"])
+
     async def test_old_exit_stays_bound_when_pid_is_reused(self):
         shared_map = {}
         worker = ProcessLifecycleWorker(shared_map)

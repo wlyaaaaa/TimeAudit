@@ -625,8 +625,8 @@ class ProcessActivityWorker:
             is_elevated = await asyncio.to_thread(check_process_elevation, proc_info["os_pid"])
             if is_elevated < 0:
                 is_elevated = await conn.fetchval(
-                    "SELECT is_elevated FROM public.dim_process_registry WHERE executable_path = $1 ORDER BY created_at DESC LIMIT 1",
-                    exe_path
+                    "SELECT is_elevated FROM public.dim_process_registry WHERE process_name = $2 AND md5(executable_path) = md5($1) AND executable_path = $1 ORDER BY created_at DESC LIMIT 1",
+                    exe_path, proc_info["name"]
                 )
                 if is_elevated is None:
                     is_elevated = 0

@@ -27,6 +27,9 @@ kernel32.CreateFileW.restype = wintypes.HANDLE
 kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
 kernel32.CloseHandle.restype = wintypes.BOOL
 
+kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+kernel32.OpenProcess.restype = wintypes.HANDLE
+
 kernel32.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
 kernel32.GetExitCodeProcess.restype = wintypes.BOOL
 
@@ -291,6 +294,14 @@ class ProcessLifecycleWorker:
     def update_pool(self, new_pool):
         self.pool = new_pool
 
+    def _track_pid_handle(self, instance_key):
+        # Bootstrap and scanner can discover the same instance concurrently.
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, instance_key[0])
+        if handle:
+            retained = self.pid_handles.setdefault(instance_key, handle)
+            if retained != handle:
+                kernel32.CloseHandle(handle)
+
     def harvest_live_pid_metadata_sync(self, os_pid, name, exe):
         try:
             cmdline = ""
@@ -358,9 +369,7 @@ class ProcessLifecycleWorker:
             create_time if create_time is not None else time.time()
         )
             
-        h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, os_pid)
-        if h_proc:
-            self.pid_handles[instance_key] = h_proc
+        self._track_pid_handle(instance_key)
             
         p_key = await self._resolve_metadata_to_db(conn, os_pid, metadata)
         if p_key:
@@ -403,10 +412,20 @@ class ProcessLifecycleWorker:
 
     def _differential_scanner_loop(self, loop):
         def get_process_snapshot():
+            from activity_worker import fetch_system_processes
+            native = fetch_system_processes()
+            if native is not None:
+                return {
+                    # psutil reports the System process creation time as zero.
+                    (p['pid'], 0.0 if p['pid'] == 4 else p['create_time']): p for p in native
+                    if p['threads'] > 0 and p['create_time'] > 0
+                }
             snapshot = {}
-            for proc in psutil.process_iter(['pid', 'name', 'create_time']):
+            for proc in psutil.process_iter(['pid', 'name', 'create_time', 'num_threads']):
                 try:
                     pinfo = proc.info
+                    if pinfo.get('num_threads') == 0:
+                        continue  # Retained crash objects are not live processes.
                     pid = pinfo['pid']
                     c_time = pinfo['create_time']
                     if pid is not None and c_time is not None:
@@ -428,7 +447,8 @@ class ProcessLifecycleWorker:
                 current_snapshot = get_process_snapshot()
 
                 started_keys = set(current_snapshot.keys()) - set(last_snapshot.keys())
-                exited_keys = set(last_snapshot.keys()) - set(current_snapshot.keys())
+                # Also reap handles registered after the previous EXIT diff.
+                exited_keys = (set(last_snapshot) | set(self.pid_handles) | set(self.pid_start_time)) - set(current_snapshot)
 
                 # 【修复】把基线快照推进放进 finally：即便下面任一 START/EXIT 处理(权限/极短命进程
                 # 的 Win32 查询)抛异常，也保证 last_snapshot 前进，避免下一拍基于旧快照重复差分、把
@@ -446,9 +466,7 @@ class ProcessLifecycleWorker:
 
                         self.pid_start_time[instance_key] = create_time
 
-                        h_proc = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
-                        if h_proc:
-                            self.pid_handles[instance_key] = h_proc
+                        self._track_pid_handle(instance_key)
 
                         metadata = self.harvest_live_pid_metadata_sync(pid, name, exe)
 
@@ -476,11 +494,13 @@ class ProcessLifecycleWorker:
                         exit_code_str = "0x00000000"
                         h_proc = self.pid_handles.pop(instance_key, None)
                         if h_proc:
-                            exit_code = wintypes.DWORD()
-                            if kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)):
-                                if exit_code.value != 259:
-                                    exit_code_str = f"0x{exit_code.value:08X}"
-                            kernel32.CloseHandle(h_proc)
+                            try:
+                                exit_code = wintypes.DWORD()
+                                if kernel32.GetExitCodeProcess(h_proc, ctypes.byref(exit_code)):
+                                    if exit_code.value != 259:
+                                        exit_code_str = f"0x{exit_code.value:08X}"
+                            finally:
+                                kernel32.CloseHandle(h_proc)
 
                         loop.call_soon_threadsafe(
                             self.event_queue.put_nowait,
