@@ -39,6 +39,7 @@ function Invoke-LoggedCommand {
     }
 }
 
+$startedAt = [DateTimeOffset]::Now.ToString('o')
 $exitCode = 0
 
 "============================================================" | Out-File $log -Encoding utf8
@@ -73,4 +74,43 @@ $receipt = [ordered]@{
 }
 ($receipt | ConvertTo-Json -Compress -Depth 4) | Out-File $log -Append -Encoding utf8
 "[backup-all] done $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')" | Out-File $log -Append -Encoding utf8
+# Keep the last-run receipt independent of child diagnostics and backup exit status.
+$localStatus = if ($receipt.file_warnings.Count -gt 0 -or $grafanaReceipt.retained_previous_backup -or $grafanaReceipt.local_snapshot_status -eq 'retained_previous') { 'retained_previous' } else { 'complete' }
+if ($dbExit -ne 0 -or ($grafanaExit -ne 0 -and $grafanaReceipt.local_snapshot_status -notin @('complete','retained_previous'))) { $localStatus = 'failed' }
+$cloudStatus = if ($grafanaReceipt.cloud_sync_status -in @('complete','failed')) { $grafanaReceipt.cloud_sync_status } elseif ($grafanaExit -eq 0 -and -not $grafanaReceipt.retained_previous_backup) { 'complete' } else { $null }
+$databaseReasons = @(
+    'backup_command_failed','backup_command_timed_out','backup_command_unavailable','docker_unavailable',
+    'container_image_identity_invalid','archive_catalog_too_large','archive_missing_required_table','archive_too_small','archive_header_invalid',
+    'archive_changed_during_verification','archive_manifest_too_large','archive_manifest_invalid','archive_manifest_mismatch',
+    'backup_transaction_path_invalid','backup_transaction_invalid','backup_transaction_file_identity_unavailable','backup_transaction_manifest_archive_conflict',
+    'backup_transaction_foreign_collision','backup_already_running','backup_candidate_collision','PermissionError','OSError','ValueError','FileNotFoundError','FileExistsError','NotADirectoryError','IsADirectoryError','JSONDecodeError'
+)
+$reason = if ($dbExit -ne 0 -and $databaseReceipt.reason -in $databaseReasons) { $databaseReceipt.reason } elseif ($grafanaReceipt.reason -eq 'git_backup_failed') { 'git_backup_failed' } else { $null }
+$summary = switch ($localStatus) {
+    'complete' { '本地快照已完成' }
+    'retained_previous' { '此前本地快照已保留' }
+    default { '本地快照失败' }
+}
+$summary += if ($cloudStatus -eq 'complete') { '、云端同步已完成' } elseif ($cloudStatus -eq 'failed') { '、云端推送失败' } else { '、云端同步未尝试或无结果' }
+$runReceipt = [ordered]@{
+    schema = 'timeaudit.backup-run.v1'
+    started_at = $startedAt
+    completed_at = [DateTimeOffset]::Now.ToString('o')
+    local_snapshot_status = $localStatus
+    cloud_sync_status = $cloudStatus
+    reason = $reason
+    summary = $summary
+    exit_code = $exitCode
+}
+$receiptPath = Join-Path (Split-Path $log) 'backup-last-run.json'
+$tempReceiptPath = "$receiptPath.$PID.tmp"
+try {
+    [IO.File]::WriteAllText($tempReceiptPath, ($runReceipt | ConvertTo-Json -Depth 2), [Text.UTF8Encoding]::new($false))
+    if ([IO.File]::Exists($receiptPath)) { [IO.File]::Replace($tempReceiptPath, $receiptPath, [NullString]::Value) }
+    else { [IO.File]::Move($tempReceiptPath, $receiptPath) }
+} catch {
+    '[backup-all] WARNING last-run receipt could not be written' | Out-File $log -Append -Encoding utf8 -ErrorAction SilentlyContinue
+} finally {
+    if ([IO.File]::Exists($tempReceiptPath)) { Remove-Item -LiteralPath $tempReceiptPath -Force -ErrorAction SilentlyContinue }
+}
 exit $exitCode

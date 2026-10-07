@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import shutil
@@ -66,3 +67,32 @@ function py { $global:LASTEXITCODE = 0; 'dashboard fixture passed' }
     assert failure["error_summary"] == "server unavailable"
     assert receipt["dashboard_configuration"]["status"] == "pass"
     assert receipt["overall_status"] == "failed"
+@pytest.mark.parametrize("shell", tuple(filter(None, map(shutil.which, ("pwsh", "powershell")))))
+@pytest.mark.parametrize("db_exit,grafana_exit,local,cloud,reason,blocked,extra", [
+    (0, 0, "complete", "complete", None, False, {}),
+    (0, 1, "complete", "failed", "git_backup_failed", False, {"local_snapshot_status": "complete", "cloud_sync_status": "failed", "reason": "git_backup_failed"}),
+    (2, 1, "failed", None, "backup_command_failed", False, {}),
+    (2, 0, "failed", "complete", "backup_command_failed", False, {}),
+    (0, 0, "retained_previous", None, None, False, {"retained_previous_backup": True, "file_warnings": [{}]}),
+    (0, 0, "complete", "complete", None, True, {}),
+])
+def test_last_run_receipt(tmp_path, shell, db_exit, grafana_exit, local, cloud, reason, blocked, extra):
+    script = Path(__file__).with_name("backup_all.ps1").read_text(encoding="utf-8-sig")
+    script = script.replace(r"E:\Projects\Tools\TimeAudit", str(tmp_path))
+    grafana = json.dumps({"mode": "grafana", "status": "failed" if grafana_exit else "complete", **extra})
+    fixture = f"function powershell {{ $global:LASTEXITCODE = {db_exit}; '{{\"mode\":\"backup\",\"status\":\"failed\",\"reason\":\"backup_command_failed\"}}' }}\n"
+    fixture += f"function py {{ $global:LASTEXITCODE = {grafana_exit}; '{grafana}' }}\n"
+    entry = tmp_path / "last-run-fixture.ps1"
+    entry.write_text(fixture + script, encoding="utf-8-sig")
+    (tmp_path / "log").mkdir()
+    if blocked: (tmp_path / "log" / "backup-last-run.json").mkdir()
+    elif db_exit: (tmp_path / "log" / "backup-last-run.json").write_text("old", encoding="utf-8")
+    result = subprocess.run([shell, "-NoProfile", "-File", str(entry)], capture_output=True, timeout=20,
+                            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    assert result.returncode == (db_exit or grafana_exit), result.stderr
+    if blocked: return
+    receipt = json.loads((tmp_path / "log" / "backup-last-run.json").read_text(encoding="utf-8"))
+    assert (receipt["local_snapshot_status"], receipt["cloud_sync_status"], receipt["reason"], receipt["exit_code"]) == (local, cloud, reason, result.returncode)
+    started, completed = (datetime.fromisoformat(receipt[key]) for key in ("started_at", "completed_at"))
+    assert receipt["schema"] == "timeaudit.backup-run.v1" and started.tzinfo and completed.tzinfo
+    assert entry.stat().st_mtime <= started.timestamp() <= completed.timestamp() <= datetime.now(timezone.utc).timestamp()
