@@ -1,5 +1,6 @@
 # -*- coding: utf-8 -*-
 import contextlib
+import json
 import os
 import subprocess
 import tempfile
@@ -235,8 +236,13 @@ class GitSyncTests(unittest.TestCase):
                 side_effect=backup.GitSyncError("push rejected"),
             ),
             mock.patch("sys.argv", ["backup_grafana.py"]),
+            mock.patch("builtins.print") as output,
         ):
             self.assertEqual(backup.main(), 1)
+        receipt = json.loads(output.call_args.args[0])
+        self.assertEqual(receipt["local_snapshot_status"], "complete")
+        self.assertEqual(receipt["cloud_sync_status"], "failed")
+        self.assertEqual(receipt["status"], "failed")
 
     def test_main_refuses_dirty_dashboard_tree_before_any_export(self):
         with (
@@ -410,7 +416,8 @@ class GitSyncTests(unittest.TestCase):
 
     def test_network_retry_is_bounded_and_transport_only(self):
         failed = subprocess.CompletedProcess(
-            args=["git"], returncode=128, stdout="", stderr="TLS connect error"
+            args=["git"], returncode=128, stdout="",
+            stderr="schannel: server closed abruptly (missing close_notify)"
         )
         passed = subprocess.CompletedProcess(
             args=["git"], returncode=0, stdout="", stderr=""
@@ -423,6 +430,15 @@ class GitSyncTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(run.call_count, 2)
         sleep.assert_called_once_with(1)
+
+        with (
+            mock.patch("backup_grafana.git", return_value=failed) as run,
+            mock.patch("backup_grafana.time.sleep") as sleep,
+            self.assertRaisesRegex(backup.GitSyncError, "missing close_notify"),
+        ):
+            backup.git_network(["fetch", "origin"], delays=(1, 2))
+        self.assertEqual(run.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(2)])
 
         rejected = subprocess.CompletedProcess(
             args=["git"],

@@ -605,6 +605,7 @@ def retryable_git_network_failure(result):
         "could not connect",
         "failed to connect",
         "tls connect error",
+        "schannel: server closed abruptly",
         "ssl routines",
         "unexpected eof",
         "connection reset",
@@ -865,6 +866,10 @@ def main():
                     )
                 except Exception as e:
                     log(f"❌ git 云备份失败，任务返回非零以触发调度重试: {e}")
+                    print(json.dumps({"mode": "grafana", "status": "failed", "reason": "git_backup_failed",
+                                      "local_snapshot_status": "complete" if not file_warnings else "retained_previous",
+                                      "cloud_sync_status": "failed", "file_warnings": file_warnings,
+                                      "summary": "本地快照已完成、云端推送失败" if not file_warnings else "此前本地快照已保留、云端推送失败"}))
                     return 1
     except Exception as e:
         log(f"❌ Grafana 备份互斥锁不可用: {e}")
