@@ -15,7 +15,9 @@ def make_archive(path):
     return path
 
 
-def fake_export(args, *, stdout, **kwargs):
+def fake_export(args, *, stdout=None, **kwargs):
+    if "top" in args:
+        return b"PID COMMAND\n12 postgres\n"
     assert "pg_dump" in args and "-Fc" in args
     stdout.write(b"PGDMP" + b"fixture" * 200)
     return b""
@@ -64,7 +66,7 @@ def test_corrupt_or_unbounded_manifest_fails_closed(tmp_path):
 def test_failed_export_preserves_good_archive_and_cleans_owned_candidate(tmp_path):
     good=make_archive(tmp_path/"time_audit_20260101_120000.dump")
     original=good.read_bytes()
-    with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=RuntimeError("failed")):
+    with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=[b"PID COMMAND\n12 postgres\n", RuntimeError("failed")]):
         with pytest.raises(RuntimeError):backup.backup(tmp_path)
     assert good.read_bytes() == original
     assert not list(tmp_path.glob("*.partial"))
@@ -197,7 +199,7 @@ def test_cli_reports_busy_backup_without_claiming_completion(capsys):
 
 def test_command_failure_keeps_stage_exit_and_safe_stderr(tmp_path, capsys):
     result = subprocess.CompletedProcess([], 2, b"private success output", b"pg_dump: server unavailable password=secret-value postgresql://user:pass@host/db")
-    with patch.object(backup.subprocess, "run", return_value=result), patch.object(backup, "docker_path", return_value="docker"):
+    with patch.object(backup.subprocess, "run", side_effect=lambda args, **kw: subprocess.CompletedProcess(args, 0, b"PID COMMAND\n12 postgres\n", b"") if "top" in args else result), patch.object(backup, "docker_path", return_value="docker"):
         assert backup.main(["backup", "--backup-dir", str(tmp_path)]) == 1
     receipt = json.loads(capsys.readouterr().out)
     assert receipt["stage"] == "pg_dump" and receipt["exit_code"] == 2
@@ -241,7 +243,7 @@ def test_summary_redacts_quoted_keys_and_short_pgpassword():
 
 def test_cleanup_failure_cannot_hide_original_export_error(tmp_path, capsys):
     original = backup.BackupCommandError("backup_command_failed", "pg_dump", exit_code=7, detail="server unavailable")
-    with patch.object(backup, "docker_path", return_value="docker"), patch.object(backup, "command", side_effect=original), \
+    with patch.object(backup, "docker_path", return_value="docker"), patch.object(backup, "command", side_effect=[b"PID COMMAND\n12 postgres\n", original]), \
          patch.object(backup, "_reconcile_transaction", side_effect=OSError("cleanup disk error")):
         assert backup.main(["backup", "--backup-dir", str(tmp_path)]) == 1
     receipt = json.loads(capsys.readouterr().out)
@@ -303,3 +305,13 @@ def test_bad_parameters_are_rejected_before_export(tmp_path):
     for args in ({"retention_days":0},{"retention_days":-1},{"container":"--help"},{"db_user":"x; rm"}):
         with pytest.raises(ValueError):backup.backup(tmp_path,**args)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("processes,reason", [(b"PID COMMAND\n12 pg_dump\n", "backup_already_running"), (backup.BackupCommandError("backup_command_failed", "docker_command"), "backup_command_failed")])
+def test_export_guard_skips_busy_or_unreadable_container(tmp_path, capsys, processes, reason):
+    with patch.object(backup, "docker_path", return_value="docker"), patch.object(backup, "command", return_value=processes, side_effect=processes if isinstance(processes, Exception) else None) as command:
+        assert backup.main(["backup", "--backup-dir", str(tmp_path)]) == 1
+    receipt = json.loads(capsys.readouterr().out)
+    assert receipt["reason"] == reason and receipt["status"] in ("busy", "failed")
+    assert command.call_count == 1 and "top" in command.call_args.args[0]
+    assert not list(tmp_path.glob("*.partial")) and not list(tmp_path.glob("*.transaction-*"))

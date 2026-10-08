@@ -96,3 +96,17 @@ def test_last_run_receipt(tmp_path, shell, db_exit, grafana_exit, local, cloud, 
     started, completed = (datetime.fromisoformat(receipt[key]) for key in ("started_at", "completed_at"))
     assert receipt["schema"] == "timeaudit.backup-run.v1" and started.tzinfo and completed.tzinfo
     assert entry.stat().st_mtime <= started.timestamp() <= completed.timestamp() <= datetime.now(timezone.utc).timestamp()
+
+
+@pytest.mark.parametrize("shell", tuple(filter(None, map(shutil.which, ("pwsh", "powershell")))))
+def test_killed_run_leaves_started_receipt(tmp_path, shell):
+    script = Path(__file__).with_name("backup_all.ps1").read_text(encoding="utf-8-sig").replace(r"E:\Projects\Tools\TimeAudit", str(tmp_path))
+    (tmp_path / "log").mkdir()
+    path = tmp_path / "log" / "backup-last-run.json"
+    entry = tmp_path / "killed-run.ps1"
+    entry.write_text("function powershell { Stop-Process -Id $PID -Force }\n" + script, encoding="utf-8-sig")
+    result = subprocess.run([shell, "-NoProfile", "-File", str(entry)], capture_output=True, timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    receipt = json.loads(path.read_text(encoding="utf-8"))
+    assert result.returncode != 0 and receipt["status"] == receipt["local_snapshot_status"] == "running"
+    assert datetime.fromisoformat(receipt["started_at"]).tzinfo and receipt["completed_at"] is None
+    assert not list(path.parent.glob("*.tmp"))

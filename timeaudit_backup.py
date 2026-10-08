@@ -271,6 +271,10 @@ def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_
 
 
 def _backup_locked(directory: Path, *, container, db_user, db_name, retention_days):
+    with failure_stage("export_overlap_check"):
+        processes = command([docker_path(), "top", container, "-eo", "pid,comm"], timeout=10).decode("utf-8").splitlines()
+        if any(row.split()[-1] == "pg_dump" for row in processes[1:] if row.split()):
+            raise BackupCommandError("backup_already_running", "export_overlap_check", detail="pg_dump is still running in target container; export skipped")
     with failure_stage("transaction_recovery"):
         _reconcile_transactions(directory, container=container)
     filename = "time_audit_" + dt.datetime.now(dt.timezone.utc).strftime("%Y%m%d_%H%M%S") + "_" + uuid.uuid4().hex[:6] + ".dump"

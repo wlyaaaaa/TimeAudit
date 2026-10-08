@@ -39,7 +39,27 @@ function Invoke-LoggedCommand {
     }
 }
 
+function Write-RunReceipt {
+    param($RunReceipt)
+    $receiptPath = Join-Path (Split-Path $log) 'backup-last-run.json'
+    $tempReceiptPath = "$receiptPath.$PID.tmp"
+    try {
+        [IO.File]::WriteAllText($tempReceiptPath, ($runReceipt | ConvertTo-Json -Depth 2), [Text.UTF8Encoding]::new($false))
+        if ([IO.File]::Exists($receiptPath)) { [IO.File]::Replace($tempReceiptPath, $receiptPath, [NullString]::Value) }
+        else { [IO.File]::Move($tempReceiptPath, $receiptPath) }
+    } catch {
+        '[backup-all] WARNING last-run receipt could not be written' | Out-File $log -Append -Encoding utf8 -ErrorAction SilentlyContinue
+    } finally {
+        if ([IO.File]::Exists($tempReceiptPath)) { Remove-Item -LiteralPath $tempReceiptPath -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 $startedAt = [DateTimeOffset]::Now.ToString('o')
+Write-RunReceipt ([ordered]@{
+    schema = 'timeaudit.backup-run.v1'; status = 'running'; started_at = $startedAt
+    completed_at = $null; local_snapshot_status = 'running'; cloud_sync_status = $null
+    reason = $null; summary = '备份进行中'; exit_code = $null
+})
 $exitCode = 0
 
 "============================================================" | Out-File $log -Encoding utf8
@@ -102,15 +122,5 @@ $runReceipt = [ordered]@{
     summary = $summary
     exit_code = $exitCode
 }
-$receiptPath = Join-Path (Split-Path $log) 'backup-last-run.json'
-$tempReceiptPath = "$receiptPath.$PID.tmp"
-try {
-    [IO.File]::WriteAllText($tempReceiptPath, ($runReceipt | ConvertTo-Json -Depth 2), [Text.UTF8Encoding]::new($false))
-    if ([IO.File]::Exists($receiptPath)) { [IO.File]::Replace($tempReceiptPath, $receiptPath, [NullString]::Value) }
-    else { [IO.File]::Move($tempReceiptPath, $receiptPath) }
-} catch {
-    '[backup-all] WARNING last-run receipt could not be written' | Out-File $log -Append -Encoding utf8 -ErrorAction SilentlyContinue
-} finally {
-    if ([IO.File]::Exists($tempReceiptPath)) { Remove-Item -LiteralPath $tempReceiptPath -Force -ErrorAction SilentlyContinue }
-}
+Write-RunReceipt $runReceipt
 exit $exitCode
