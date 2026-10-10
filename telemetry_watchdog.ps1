@@ -514,6 +514,30 @@ function Confirm-WatchdogHealth {
     }finally{$process.Dispose()}
 }
 
+# Public power summary for the PCConfig cockpit: same method as the Grafana panel
+# "今日累计能耗" (CPU package + GPU board watts only, gaps >= 60 s dropped). Read-only
+# psql inside the existing container, at most every 10 minutes; no credentials.
+$powerReceipt = 'E:\Projects\Tools\TimeAudit\log\power-today.json'
+$powerSql = "SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY; WITH raw AS (SELECT timestamp, (cpu_package_power + gpu_board_power) AS w, COALESCE(EXTRACT(EPOCH FROM (timestamp - LAG(timestamp) OVER (ORDER BY timestamp))), 3.0) AS dt FROM public.fact_system_hardware WHERE timestamp >= (date_trunc('day', now() AT TIME ZONE 'Asia/Shanghai') - interval '1 day') AT TIME ZONE 'Asia/Shanghai' AND timestamp <= now()) SELECT (timestamp AT TIME ZONE 'Asia/Shanghai')::date, ROUND(SUM(CASE WHEN dt < 60 THEN w * dt / 3600000.0 ELSE 0 END)::numeric, 3), ROUND(MAX(w)::numeric, 0), COUNT(*) FROM raw GROUP BY 1 ORDER BY 1"
+function Write-PowerToday {
+    $existing = Get-Item -LiteralPath $powerReceipt -ErrorAction SilentlyContinue
+    if ($existing -and ((Get-Date) - $existing.LastWriteTime).TotalSeconds -lt 600) { return }
+    $result = Invoke-DockerBounded ('exec audit-postgres psql -U leyang -d time_audit -At -F "|" -v ON_ERROR_STOP=1 -c "' + $powerSql + '"') 15
+    if (-not $result.Success) { return }
+    $days = @(foreach ($line in ($result.Output -split "`r?`n")) {
+        $parts = $line.Trim() -split '\|'
+        if ($parts.Count -eq 4) {
+            [ordered]@{ date=$parts[0]; energy_kwh=[double]$parts[1]; peak_watts=[int][double]$parts[2]; samples=[int]$parts[3] }
+        }
+    })
+    $payload = [ordered]@{ schema='timeaudit.power-today.v1'; written_at=[DateTimeOffset]::Now.ToOffset([TimeSpan]::FromHours(8)).ToString('o'); days=$days }
+    $temporary = $powerReceipt + '.' + $PID + '.tmp'
+    try {
+        [IO.File]::WriteAllText($temporary, ($payload | ConvertTo-Json -Depth 4 -Compress), [Text.UTF8Encoding]::new($false))
+        Move-Item -LiteralPath $temporary -Destination $powerReceipt -Force -ErrorAction Stop
+    } finally { if (Test-Path $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue } }
+}
+
 $watchdogMutexName = 'Global\TimeAuditTelemetryWatchdogMutex'
 $watchdogMutex = $null
 $watchdogLockAcquired = $false
@@ -528,6 +552,7 @@ try {
     if ($watchdogLockAcquired) {
         Invoke-TimeAuditWatchdog
         if(-not (Confirm-WatchdogHealth)){$watchdogExitCode=2}
+        try { Write-PowerToday } catch { }  # display-only receipt; never affects recovery or exit code
     } else {
         Log 'watchdog invocation skipped because a live owner holds the recovery mutex'
         # The active owner alone publishes an outcome; do not overwrite it.
