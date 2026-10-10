@@ -1228,7 +1228,9 @@
       "title": "用户态调度抖动与上下文切换压力",
       "type": "timeseries"
     },
+    {"collapsed":true,"gridPos":{"h":1,"w":24,"x":0,"y":34},"id":22,"title":"资源压力、流量与长期趋势 · 展开查看","type":"row","panels":[
     {
+      "id": 9,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1360,7 +1362,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 34
+        "y": 35
       },
       "options": {
         "annotations": {
@@ -1395,6 +1397,7 @@
       "type": "timeseries"
     },
     {
+      "id": 10,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1477,7 +1480,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 34
+        "y": 35
       },
       "options": {
         "annotations": {
@@ -1512,6 +1515,7 @@
       "type": "timeseries"
     },
     {
+      "id": 11,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1637,7 +1641,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 34
+        "y": 35
       },
       "options": {
         "annotations": {
@@ -1672,6 +1676,7 @@
       "type": "timeseries"
     },
     {
+      "id": 12,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1756,7 +1761,7 @@
         "h": 7,
         "w": 3,
         "x": 0,
-        "y": 41
+        "y": 42
       },
       "options": {
         "colorMode": "value",
@@ -1790,6 +1795,7 @@
       "type": "stat"
     },
     {
+      "id": 13,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1873,7 +1879,7 @@
         "h": 7,
         "w": 5,
         "x": 3,
-        "y": 41
+        "y": 42
       },
       "options": {
         "annotations": {
@@ -1908,6 +1914,7 @@
       "type": "timeseries"
     },
     {
+      "id": 14,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1991,7 +1998,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 41
+        "y": 42
       },
       "options": {
         "annotations": {
@@ -2026,6 +2033,7 @@
       "type": "timeseries"
     },
     {
+      "id": 15,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2129,7 +2137,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 41
+        "y": 42
       },
       "options": {
         "annotations": {
@@ -2164,6 +2172,7 @@
       "type": "timeseries"
     },
     {
+      "id": 16,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2264,7 +2273,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 48
+        "y": 49
       },
       "options": {
         "annotations": {
@@ -2299,6 +2308,7 @@
       "type": "timeseries"
     },
     {
+      "id": 17,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2382,7 +2392,7 @@
         "h": 7,
         "w": 8,
         "x": 8,
-        "y": 48
+        "y": 49
       },
       "options": {
         "annotations": {
@@ -2417,6 +2427,7 @@
       "type": "timeseries"
     },
     {
+      "id": 18,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2517,7 +2528,7 @@
         "h": 7,
         "w": 8,
         "x": 16,
-        "y": 48
+        "y": 49
       },
       "options": {
         "annotations": {
@@ -2552,6 +2563,7 @@
       "type": "timeseries"
     },
     {
+      "id": 19,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2720,7 +2732,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 55
+        "y": 56
       },
       "options": {
         "annotations": {
@@ -2756,6 +2768,7 @@
       "type": "timeseries"
     },
     {
+      "id": 20,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2907,7 +2920,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 55
+        "y": 56
       },
       "options": {
         "annotations": {
@@ -2943,6 +2956,7 @@
       "type": "timeseries"
     },
     {
+      "id": 21,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -2983,7 +2997,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 64
       },
       "options": {
         "cellHeight": "sm",
@@ -3013,6 +3027,10 @@
       "title": "💾 TimeAudit 本地数据库存储与分区规模统计",
       "type": "table"
     }
+      ],
+      "title": "资源压力、流量与长期趋势 · 展开查看",
+      "type": "row"
+    }
   ],
   "preload": false,
   "refresh": "30s",
@@ -3027,8 +3045,8 @@
       {
         "allowCustomValue": true,
         "current": {
-          "text": "365d",
-          "value": "365d"
+          "text": "30d",
+          "value": "30d"
         },
         "hide": 0,
         "includeAll": false,
@@ -3112,7 +3130,7 @@
     ]
   },
   "time": {
-    "from": "now-2d",
+    "from": "now-1h",
     "to": "now"
   },
   "timepicker": {

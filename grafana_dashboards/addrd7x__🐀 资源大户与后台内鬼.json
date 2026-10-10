@@ -548,7 +548,9 @@
       "title": "🧵 线程/亲和性/共享显存细览",
       "type": "table"
     },
+    {"type":"row","title":"卡死、泄漏与应用趋势 · 展开查看","id":11,"collapsed":true,"gridPos":{"h":1,"w":24,"x":0,"y":45},"panels":[
     {
+      "id": 6,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -599,7 +601,7 @@
         "h": 8,
         "w": 24,
         "x": 0,
-        "y": 45
+        "y": 46
       },
       "options": {
         "alignValue": "left",
@@ -639,6 +641,7 @@
       "type": "state-timeline"
     },
     {
+      "id": 7,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -811,7 +814,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 53
+        "y": 54
       },
       "options": {
         "cellHeight": "sm",
@@ -844,6 +847,7 @@
       "type": "table"
     },
     {
+      "id": 8,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -966,7 +970,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 63
+        "y": 64
       },
       "options": {
         "legend": {
@@ -999,6 +1003,7 @@
       "type": "timeseries"
     },
     {
+      "id": 9,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1020,7 +1025,7 @@
         "h": 9,
         "w": 12,
         "x": 0,
-        "y": 73
+        "y": 74
       },
       "options": {
         "legend": {
@@ -1049,6 +1054,7 @@
       "type": "timeseries"
     },
     {
+      "id": 10,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1070,7 +1076,7 @@
         "h": 9,
         "w": 12,
         "x": 12,
-        "y": 73
+        "y": 74
       },
       "options": {
         "legend": {
@@ -1098,6 +1104,8 @@
       "title": "应用内存趋势 · 小时/日均值与应用合计峰值",
       "type": "timeseries"
     }
+      ]
+    }
   ],
   "schemaVersion": 42,
   "tags": [
@@ -1109,7 +1117,7 @@
     "list": []
   },
   "time": {
-    "from": "now-1h",
+    "from": "now-5m",
     "to": "now"
   },
   "timepicker": {
