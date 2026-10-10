@@ -989,7 +989,7 @@
           "editorMode": "code",
           "format": "table",
           "rawQuery": true,
-          "rawSql": "WITH time_grid AS (\r\n  -- 1. 🛡️ 骨架核心：显式转化 Grafana 宏为 timestamptz，彻底干掉函数重载歧义\r\n  SELECT generate_series(\r\n    date_trunc('minute', $__timeFrom()::timestamptz),\r\n    date_trunc('minute', $__timeTo()::timestamptz),\r\n    '1 minute'::interval\r\n  ) AS grid_time\r\n),\r\nflagged_switches AS (\r\n  -- 2. 🗜️ 核心过滤：计算每一次真实的前台切换\r\n  SELECT\r\n    date_trunc('minute', start_time) as min_time,\r\n    CASE \r\n      WHEN process_name = LAG(process_name) OVER (ORDER BY start_time) \r\n           AND window_title = LAG(window_title) OVER (ORDER BY start_time) THEN 0\r\n      ELSE 1\r\n    END as is_switch\r\n  FROM app_usage_logs\r\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle')\r\n    AND $__timeFilter(start_time)\r\n),\r\nminute_counts AS (\r\n  -- 3. 📊 分钟级初级聚合\r\n  SELECT \r\n    min_time,\r\n    SUM(is_switch) as switch_count\r\n  FROM flagged_switches\r\n  GROUP BY min_time\r\n)\r\n-- 4. 🔗 终审合流：用骨架强行左联。没数据的分钟一律 COALESCE 强制拍成 0 次\r\nSELECT\r\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\r\n  COALESCE(mc.switch_count, 0) as \"每分钟前台闪切次数\"\r\nFROM time_grid g\r\nLEFT JOIN minute_counts mc ON g.grid_time = mc.min_time\r\nORDER BY time ASC;",
+          "rawSql": "WITH bucket_params AS (\r\n  SELECT\r\n    GREATEST(interval '1 minute', ('$__interval')::interval) AS bucket_size,\r\n    '2000-01-01 00:00:00+08'::timestamptz AS bucket_origin\r\n),\r\ntime_grid AS (\r\n  SELECT generate_series(\r\n    date_bin(p.bucket_size, $__timeFrom()::timestamptz, p.bucket_origin),\r\n    date_bin(p.bucket_size, $__timeTo()::timestamptz, p.bucket_origin),\r\n    p.bucket_size\r\n  ) AS grid_time\r\n  FROM bucket_params p\r\n),\r\nflagged_switches AS (\r\n  SELECT\r\n    date_bin(p.bucket_size, start_time::timestamptz, p.bucket_origin) AS bucket_time,\r\n    CASE\r\n      WHEN process_name = LAG(process_name) OVER (ORDER BY start_time)\r\n           AND window_title = LAG(window_title) OVER (ORDER BY start_time) THEN 0\r\n      ELSE 1\r\n    END AS is_switch\r\n  FROM app_usage_logs\r\n  CROSS JOIN bucket_params p\r\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle')\r\n    AND $__timeFilter(start_time)\r\n),\r\nbucket_counts AS (\r\n  SELECT bucket_time, SUM(is_switch) AS switch_count\r\n  FROM flagged_switches\r\n  GROUP BY bucket_time\r\n)\r\nSELECT\r\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') AS time,\r\n  COALESCE(bc.switch_count, 0) / (EXTRACT(EPOCH FROM p.bucket_size) / 60.0) AS \"每分钟前台闪切次数\"\r\nFROM time_grid g\r\nCROSS JOIN bucket_params p\r\nLEFT JOIN bucket_counts bc ON g.grid_time = bc.bucket_time\r\nORDER BY time ASC;",
           "refId": "A",
           "sql": {
             "columns": [
@@ -1010,6 +1010,9 @@
           }
         }
       ],
+      "description": "短范围按分钟计数；长范围显示每个时间桶内的每分钟平均切换次数，无切换时为 0。",
+      "interval": "1m",
+      "maxDataPoints": 1441,
       "title": "前台上下文“频繁闪切”干扰指数",
       "type": "timeseries"
     },
@@ -1373,7 +1376,7 @@
     "list": []
   },
   "time": {
-    "from": "now/y",
+    "from": "now-24h",
     "to": "now"
   },
   "timepicker": {
@@ -1393,6 +1396,6 @@
   "timezone": "browser",
   "title": "📊 屏幕使用时间",
   "uid": "adfkm96",
-  "version": 68,
+  "version": 69,
   "weekStart": ""
 }
