@@ -22,7 +22,7 @@
   "links": [],
   "liveNow": false,
   "panels": [
-    {
+    {"id":20,"type":"row","title":"组件与提权统计 · 展开计算","collapsed":true,"gridPos":{"h":1,"w":24,"x":0,"y":0},"panels":[{"id":1,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -53,7 +53,7 @@
         "h": 3,
         "w": 4,
         "x": 0,
-        "y": 0
+        "y": 1
       },
       "options": {
         "colorMode": "value",
@@ -89,7 +89,7 @@
       "title": "🔴 高危仿冒组件数",
       "type": "stat"
     },
-    {
+    {"id":2,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -120,7 +120,7 @@
         "h": 3,
         "w": 5,
         "x": 4,
-        "y": 0
+        "y": 1
       },
       "options": {
         "colorMode": "value",
@@ -156,7 +156,7 @@
       "title": "🔑 提权进程启动次数",
       "type": "stat"
     },
-    {
+    {"id":3,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -187,7 +187,7 @@
         "h": 3,
         "w": 5,
         "x": 9,
-        "y": 0
+        "y": 1
       },
       "options": {
         "colorMode": "value",
@@ -222,8 +222,10 @@
       ],
       "title": "⚠️ 系统未签名进程数",
       "type": "stat"
-    },
-    {
+    }
+    ]},
+    {"id":18,"type":"row","title":"崩溃与短命进程统计 · 展开计算","collapsed":true,"gridPos":{"h":1,"w":24,"x":0,"y":1},"panels":[
+    {"id":4,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -252,9 +254,9 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 5,
-        "x": 14,
-        "y": 0
+        "w": 12,
+        "x": 0,
+        "y": 2
       },
       "options": {
         "colorMode": "value",
@@ -290,7 +292,7 @@
       "title": "👿 进程异常崩溃次数",
       "type": "stat"
     },
-    {
+    {"id":5,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -323,9 +325,9 @@
       },
       "gridPos": {
         "h": 3,
-        "w": 5,
-        "x": 19,
-        "y": 0
+        "w": 12,
+        "x": 12,
+        "y": 2
       },
       "options": {
         "colorMode": "value",
@@ -360,7 +362,9 @@
       ],
       "title": "🌀 短命进程风暴频次",
       "type": "stat"
-    },
+    }
+    ]},
+    {"id":19,"type":"row","title":"进程生灭时间线","collapsed":false,"gridPos":{"h":1,"w":24,"x":0,"y":2},"panels":[]},
     {
       "datasource": {
         "type": "grafana-postgresql-datasource",
@@ -453,7 +457,7 @@
       },
       "gridPos": {
         "h": 7,
-        "w": 12,
+        "w": 24,
         "x": 0,
         "y": 3
       },
@@ -487,14 +491,16 @@
           "editorMode": "code",
           "format": "time_series",
           "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '10 seconds', ('$__interval')::interval) AS dt\n  FROM time_bounds\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) AS grid_time\n  FROM time_bounds b\n  CROSS JOIN interval_calc i\n),\nstate_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    a.process_name\n  FROM public.app_usage_logs a\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from (a.start_time + (a.duration_seconds || ' seconds')::interval)) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.start_time >= b.t_from - interval '1 day' AND a.start_time >= b.t_from - interval '1 day' AND a.start_time <= b.t_to AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n  ORDER BY g.bucket_time, a.start_time DESC\n),\nstarts AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    count(*) AS count_start\n  FROM public.fact_process_lifecycle_events, time_bounds b, interval_calc i\n  WHERE event_type = 'START'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n),\nexits AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    count(*) AS count_exit\n  FROM public.fact_process_lifecycle_events, time_bounds b, interval_calc i\n  WHERE event_type = 'EXIT'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS time,\n  CASE \n    WHEN sa.process_name = 'System_Sleep' OR sa.process_name IS NULL THEN NULL\n    ELSE COALESCE(s.count_start, 0)\n  END AS \"进程生成速率 (次)\",\n  CASE \n    WHEN sa.process_name = 'System_Sleep' OR sa.process_name IS NULL THEN NULL\n    ELSE COALESCE(e.count_exit, 0)\n  END AS \"进程销毁速率 (次)\"\nFROM time_grid g\nLEFT JOIN state_aligned sa ON sa.bucket_time = g.grid_time\nLEFT JOIN starts s ON s.bucket_time = g.grid_time\nLEFT JOIN exits e ON e.bucket_time = g.grid_time\nORDER BY 1;",
+          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '10 seconds', ('$__interval')::interval) AS dt\n  FROM time_bounds\n),\ntime_grid AS (\n  SELECT generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) AS grid_time\n  FROM time_bounds b\n  CROSS JOIN interval_calc i\n),\nstate_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    a.process_name\n  FROM public.app_usage_logs a\n  CROSS JOIN time_bounds b\n  CROSS JOIN interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    GREATEST(to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz, to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz),\n    LEAST(to_timestamp(floor(extract(epoch from (a.start_time + (a.duration_seconds || ' seconds')::interval)) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz, to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz),\n    i.dt\n  ) g(bucket_time)\n  WHERE a.start_time >= b.t_from - interval '1 day' AND a.start_time >= b.t_from - interval '1 day' AND a.start_time <= b.t_to AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n  ORDER BY g.bucket_time, a.start_time DESC\n),\nstarts AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    count(*) AS count_start\n  FROM public.fact_process_lifecycle_events, time_bounds b, interval_calc i\n  WHERE event_type = 'START'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n),\nexits AS (\n  SELECT \n    to_timestamp(floor(extract(epoch from event_timestamp) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz AS bucket_time,\n    count(*) AS count_exit\n  FROM public.fact_process_lifecycle_events, time_bounds b, interval_calc i\n  WHERE event_type = 'EXIT'\n    AND event_timestamp >= b.t_from AND event_timestamp <= b.t_to\n  GROUP BY 1\n)\nSELECT \n  g.grid_time AS time,\n  CASE \n    WHEN sa.process_name = 'System_Sleep' OR sa.process_name IS NULL THEN NULL\n    ELSE COALESCE(s.count_start, 0)\n  END AS \"进程生成速率 (次)\",\n  CASE \n    WHEN sa.process_name = 'System_Sleep' OR sa.process_name IS NULL THEN NULL\n    ELSE COALESCE(e.count_exit, 0)\n  END AS \"进程销毁速率 (次)\"\nFROM time_grid g\nLEFT JOIN state_aligned sa ON sa.bucket_time = g.grid_time\nLEFT JOIN starts s ON s.bucket_time = g.grid_time\nLEFT JOIN exits e ON e.bucket_time = g.grid_time\nORDER BY 1;",
           "refId": "A"
         }
       ],
       "title": "📈 进程生灭速率时间线",
       "type": "timeseries"
     },
+    {"collapsed":true,"gridPos":{"h":1,"w":24,"x":0,"y":10},"id":17,"title":"提权、崩溃与外联明细 · 展开查看","type":"row","panels":[
     {
+      "id": 7,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -596,7 +602,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 3
+        "y": 11
       },
       "options": {
         "cellHeight": "sm",
@@ -620,6 +626,7 @@
       "type": "table"
     },
     {
+      "id": 8,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -751,7 +758,7 @@
         "h": 10,
         "w": 24,
         "x": 0,
-        "y": 10
+        "y": 18
       },
       "options": {
         "cellHeight": "sm",
@@ -781,6 +788,7 @@
       "type": "table"
     },
     {
+      "id": 9,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -908,7 +916,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 20
+        "y": 28
       },
       "options": {
         "cellHeight": "sm",
@@ -938,6 +946,7 @@
       "type": "table"
     },
     {
+      "id": 10,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1033,7 +1042,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 20
+        "y": 28
       },
       "options": {
         "cellHeight": "sm",
@@ -1057,6 +1066,7 @@
       "type": "table"
     },
     {
+      "id": 11,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1133,7 +1143,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 28
+        "y": 36
       },
       "options": {
         "cellHeight": "sm",
@@ -1157,6 +1167,7 @@
       "type": "table"
     },
     {
+      "id": 12,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1273,7 +1284,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 28
+        "y": 36
       },
       "options": {
         "cellHeight": "sm",
@@ -1303,6 +1314,7 @@
       "type": "table"
     },
     {
+      "id": 13,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1404,7 +1416,7 @@
         "h": 8,
         "w": 12,
         "x": 0,
-        "y": 36
+        "y": 44
       },
       "options": {
         "cellHeight": "sm",
@@ -1428,6 +1440,7 @@
       "type": "table"
     },
     {
+      "id": 14,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1533,7 +1546,7 @@
         "h": 8,
         "w": 12,
         "x": 12,
-        "y": 36
+        "y": 44
       },
       "options": {
         "cellHeight": "sm",
@@ -1557,6 +1570,7 @@
       "type": "table"
     },
     {
+      "id": 15,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1625,7 +1639,7 @@
         "h": 7,
         "w": 12,
         "x": 0,
-        "y": 44
+        "y": 52
       },
       "options": {
         "cellHeight": "sm",
@@ -1649,6 +1663,7 @@
       "type": "table"
     },
     {
+      "id": 16,
       "datasource": {
         "type": "grafana-postgresql-datasource",
         "uid": "P7A9DAD60F8AB4C18"
@@ -1710,7 +1725,7 @@
         "h": 7,
         "w": 12,
         "x": 12,
-        "y": 44
+        "y": 52
       },
       "options": {
         "cellHeight": "sm",
@@ -1733,6 +1748,7 @@
       "title": "🌳 进程家谱 (命令解释器孵化子进程树)",
       "type": "table"
     }
+    ] }
   ],
   "preload": false,
   "refresh": "",
@@ -1745,7 +1761,7 @@
     "list": []
   },
   "time": {
-    "from": "now-7d",
+    "from": "now-6h",
     "to": "now"
   },
   "timepicker": {

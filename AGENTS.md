@@ -7,6 +7,7 @@
 - 无响应判断使用交互会话中的 `IsHungAppWindow`；引擎需要用户交互会话及现有提权运行条件，不改为 SYSTEM。父进程名使用同一系统快照的 pid→name，不逐进程调用 `psutil.Process.parent()`。
 - 活跃进程扫描留在 `asyncio.to_thread`，进程差分基线即使单项异常也继续推进；PG 断连时池关闭要有超时和 terminate 兜底，避免阻塞采集节拍。
 - Grafana SQL 的 Windows 路径匹配避免反斜杠被 LIKE 转义；时间网格先对齐桶边界。PG 会话时区保持 `Asia/Shanghai`，以正确计算本地日界。
+- Grafana V1 折叠行之后需要常显的面板，用显式展开行隔开；部署后通过 `v2/dto` 回读核对实际行归属，顶层面板数组不代表可见状态。
 - 分区事实表查询和关联都要下推明确时间界。`app_usage_logs` 是可重叠的区间事件：按查询窗裁剪并对重叠区间求并集，空集归零；不能仅按起点筛选后直接求和。
 - 诊断中缺测、旧尾段和实际覆盖分开报告；心跳新鲜不等于活动已经落库。业务读取和历史诊断接口分别见 `PERSONAL_ACTIVITY_READER.md`、`TIMEAUDIT_DIAGNOSTIC_SUMMARY_CONTRACT.md`。
 - 实机在线检查与离线回归分开。离线回归按改动选择 `test_*.py`；全量 `pytest` 包含依赖和在线环境要求，运行时诊断见 `DIAGNOSTICS_OPERATIONS.md`。NVML mock 不可把假句柄传到真实原生函数。
