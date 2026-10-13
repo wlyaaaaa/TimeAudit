@@ -606,6 +606,7 @@ def retryable_git_network_failure(result):
         "failed to connect",
         "tls connect error",
         "schannel: server closed abruptly",
+        "schannel: failed to receive handshake, ssl/tls connection failed",
         "ssl routines",
         "unexpected eof",
         "connection reset",

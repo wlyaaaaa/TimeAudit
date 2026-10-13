@@ -455,6 +455,52 @@ class GitSyncTests(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
         sleep.assert_not_called()
 
+    def test_logged_schannel_handshake_failure_retries_in_cloud_sync_stage(self):
+        remote, local, _ = self.bare_topology("schannel-handshake")
+        self.use_backup_checkout(local)
+        original_git = backup.git
+        before_oid = run_git(local, "rev-parse", "HEAD").stdout.strip()
+        before_status = run_git(local, "status", "--porcelain").stdout
+        handshake_error = subprocess.CompletedProcess(
+            args=["git"], returncode=128, stdout="",
+            stderr=("fatal: unable to access 'https://github.com/wlyaaaaa/TimeAudit.git/': "
+                    "schannel: failed to receive handshake, SSL/TLS connection failed"),
+        )
+
+        for persistent in (False, True):
+            with self.subTest(persistent=persistent):
+                calls = []
+                fetch_attempts = 0
+
+                def git_with_handshake_failure(args, check=False):
+                    nonlocal fetch_attempts
+                    calls.append(args)
+                    if args[0] == "fetch":
+                        fetch_attempts += 1
+                        if persistent or fetch_attempts == 1:
+                            return handshake_error
+                    return original_git(args, check=check)
+
+                with (
+                    mock.patch.object(backup, "git", side_effect=git_with_handshake_failure),
+                    mock.patch.object(backup.time, "sleep") as sleep,
+                ):
+                    if persistent:
+                        with self.assertRaisesRegex(backup.GitSyncError, "failed to receive handshake"):
+                            backup.git_commit_and_push(do_push=True, dashboard_paths=[])
+                        self.assertEqual(fetch_attempts, 4)
+                        self.assertEqual(sleep.call_args_list, [mock.call(5), mock.call(15), mock.call(30)])
+                    else:
+                        backup.git_commit_and_push(do_push=True, dashboard_paths=[])
+                        # The first fetch recovers; verified_git_push fetches once more.
+                        self.assertEqual(fetch_attempts, 3)
+                        sleep.assert_called_once_with(5)
+
+                self.assertFalse(any(args[0] in ("commit", "push") for args in calls))
+                self.assertEqual(run_git(local, "rev-parse", "HEAD").stdout.strip(), before_oid)
+                self.assertEqual(run_git(local, "status", "--porcelain").stdout, before_status)
+                self.assertEqual(run_git(remote, "rev-parse", "refs/heads/main").stdout.strip(), before_oid)
+
 
 if __name__ == "__main__":
     unittest.main()
