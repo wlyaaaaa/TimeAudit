@@ -1,1386 +1,1806 @@
 {
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
       }
-    ]
-  },
-  "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 0,
-  "links": [],
-  "liveNow": false,
-  "panels": [
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 7,
-        "x": 0,
-        "y": 0
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "-- 🎯 区间并集(去重叠) + 裁剪到窗口。口径=排除深睡眠后、电脑通电运转的真实墙钟时长（与标题「已剔除睡眠」对齐）。\n-- app_usage_logs 偶有相互重叠的事件(AHK 暂离回溯重入会叠出多条 System_Idle 片)，\n-- 朴素 SUM 会重复计数、甚至超过窗口长度；故先用 gaps-and-islands 合并区间再求覆盖时长。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt),\nclip AS (\n  SELECT GREATEST(a.start_time, b.tf) AS s,\n         LEAST(a.start_time + (a.duration_seconds || ' seconds')::interval, b.tt) AS e\n  FROM app_usage_logs a, b\n  WHERE a.process_name <> 'System_Sleep'\n    AND a.start_time < b.tt\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.tf\n),\nislands AS (\n  SELECT s, e,\n         CASE WHEN s > MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)\n              THEN 1 ELSE 0 END AS new_island\n  FROM clip\n),\ngrouped AS (\n  SELECT s, e, SUM(new_island) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp\n  FROM islands\n)\nSELECT COALESCE(SUM(EXTRACT(EPOCH FROM (mx - mn))), 0)::bigint AS value\nFROM (SELECT MIN(s) AS mn, MAX(e) AS mx FROM grouped GROUP BY grp) t;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "电脑开机总时长 (已剔除睡眠)",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "min": 0,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 5,
-        "x": 7,
-        "y": 0
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "area",
-        "justifyMode": "auto",
-        "orientation": "auto",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "auto",
-        "wideLayout": true
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "-- 🎯 区间并集(去重叠) + 裁剪到窗口。口径=排除一切无键鼠交互态（深睡眠/熄屏/暂离/锁屏）后的真实活跃墙钟时长。\n-- app_usage_logs 偶有相互重叠的事件(AHK 暂离回溯重入会叠出多条 System_Idle 片)，\n-- 朴素 SUM 会重复计数、甚至超过窗口长度；故先用 gaps-and-islands 合并区间再求覆盖时长。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt),\nclip AS (\n  SELECT GREATEST(a.start_time, b.tf) AS s,\n         LEAST(a.start_time + (a.duration_seconds || ' seconds')::interval, b.tt) AS e\n  FROM app_usage_logs a, b\n  WHERE a.process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'System_LockScreen')\n    AND a.start_time < b.tt\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.tf\n),\nislands AS (\n  SELECT s, e,\n         CASE WHEN s > MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)\n              THEN 1 ELSE 0 END AS new_island\n  FROM clip\n),\ngrouped AS (\n  SELECT s, e, SUM(new_island) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp\n  FROM islands\n)\nSELECT COALESCE(SUM(EXTRACT(EPOCH FROM (mx - mn))), 0)::bigint AS value\nFROM (SELECT MIN(s) AS mn, MAX(e) AS mx FROM grouped GROUP BY grp) t;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "键鼠活跃估计总时间",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 3,
-        "w": 12,
-        "x": 12,
-        "y": 0
-      },
-      "options": {
-        "colorMode": "value",
-        "graphMode": "none",
-        "justifyMode": "center",
-        "orientation": "vertical",
-        "percentChangeColorMode": "standard",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "",
-          "values": false
-        },
-        "showPercentChange": false,
-        "textMode": "value_and_name",
-        "wideLayout": true
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "-- 🎯 裁剪到窗口 + COALESCE 防空：窗口内无熄屏/睡眠时返回 0 而非 NULL(否则面板空白)。\n-- 睡眠/熄屏是单流互斥状态、不会相互重叠，无需区间并集。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt)\nSELECT\n  COALESCE(SUM(CASE WHEN process_name = 'System_DisplayOff' THEN clip_sec END), 0)::bigint AS \"显示器熄灭时长\",\n  COALESCE(SUM(CASE WHEN process_name = 'System_Sleep'      THEN clip_sec END), 0)::bigint AS \"操作系统深睡眠时长\"\nFROM (\n  SELECT process_name,\n         EXTRACT(EPOCH FROM (LEAST(start_time + (duration_seconds || ' seconds')::interval, b.tt)\n                           - GREATEST(start_time, b.tf))) AS clip_sec\n  FROM app_usage_logs a, b\n  WHERE process_name IN ('System_DisplayOff', 'System_Sleep')\n    AND start_time < b.tt\n    AND start_time + (duration_seconds || ' seconds')::interval > b.tf\n) q;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "显示屏和睡眠",
-      "type": "stat"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "custom": {
-            "align": "center",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false,
-            "tooltip": {
-              "field": "持续总秒数",
-              "placement": "top"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计时长",
-              "scope": "series"
-            },
-            "properties": [
-              {
-                "value": {
-                  "type": "gauge",
-                  "valueDisplayMode": "color"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 16,
-        "w": 12,
-        "x": 0,
-        "y": 3
-      },
-      "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT\r\n  CASE \r\n    -- 💻 核心核心生产力 (研发、数据与终端)\r\n    WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe') THEN '💻 开发工具: VS Code / Cursor'\r\n    WHEN LOWER(process_name) = 'idea64.exe' THEN '☕ 开发工具: IntelliJ IDEA'\r\n    WHEN LOWER(process_name) = 'datagrip64.exe' THEN '🗄️ 数仓工具: DataGrip'\r\n    WHEN LOWER(process_name) = 'windowsterminal.exe' THEN '💻 终端工具: Windows Terminal'\r\n    WHEN LOWER(process_name) = 'powershell_ise.exe' THEN '💻 终端工具: PowerShell ISE'\r\n    WHEN LOWER(process_name) = 'cmd.exe' THEN '💻 终端工具: Command Prompt'\r\n    WHEN LOWER(process_name) = 'typora.exe' THEN '📝 笔记工具: Typora'\r\n    WHEN LOWER(process_name) = 'notepad.exe' THEN '📝 文本编辑: 记事本'\r\n    WHEN LOWER(process_name) = 'winword.exe' THEN '📄 办公软件: Microsoft Word'\r\n    WHEN LOWER(process_name) = 'git-credential-manager.exe' THEN '💻 开发工具: Git 凭据管理器'\r\n    WHEN LOWER(process_name) = 'java.exe' THEN '💻 运行环境: Java 虚拟机'\r\n    WHEN LOWER(process_name) LIKE 'python%' THEN '💻 开发工具: Python 运行环境/安装器'\r\n\r\n    -- 🌐 网络、社交、AI与云服务\r\n    WHEN LOWER(process_name) IN ('chrome.exe', 'msedge.exe') THEN '🌐 网络浏览器: ' || process_name\r\n    WHEN LOWER(process_name) = 'weixin.exe' THEN '💬 社交软件: 微信'\r\n    WHEN LOWER(process_name) = 'baidunetdiskunite.exe' THEN '☁️ 网络云盘: 百度网盘'\r\n    WHEN LOWER(process_name) = 'thunder.exe' THEN '⚡ 下载工具: 迅雷'\r\n    WHEN LOWER(process_name) = 'chatlab.exe' THEN '🤖 效率工具: ChatLab AI客户端'\r\n\r\n    -- 📊 硬件监测与外设驱动\r\n    WHEN LOWER(process_name) = 'librehardwaremonitor.exe' THEN '📊 硬件监测: LibreHardwareMonitor'\r\n    WHEN LOWER(process_name) = 'presentmonconsole.exe' THEN '📊 硬件监测: PresentMon 帧率探测'\r\n    WHEN LOWER(process_name) = 'trafficmonitor.exe' THEN '📊 硬件监测: TrafficMonitor'\r\n    WHEN LOWER(process_name) = 'aida64.exe' THEN '📊 硬件监测: AIDA64 性能分析'\r\n    WHEN LOWER(process_name) = 'turzx.exe' THEN '📊 硬件监测: TURZX 智能副屏驱动'\r\n    WHEN LOWER(process_name) = 'cinebench.exe' THEN '📊 性能测试: Cinebench 跑分压测'\r\n    WHEN LOWER(process_name) = 'nvidia app.exe' THEN '⚙️ 驱动控制: NVIDIA App'\r\n    WHEN LOWER(process_name) = 'razerappengine.exe' THEN '⚙️ 驱动控制: Razer 雷云外设管理'\r\n    WHEN LOWER(process_name) = 'evnia precision center.exe' THEN '⚙️ 驱动控制: 飞利浦 Evnia 显示中心'\r\n    WHEN LOWER(process_name) = 'alta2dpconfig.exe' THEN '🎵 音频控制: 蓝牙 A2DP 高清配置'\r\n\r\n    -- 🛠️ 系统辅助与效率工具\r\n    WHEN LOWER(process_name) = 'autohotkey64.exe' THEN '🛠️ 自动化脚本: AutoHotkey'\r\n    WHEN LOWER(process_name) = 'pixpin.exe' THEN '✂️ 截图工具: PixPin'\r\n    WHEN LOWER(process_name) = 'powertoys.filelocksmithui.exe' THEN '🛠️ 系统工具: PowerToys 文件锁分析'\r\n    WHEN LOWER(process_name) = 'docker desktop.exe' THEN '🐳 容器工具: Docker Desktop'\r\n    WHEN LOWER(process_name) = 'fancyrd.exe' THEN '🖥️ 远程桌面: FancyRd Client'\r\n    WHEN LOWER(process_name) = '360zip.exe' THEN '📦 压缩解压: 360压缩'\r\n    WHEN LOWER(process_name) = 'wallpaperui.exe' THEN '🖼️ 桌面美化: 动态壁纸组件'\r\n\r\n    -- 🎮 游戏与媒体娱乐\r\n    WHEN LOWER(process_name) = 'slaythespire2.exe' THEN '🎮 电脑游戏: 杀戮尖塔 2'\r\n    WHEN LOWER(process_name) = 'steamwebhelper.exe' THEN '🎮 游戏平台: Steam 核心服务'\r\n    WHEN LOWER(process_name) = 'uu.exe' THEN '🎮 游戏加速: 网易 UU 加速器'\r\n    WHEN LOWER(process_name) = 'cloudmusic.exe' THEN '🎵 媒体娱乐: 网易云音乐'\r\n\r\n    -- 🖥️ Windows 原生底层核心组件\r\n    WHEN process_name = 'explorer.exe' AND window_title LIKE '文件管理器:%' THEN '📁 系统组件: 文件管理器'\r\n    WHEN process_name = 'explorer.exe' AND window_title = 'Windows 桌面 / 壁纸层' THEN '🖥️ 系统组件: 桌面壁纸层'\r\n    WHEN LOWER(process_name) = 'systemsettings.exe' THEN '⚙️ 系统页面: Windows系统设置'\r\n    WHEN LOWER(process_name) = 'taskmgr.exe' THEN '📊 系统页面: 任务管理器'\r\n    WHEN LOWER(process_name) = 'mmc.exe' THEN '⚙️ 系统页面: MMC 微软管理控制台'\r\n    WHEN LOWER(process_name) = 'regedit.exe' THEN '⚙️ 系统页面: 注册表编辑器'\r\n    WHEN LOWER(process_name) = 'lockapp.exe' THEN '🖥️ 系统组件: Windows 锁屏界面'\r\n    WHEN LOWER(process_name) = 'searchhost.exe' THEN '🖥️ 系统组件: Windows 本地搜索栏'\r\n    WHEN LOWER(process_name) = 'applicationframehost.exe' THEN '🖥️ 系统组件: UWP 应用外壳框架'\r\n    WHEN LOWER(process_name) = 'startmenuexperiencehost.exe' THEN '🖥️ 系统组件: Windows 开始菜单'\r\n    WHEN LOWER(process_name) IN ('shellexperiencehost.exe', 'shellhost.exe') THEN '🖥️ 系统组件: Windows 外壳体验宿主'\r\n    WHEN LOWER(process_name) = 'phoneexperiencehost.exe' THEN '🖥️ 系统组件: 手机连接 (Phone Link)'\r\n    WHEN LOWER(process_name) = 'credentialuibroker.exe' THEN '🖥️ 系统组件: 凭据认证弹窗'\r\n    WHEN LOWER(process_name) = 'openwith.exe' THEN '🖥️ 系统组件: 打开方式选择器'\r\n    WHEN LOWER(process_name) = 'fvenotify.exe' THEN '🖥️ 系统组件: BitLocker 加密通知'\r\n    WHEN LOWER(process_name) = 'pcaui.exe' THEN '🖥️ 系统组件: 程序兼容性助手'\r\n    WHEN LOWER(process_name) = 'wscript.exe' THEN '🖥️ 系统组件: Windows 脚本宿主'\r\n\r\n    -- 🛡️ 安全防御与 360 附属升级/通知组件\r\n    WHEN LOWER(process_name) IN ('360safe.exe', '360tray.exe', '360logcenter.exe', '360leakfix.exe', '360speedld.exe', '360desktoplite64.exe', '360settingcenter.exe', '360dnsopt.exe', '360zipupdate.exe', 'softupnotify.exe', 'pcbu_desktop.exe', 'datamain.exe') THEN '🛡️ 安全防护: 360安全隐私服务群'\r\n    \r\n    -- 🏁 兜底未清洗的离散应用\r\n    ELSE '🚀 应用: ' || process_name \r\n  END as \"活动归属\",\r\n  SUM(duration_seconds) as \"累计时长\"\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\n  AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\r\nGROUP BY 1\r\nORDER BY 2 DESC;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "前台独占工时高精分布 (今天/实时)",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "center",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计时长",
-              "scope": "series"
-            },
-            "properties": [
-              {
-                "value": "dthms"
-              },
-              {
-                "value": {
-                  "type": "gauge",
-                  "valueDisplayMode": "color"
-                }
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 3
-      },
-      "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH base_logs AS (\r\n    SELECT \r\n        process_name,\r\n        -- 🧼 1. 统一阻击：在底层直接利用正则切掉所有 IDE、浏览器和编辑器的末尾冗余后缀\r\n        REGEXP_REPLACE(\r\n            window_title, \r\n            ' - (Google Chrome|Microsoft Edge|Visual Studio Code|Cursor|Typora|IntelliJ IDEA|DataGrip)$', \r\n            '', \r\n            'i'\r\n        ) AS cleaned_title,\r\n        duration_seconds\r\n    FROM app_usage_logs\r\n    WHERE $__timeFilter(start_time)\r\n      -- 🚫 剔除无交互的系统挂机噪音\r\n      AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\r\n      AND window_title IS NOT NULL \r\n      AND window_title != ''\r\n      AND window_title != 'Windows 桌面 / 壁纸层'\r\n),\r\ncontext_mapped AS (\r\n    SELECT\r\n        CASE\r\n            -- 💬 1. 隐私护卫网 (核心升级)：对微信强制脱敏，隐藏具体的聊天对象或群组名称，保护隐私安全\r\n            WHEN LOWER(process_name) = 'weixin.exe' THEN '💬 社交沟通: 微信 (窗口标题已脱敏)'\r\n\r\n            -- 🤖 2. AI 生产力原生工程 (精准捕获你的大模型交互上下文)\r\n            WHEN cleaned_title LIKE '%Google AI Studio%' THEN '🤖 AI 调试: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%Gemini%' THEN '🤖 AI 对话: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%ChatGPT%' OR cleaned_title LIKE '%xAI%' THEN '🤖 AI 助理: ' || cleaned_title\r\n            \r\n            -- 🐙 3. 线上开源库与本地调试纵深\r\n            WHEN cleaned_title LIKE '%GitHub%' THEN '🐙 开源社区: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%localhost%' OR cleaned_title LIKE '%127.0.0.1%' THEN '🌐 本地联调: ' || cleaned_title\r\n\r\n            -- ☕ 4. Java 核心研发与数据库重装数仓\r\n            WHEN LOWER(process_name) = 'idea64.exe' THEN '☕ IDEA项目: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'datagrip64.exe' THEN '🗄️ SQL架构: ' || cleaned_title\r\n            WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe') THEN '💻 代码心流: ' || cleaned_title\r\n\r\n            -- 📝 5. 知识沉淀、终端运维与系统组件\r\n            WHEN LOWER(process_name) = 'typora.exe' THEN '📝 Markdown: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'windowsterminal.exe' THEN '💻 终端指令: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'taskmgr.exe' THEN '📊 系统内核: 任务管理器'\r\n            WHEN LOWER(process_name) = 'explorer.exe' AND cleaned_title LIKE '文件管理器:%' THEN '📁 磁盘路径: ' || cleaned_title\r\n\r\n            -- 🛡️ 6. 后台防御及安全组件归类\r\n            WHEN LOWER(process_name) IN ('360safe.exe', '360tray.exe', '360logcenter.exe') THEN '🛡️ 系统防护: 360安全卫士'\r\n            \r\n            -- 🏁 7. 兜底未清洗的长尾离散上下文\r\n            ELSE '🚀 [' || process_name || '] ' || cleaned_title\r\n        END AS task_context,\r\n        duration_seconds\r\n    FROM base_logs\r\n)\r\n-- 📊 3. 终审收盘：去除首尾空格并执行高精聚合，完美防重漏\r\nSELECT \r\n    TRIM(task_context) AS \"微观任务上下文\",\r\n    SUM(duration_seconds) AS \"累计时长\"\r\nFROM context_mapped\r\nGROUP BY 1\r\nORDER BY \"累计时长\" DESC;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "标题排行",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "center",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          },
-          "unit": "s"
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "停留时长",
-              "scope": "series"
-            },
-            "properties": [
-              {
-                "value": {
-                  "type": "gauge",
-                  "valueDisplayMode": "color"
-                }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "sorting_marker",
-              "scope": "series"
-            },
-            "properties": [
-              {
-                "value": "dateTimeAsLocalNoDateIfToday"
-              },
-              {
-                "value": true
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "切换时刻"
-            },
-            "properties": [
-              {
-                "value": 70
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "动作上下文"
-            },
-            "properties": [
-              {
-                "value": 566
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 12,
-        "x": 12,
-        "y": 12
-      },
-      "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true,
-        "sortBy": [
-          {
-            "desc": false,
-            "displayName": "日志时间"
-          }
-        ]
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH base_logs AS (\r\n    SELECT \r\n        start_time,\r\n        process_name,\r\n        -- 🧼 1. 统一阻击：切掉所有软件的末尾冗余后缀\r\n        REGEXP_REPLACE(\r\n            window_title, \r\n            ' - (Google Chrome|Microsoft Edge|Visual Studio Code|Cursor|Typora|IntelliJ IDEA|DataGrip)$', \r\n            '', \r\n            'i'\r\n        ) AS cleaned_title,\r\n        duration_seconds\r\n    FROM app_usage_logs\r\n    WHERE $__timeFilter(start_time)\r\n      -- 🚫 剔除挂机和锁屏\r\n      AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\r\n      AND window_title IS NOT NULL \r\n      AND window_title != ''\r\n      AND window_title != 'Windows 桌面 / 壁纸层'\r\n),\r\ncontext_mapped AS (\r\n    SELECT\r\n        start_time,\r\n        CASE\r\n            -- 💬 1. 微信隐私护卫\r\n            WHEN LOWER(process_name) = 'weixin.exe' THEN '💬 社交沟通: 微信 (窗口标题已脱敏)'\r\n\r\n            -- 🤖 2. AI 炼丹与调试\r\n            WHEN cleaned_title LIKE '%Google AI Studio%' THEN '🤖 AI 调试: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%Gemini%' THEN '🤖 AI 对话: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%ChatGPT%' OR cleaned_title LIKE '%xAI%' THEN '🤖 AI 助理: ' || cleaned_title\r\n            \r\n            -- 🐙 3. 开源社区与本地联调\r\n            WHEN cleaned_title LIKE '%GitHub%' THEN '🐙 开源社区: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%localhost%' OR cleaned_title LIKE '%127.0.0.1%' THEN '🌐 本地联调: ' || cleaned_title\r\n\r\n            -- ☕ 4. 研发核心工具\r\n            WHEN LOWER(process_name) = 'idea64.exe' THEN '☕ IDEA项目: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'datagrip64.exe' THEN '🗄️ SQL架构: ' || cleaned_title\r\n            WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe') THEN '💻 代码心流: ' || cleaned_title\r\n\r\n            -- 📝 5. 运维与系统组件\r\n            WHEN LOWER(process_name) = 'typora.exe' THEN '📝 Markdown: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'windowsterminal.exe' THEN '💻 终端指令: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'taskmgr.exe' THEN '📊 系统内核: 任务管理器'\r\n            WHEN LOWER(process_name) = 'explorer.exe' AND cleaned_title LIKE '文件管理器:%' THEN '📁 磁盘路径: ' || cleaned_title\r\n\r\n            -- 🛡️ 6. 安全服务\r\n            WHEN LOWER(process_name) IN ('360safe.exe', '360tray.exe', '360logcenter.exe') THEN '🛡️ 系统防护: 360安全卫士'\r\n            \r\n            -- 🏁 7. 长尾离散应用\r\n            ELSE '🚀 [' || process_name || '] ' || cleaned_title\r\n        END AS task_context,\r\n        duration_seconds\r\n    FROM base_logs\r\n)\r\n-- 📊 3. 时区强制对齐：将时间戳先转换至东八区再进行切片，彻底干掉时区差\r\nSELECT \r\n    TO_CHAR(start_time AT TIME ZONE 'Asia/Shanghai', 'HH24:MI:SS') AS \"切换时刻\",\r\n    TRIM(task_context) AS \"动作上下文\",\r\n    duration_seconds AS \"停留时长\"\r\nFROM context_mapped\r\nORDER BY start_time DESC; -- 👈 底层依然按原生时间线绝对倒序",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "最近显示",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "axisPlacement": "auto",
-            "fillOpacity": 100,
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineWidth": 0,
-            "spanNulls": false
-          },
-          "mappings": [
-            {
-              "options": {
-                "⬛ 绝对睡眠 (风扇停转)": {
-                  "color": "blue",
-                  "index": 3
-                },
-                "📴 关机离线 (未通电/无数据)": {
-                  "color": "text",
-                  "index": 4
-                },
-                "🟡 键鼠静止 (人不在暂离)": {
-                  "color": "yellow",
-                  "index": 1
-                },
-                "🟢 深度工作 (正常使用中)": {
-                  "color": "green",
-                  "index": 0
-                },
-                "🟥 屏幕关闭 (伪睡眠/锁屏)": {
-                  "color": "red",
-                  "index": 2
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 5,
-        "w": 12,
-        "x": 0,
-        "y": 19
-      },
-      "options": {
-        "alignValue": "left",
-        "annotations": {
-          "clustering": -1,
-          "multiLane": false
-        },
-        "legend": {
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "mergeValues": true,
-        "rowHeight": 0.8,
-        "showValue": "never",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '1 minute', make_interval(secs => ceil(extract(epoch from (b.t_to - b.t_from)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\ntime_grid AS (\n  SELECT g.grid_time\n  FROM time_bounds b, interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(grid_time)\n),\nstate_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    a.duration_seconds,\n    CASE\n      WHEN a.process_name = 'System_Sleep' THEN '⬛ 绝对睡眠 (风扇停转)'\n      WHEN a.process_name = 'System_DisplayOff' THEN '🟥 屏幕关闭 (伪睡眠/锁屏)'\n      WHEN a.process_name = 'System_Idle' THEN '🟡 键鼠静止 (人不在暂离)'\n      ELSE '🟢 深度工作 (正常使用中)'\n    END as state\n  FROM app_usage_logs a, time_bounds b, interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from (a.start_time + (a.duration_seconds || ' seconds')::interval)) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.start_time >= b.t_from - interval '1 day' AND a.start_time >= b.t_from - interval '1 day' AND a.start_time <= b.t_to AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n  ORDER BY g.bucket_time, a.start_time DESC\n)\nSELECT\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\n  COALESCE(sa.duration_seconds, extract(epoch from i.dt)::int) as \"持续秒数\",\n  COALESCE(sa.state, '📴 关机离线 (未通电/无数据)') as \"全盘宏观状态\"\nFROM time_grid g\nCROSS JOIN interval_calc i\nLEFT JOIN state_aligned sa ON g.grid_time = sa.bucket_time\nORDER BY time ASC;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "用户使用电脑状态时间轴",
-      "transformations": [
-        {
-          "id": "organize",
-          "options": {
-            "excludeByName": {
-              "持续秒数": true
-            },
-            "includeByName": {},
-            "indexByName": {},
-            "renameByName": {}
-          }
-        }
-      ],
-      "type": "state-timeline"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "center",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "footer": {
-              "reducers": []
-            },
-            "inspect": false
-          },
-          "decimals": 2,
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "核心应用"
-            },
-            "properties": [
-              {
-                "value": 188
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "进入心流时刻"
-            },
-            "properties": [
-              {
-                "value": 156
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "主要任务上下文"
-            },
-            "properties": [
-              {
-                "value": 429
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 12,
-        "x": 12,
-        "y": 22
-      },
-      "options": {
-        "cellHeight": "sm",
-        "enablePagination": true,
-        "showHeader": true
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH marked_leads AS (\r\n  SELECT\r\n    start_time,\r\n    duration_seconds,\r\n    process_name,\r\n    window_title,\r\n    -- ⚡ 降维进化：只判断进程名是否改变！只要还在同一个应用里切换窗口，心流就绝对不断\r\n    CASE \r\n      WHEN process_name = LAG(process_name) OVER (ORDER BY start_time) THEN 0\r\n      ELSE 1\r\n    END as is_new_session\r\n  FROM app_usage_logs\r\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle')\r\n    AND $__timeFilter(start_time)\r\n),\r\nsession_groups AS (\r\n  SELECT\r\n    start_time,\r\n    duration_seconds,\r\n    process_name,\r\n    window_title,\r\n    -- 动态累加组标签\r\n    SUM(is_new_session) OVER (ORDER BY start_time) as grp\r\n  FROM marked_leads\r\n),\r\npacked_sessions AS (\r\n  SELECT\r\n    MIN(start_time) as flow_start,\r\n    SUM(duration_seconds) as total_seconds,\r\n    process_name,\r\n    -- 🎯 聚合代表性上下文：提取该专注时间块内最具代表性的窗口名称\r\n    MAX(window_title) as sample_title\r\n  FROM session_groups\r\n  GROUP BY grp, process_name\r\n)\r\nSELECT\r\n  -- 1. 进入时刻\r\n  (flow_start AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as \"进入心流时刻\",\r\n  -- 2. 核心进程美化显示\r\n  CASE \r\n    WHEN process_name = 'chrome.exe' THEN '🌐 浏览器 (Chrome)'\r\n    WHEN process_name = 'Code.exe' THEN '💻 编译器 (VS Code)'\r\n    WHEN process_name = 'idea64.exe' THEN '☕ 编译器 (IntelliJ IDEA)'\r\n    WHEN process_name = 'explorer.exe' THEN '📁 系统组件 (文件管理器)'\r\n    ELSE '🚀 ' || process_name\r\n  END as \"核心应用\",\r\n  -- 3. 主要任务上下文\r\n  sample_title as \"主要任务上下文\",\r\n  -- 4. 听老哥的，转换成分钟级显示\r\n  ROUND(total_seconds / 60.0, 1) as \"持续专注时间(分钟)\"\r\nFROM packed_sessions\r\n-- 🎯 生产阈值：听老哥的，只要连续呆够 5 分钟（300秒）就定义为黄金心流块\r\nWHERE total_seconds >= 300\r\nORDER BY flow_start DESC;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "专注时间",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "fixed"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "left",
-            "axisSoftMin": 0,
-            "barAlignment": 0,
-            "barWidthFactor": 0.6,
-            "drawStyle": "bars",
-            "fillOpacity": 90,
-            "gradientMode": "opacity",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "insertNulls": false,
-            "lineInterpolation": "smooth",
-            "lineWidth": 1,
-            "pointSize": 5,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "showPoints": "auto",
-            "showValues": false,
-            "spanNulls": true,
-            "stacking": {
-              "group": "A",
-              "mode": "normal"
-            },
-            "thresholdsStyle": {
-              "mode": "line+area"
-            }
-          },
-          "mappings": [
-            {
-              "options": {
-                "0": {
-                  "color": "green",
-                  "index": 0
-                },
-                "10": {
-                  "color": "red",
-                  "index": 2
-                },
-                "5": {
-                  "color": "yellow",
-                  "index": 1
-                }
-              },
-              "type": "value"
-            }
-          ],
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "#EAB839",
-                "value": 5
-              },
-              {
-                "color": "red",
-                "value": 10
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 6,
-        "x": 0,
-        "y": 24
-      },
-      "options": {
-        "annotations": {
-          "clustering": -1,
-          "multiLane": false
-        },
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH bucket_params AS (\r\n  SELECT\r\n    GREATEST(interval '1 minute', ('$__interval')::interval) AS bucket_size,\r\n    '2000-01-01 00:00:00+08'::timestamptz AS bucket_origin\r\n),\r\ntime_grid AS (\r\n  SELECT generate_series(\r\n    date_bin(p.bucket_size, $__timeFrom()::timestamptz, p.bucket_origin),\r\n    date_bin(p.bucket_size, $__timeTo()::timestamptz, p.bucket_origin),\r\n    p.bucket_size\r\n  ) AS grid_time\r\n  FROM bucket_params p\r\n),\r\nflagged_switches AS (\r\n  SELECT\r\n    date_bin(p.bucket_size, start_time::timestamptz, p.bucket_origin) AS bucket_time,\r\n    CASE\r\n      WHEN process_name = LAG(process_name) OVER (ORDER BY start_time)\r\n           AND window_title = LAG(window_title) OVER (ORDER BY start_time) THEN 0\r\n      ELSE 1\r\n    END AS is_switch\r\n  FROM app_usage_logs\r\n  CROSS JOIN bucket_params p\r\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle')\r\n    AND $__timeFilter(start_time)\r\n),\r\nbucket_counts AS (\r\n  SELECT bucket_time, SUM(is_switch) AS switch_count\r\n  FROM flagged_switches\r\n  GROUP BY bucket_time\r\n)\r\nSELECT\r\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') AS time,\r\n  COALESCE(bc.switch_count, 0) / (EXTRACT(EPOCH FROM p.bucket_size) / 60.0) AS \"每分钟前台闪切次数\"\r\nFROM time_grid g\r\nCROSS JOIN bucket_params p\r\nLEFT JOIN bucket_counts bc ON g.grid_time = bc.bucket_time\r\nORDER BY time ASC;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "description": "短范围按分钟计数；长范围显示每个时间桶内的每分钟平均切换次数，无切换时为 0。",
-      "interval": "1m",
-      "maxDataPoints": 1441,
-      "title": "前台上下文“频繁闪切”干扰指数",
-      "type": "timeseries"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "fixedColor": "green",
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              }
-            ]
-          },
-          "unit": "dthms"
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 7,
-        "w": 6,
-        "x": 6,
-        "y": 24
-      },
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.97,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "orientation": "vertical",
-        "showValue": "never",
-        "stacking": "normal",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xField": "审计日期",
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "dataset": "time_audit",
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT\r\n  -- ⚡ 核心解法：直接强转为中文年月日字符串，彻底封印 Grafana 的自动时区转换与轴缩放逻辑！\r\n  TO_CHAR(date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai'), 'MM/DD') as \"审计日期\",\r\n  -- 📊 真实活跃时间：排除暂离、物理睡眠和黑屏\r\n  SUM(CASE WHEN process_name NOT IN ('System_Idle', 'System_Sleep', 'System_DisplayOff') THEN duration_seconds ELSE 0 END) as \"真实键鼠活跃时间\",\r\n  -- 💤 挂机静止时间\r\n  SUM(CASE WHEN process_name = 'System_Idle' THEN duration_seconds ELSE 0 END) as \"挂机静止暂离时间\"\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\nGROUP BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai')\r\nORDER BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai') ASC;",
-          "refId": "A",
-          "sql": {
-            "columns": [
-              {
-                "parameters": [],
-                "type": "function"
-              }
-            ],
-            "groupBy": [
-              {
-                "property": {
-                  "type": "string"
-                },
-                "type": "groupBy"
-              }
-            ],
-            "limit": 50
-          }
-        }
-      ],
-      "title": "历史每日审计留痕 (活跃/暂离双轴堆叠)",
-      "type": "barchart"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            }
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 8,
-        "w": 8,
-        "x": 0,
-        "y": 31
-      },
-      "options": {
-        "legend": {
-          "displayMode": "list",
-          "placement": "right",
-          "showLegend": true,
-          "values": []
-        },
-        "pieType": "donut",
-        "reduceOptions": {
-          "calcs": [
-            "lastNotNull"
-          ],
-          "fields": "/^(累计时长)$/",
-          "values": true
-        },
-        "sort": "desc",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        }
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH base_data AS (\n  SELECT\n    CASE \n      WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe', 'idea64.exe', 'datagrip64.exe', 'windowsterminal.exe', 'powershell_ise.exe', 'cmd.exe', 'typora.exe', 'notepad.exe', 'git-credential-manager.exe', 'java.exe') \n           OR LOWER(process_name) LIKE 'python%' \n           OR LOWER(process_name) IN ('claude.exe', 'antigravity.exe') THEN '💻 开发与AI工具'\n      WHEN LOWER(process_name) IN ('chrome.exe', 'msedge.exe', 'firefox.exe') THEN '🌐 浏览器'\n      WHEN LOWER(process_name) IN ('slaythespire2.exe', 'masterduel.exe', 'forzahorizon6.exe', 'flyingbird.exe', 'steamwebhelper.exe', 'uu.exe') THEN '🎮 游戏与娱乐'\n      WHEN LOWER(process_name) IN ('weixin.exe', 'qq.exe', 'dingtalk.exe') THEN '💬 社交与通讯'\n      ELSE '🛠️ 其他应用'\n    END as cat,\n    SUM(duration_seconds) as dur\n  FROM app_usage_logs\n  WHERE $__timeFilter(start_time)\n    AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\n  GROUP BY 1\n),\ntotal_data AS (\n  SELECT SUM(dur) as total_dur FROM base_data\n)\nSELECT\n  cat || ' (' || ROUND(dur / 3600.0, 2) || '小时, ' || ROUND(dur * 100.0 / total_dur, 1) || '%)' as \"分类\",\n  dur as \"累计时长\"\nFROM base_data, total_data\nORDER BY dur DESC;",
-          "refId": "A"
-        }
-      ],
-      "title": "前台应用分类时间占比",
-      "type": "piechart"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "custom": {
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "scaleDistribution": {
-              "type": "linear"
-            }
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 17,
-        "w": 16,
-        "x": 8,
-        "y": 31
-      },
-      "options": {
-        "annotations": {
-          "clustering": -1,
-          "multiLane": false
-        },
-        "calculate": false,
-        "cellGap": 1,
-        "cellRadius": 2,
-        "color": {
-          "mode": "scheme",
-          "scale": "linear",
-          "scheme": "Greens"
-        },
-        "exemplars": {
-          "color": "rgba(255,0,255,0.7)"
-        },
-        "filterValues": {
-          "le": 1e-09
-        },
-        "legend": {
-          "show": true
-        },
-        "rowsFrame": {
-          "layout": "sparse"
-        },
-        "tooltip": {
-          "mode": "single",
-          "showColorScale": false,
-          "yHistogram": false
-        },
-        "xField": "time",
-        "yAxis": {
-          "axisPlacement": "left",
-          "reverse": false,
-          "unit": "short"
-        }
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT\n  date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai') AS time,\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 0 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"00:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 1 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"01:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 2 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"02:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 3 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"03:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 4 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"04:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 5 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"05:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 6 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"06:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 7 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"07:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 8 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"08:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 9 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"09:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 10 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"10:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 11 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"11:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 12 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"12:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 13 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"13:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 14 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"14:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 15 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"15:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 16 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"16:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 17 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"17:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 18 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"18:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 19 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"19:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 20 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"20:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 21 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"21:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 22 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"22:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 23 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"23:00\"\nFROM app_usage_logs\nWHERE $__timeFilter(start_time)\nGROUP BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai')\nORDER BY time ASC;",
-          "refId": "A"
-        }
-      ],
-      "timeFrom": "7d",
-      "title": "每日活跃时段分布热力图 (小时×天)",
-      "type": "heatmap"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "palette-classic"
-          },
-          "custom": {
-            "axisBorderShow": false,
-            "axisCenteredZero": false,
-            "axisColorMode": "text",
-            "axisLabel": "",
-            "axisPlacement": "auto",
-            "fillOpacity": 80,
-            "gradientMode": "none",
-            "hideFrom": {
-              "legend": false,
-              "tooltip": false,
-              "viz": false
-            },
-            "lineWidth": 1,
-            "scaleDistribution": {
-              "type": "linear"
-            },
-            "thresholdsStyle": {
-              "mode": "off"
-            }
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green",
-                "value": 0
-              },
-              {
-                "color": "red",
-                "value": 80
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 9,
-        "w": 8,
-        "x": 0,
-        "y": 39
-      },
-      "options": {
-        "barRadius": 0,
-        "barWidth": 0.87,
-        "fullHighlight": false,
-        "groupWidth": 0.7,
-        "legend": {
-          "calcs": [],
-          "displayMode": "list",
-          "placement": "bottom",
-          "showLegend": true
-        },
-        "orientation": "vertical",
-        "showValue": "never",
-        "stacking": "none",
-        "tooltip": {
-          "hideZeros": false,
-          "mode": "single",
-          "sort": "none"
-        },
-        "xField": "星期",
-        "xTickLabelRotation": 0,
-        "xTickLabelSpacing": 0
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH weekly_data AS (\n  SELECT\n    EXTRACT(ISODOW FROM start_time AT TIME ZONE 'Asia/Shanghai') as dow,\n    CASE \n      WHEN start_time AT TIME ZONE 'Asia/Shanghai' >= date_trunc('week', now() AT TIME ZONE 'Asia/Shanghai') THEN '本周'\n      ELSE '上周'\n    END as week_label,\n    SUM(CASE WHEN process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 3600.0 as active_hours\n  FROM app_usage_logs\n  WHERE start_time >= (date_trunc('week', now() AT TIME ZONE 'Asia/Shanghai') - interval '1 week') AT TIME ZONE 'Asia/Shanghai' AND start_time < (date_trunc('week', now() AT TIME ZONE 'Asia/Shanghai') + interval '1 week') AT TIME ZONE 'Asia/Shanghai'\n  GROUP BY 1, 2\n)\nSELECT\n  CASE dow\n    WHEN 1 THEN '1.周一'\n    WHEN 2 THEN '2.周二'\n    WHEN 3 THEN '3.周三'\n    WHEN 4 THEN '4.周四'\n    WHEN 5 THEN '5.周五'\n    WHEN 6 THEN '6.周六'\n    WHEN 7 THEN '7.周日'\n  END as \"星期\",\n  ROUND(COALESCE(SUM(CASE WHEN week_label = '本周' THEN active_hours END), 0)::numeric, 2) as \"本周(小时)\",\n  ROUND(COALESCE(SUM(CASE WHEN week_label = '上周' THEN active_hours END), 0)::numeric, 2) as \"上周(小时)\"\nFROM weekly_data\nGROUP BY dow\nORDER BY dow;",
-          "refId": "A"
-        }
-      ],
-      "title": "周度活跃工时对比 (本周 vs 上周同期)",
-      "type": "barchart"
     }
   ],
+  "cursorSync": "Off",
+  "editable": true,
+  "elements": {
+    "panel-1": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "-- 🎯 区间并集(去重叠) + 裁剪到窗口。口径=排除深睡眠后、电脑通电运转的真实墙钟时长（与标题「已剔除睡眠」对齐）。\n-- app_usage_logs 偶有相互重叠的事件(AHK 暂离回溯重入会叠出多条 System_Idle 片)，\n-- 朴素 SUM 会重复计数、甚至超过窗口长度；故先用 gaps-and-islands 合并区间再求覆盖时长。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt),\nclip AS (\n  SELECT GREATEST(a.start_time, b.tf) AS s,\n         LEAST(a.start_time + (a.duration_seconds || ' seconds')::interval, b.tt) AS e\n  FROM app_usage_logs a, b\n  WHERE a.process_name <> 'System_Sleep'\n    AND a.start_time < b.tt\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.tf\n),\nislands AS (\n  SELECT s, e,\n         CASE WHEN s > MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)\n              THEN 1 ELSE 0 END AS new_island\n  FROM clip\n),\ngrouped AS (\n  SELECT s, e, SUM(new_island) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp\n  FROM islands\n)\nSELECT COALESCE(SUM(EXTRACT(EPOCH FROM (mx - mn))), 0)::bigint AS value\nFROM (SELECT MIN(s) AS mn, MAX(e) AS mx FROM grouped GROUP BY grp) t;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 1,
+        "links": [],
+        "title": "电脑开机总时长 (已剔除睡眠)",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                },
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-10": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "SELECT\r\n  -- ⚡ 核心解法：直接强转为中文年月日字符串，彻底封印 Grafana 的自动时区转换与轴缩放逻辑！\r\n  TO_CHAR(date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai'), 'MM/DD') as \"审计日期\",\r\n  -- 📊 真实活跃时间：排除暂离、物理睡眠和黑屏\r\n  SUM(CASE WHEN process_name NOT IN ('System_Idle', 'System_Sleep', 'System_DisplayOff') THEN duration_seconds ELSE 0 END) as \"真实键鼠活跃时间\",\r\n  -- 💤 挂机静止时间\r\n  SUM(CASE WHEN process_name = 'System_Idle' THEN duration_seconds ELSE 0 END) as \"挂机静止暂离时间\"\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\nGROUP BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai')\r\nORDER BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai') ASC;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 10,
+        "links": [],
+        "title": "历史每日审计留痕 (活跃/暂离双轴堆叠)",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "green",
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 0,
+              "barWidth": 0.97,
+              "fullHighlight": false,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "orientation": "vertical",
+              "showValue": "never",
+              "stacking": "normal",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              },
+              "xField": "审计日期",
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-11": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH base_data AS (\n  SELECT\n    CASE \n      WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe', 'idea64.exe', 'datagrip64.exe', 'windowsterminal.exe', 'powershell_ise.exe', 'cmd.exe', 'typora.exe', 'notepad.exe', 'git-credential-manager.exe', 'java.exe') \n           OR LOWER(process_name) LIKE 'python%' \n           OR LOWER(process_name) IN ('claude.exe', 'antigravity.exe') THEN '💻 开发与AI工具'\n      WHEN LOWER(process_name) IN ('chrome.exe', 'msedge.exe', 'firefox.exe') THEN '🌐 浏览器'\n      WHEN LOWER(process_name) IN ('slaythespire2.exe', 'masterduel.exe', 'forzahorizon6.exe', 'flyingbird.exe', 'steamwebhelper.exe', 'uu.exe') THEN '🎮 游戏与娱乐'\n      WHEN LOWER(process_name) IN ('weixin.exe', 'qq.exe', 'dingtalk.exe') THEN '💬 社交与通讯'\n      ELSE '🛠️ 其他应用'\n    END as cat,\n    SUM(duration_seconds) as dur\n  FROM app_usage_logs\n  WHERE $__timeFilter(start_time)\n    AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\n  GROUP BY 1\n),\ntotal_data AS (\n  SELECT SUM(dur) as total_dur FROM base_data\n)\nSELECT\n  cat || ' (' || ROUND(dur / 3600.0, 2) || '小时, ' || ROUND(dur * 100.0 / total_dur, 1) || '%)' as \"分类\",\n  dur as \"累计时长\"\nFROM base_data, total_data\nORDER BY dur DESC;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 11,
+        "links": [],
+        "title": "前台应用分类时间占比",
+        "vizConfig": {
+          "group": "piechart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "right",
+                "showLegend": true,
+                "values": []
+              },
+              "pieType": "donut",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "/^(累计时长)$/",
+                "values": true
+              },
+              "sort": "desc",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-12": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "SELECT\n  date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai') AS time,\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 0 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"00:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 1 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"01:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 2 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"02:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 3 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"03:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 4 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"04:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 5 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"05:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 6 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"06:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 7 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"07:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 8 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"08:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 9 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"09:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 10 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"10:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 11 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"11:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 12 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"12:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 13 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"13:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 14 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"14:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 15 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"15:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 16 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"16:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 17 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"17:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 18 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"18:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 19 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"19:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 20 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"20:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 21 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"21:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 22 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"22:00\",\n  ROUND(SUM(CASE WHEN EXTRACT(HOUR FROM start_time AT TIME ZONE 'Asia/Shanghai') = 23 AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 60.0, 1) as \"23:00\"\nFROM app_usage_logs\nWHERE $__timeFilter(start_time)\nGROUP BY date_trunc('day', start_time AT TIME ZONE 'Asia/Shanghai')\nORDER BY time ASC;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {
+              "timeFrom": "7d"
+            },
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 12,
+        "links": [],
+        "title": "每日活跃时段分布热力图 (小时×天)",
+        "vizConfig": {
+          "group": "heatmap",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "scaleDistribution": {
+                    "type": "linear"
+                  }
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "calculate": false,
+              "cellGap": 1,
+              "cellRadius": 2,
+              "color": {
+                "mode": "scheme",
+                "scale": "linear",
+                "scheme": "Greens"
+              },
+              "exemplars": {
+                "color": "rgba(255,0,255,0.7)"
+              },
+              "filterValues": {
+                "le": 1e-09
+              },
+              "legend": {
+                "show": true
+              },
+              "rowsFrame": {
+                "layout": "sparse"
+              },
+              "tooltip": {
+                "mode": "single",
+                "showColorScale": false,
+                "yHistogram": false
+              },
+              "xField": "time",
+              "yAxis": {
+                "axisPlacement": "left",
+                "reverse": false,
+                "unit": "short"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-13": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH weekly_data AS (\n  SELECT\n    EXTRACT(ISODOW FROM start_time AT TIME ZONE 'Asia/Shanghai') as dow,\n    CASE \n      WHEN start_time AT TIME ZONE 'Asia/Shanghai' >= date_trunc('week', now() AT TIME ZONE 'Asia/Shanghai') THEN '本周'\n      ELSE '上周'\n    END as week_label,\n    SUM(CASE WHEN process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle') THEN duration_seconds ELSE 0 END) / 3600.0 as active_hours\n  FROM app_usage_logs\n  WHERE start_time >= (date_trunc('week', now() AT TIME ZONE 'Asia/Shanghai') - interval '1 week') AT TIME ZONE 'Asia/Shanghai' AND start_time < (date_trunc('week', now() AT TIME ZONE 'Asia/Shanghai') + interval '1 week') AT TIME ZONE 'Asia/Shanghai'\n  GROUP BY 1, 2\n)\nSELECT\n  CASE dow\n    WHEN 1 THEN '1.周一'\n    WHEN 2 THEN '2.周二'\n    WHEN 3 THEN '3.周三'\n    WHEN 4 THEN '4.周四'\n    WHEN 5 THEN '5.周五'\n    WHEN 6 THEN '6.周六'\n    WHEN 7 THEN '7.周日'\n  END as \"星期\",\n  ROUND(COALESCE(SUM(CASE WHEN week_label = '本周' THEN active_hours END), 0)::numeric, 2) as \"本周(小时)\",\n  ROUND(COALESCE(SUM(CASE WHEN week_label = '上周' THEN active_hours END), 0)::numeric, 2) as \"上周(小时)\"\nFROM weekly_data\nGROUP BY dow\nORDER BY dow;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 13,
+        "links": [],
+        "title": "周度活跃工时对比 (本周 vs 上周同期)",
+        "vizConfig": {
+          "group": "barchart",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "lineWidth": 1,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "barRadius": 0,
+              "barWidth": 0.87,
+              "fullHighlight": false,
+              "groupWidth": 0.7,
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "orientation": "vertical",
+              "showValue": "never",
+              "stacking": "none",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              },
+              "xField": "星期",
+              "xTickLabelRotation": 0,
+              "xTickLabelSpacing": 0
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-2": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "-- 🎯 区间并集(去重叠) + 裁剪到窗口。口径=排除一切无键鼠交互态（深睡眠/熄屏/暂离/锁屏）后的真实活跃墙钟时长。\n-- app_usage_logs 偶有相互重叠的事件(AHK 暂离回溯重入会叠出多条 System_Idle 片)，\n-- 朴素 SUM 会重复计数、甚至超过窗口长度；故先用 gaps-and-islands 合并区间再求覆盖时长。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt),\nclip AS (\n  SELECT GREATEST(a.start_time, b.tf) AS s,\n         LEAST(a.start_time + (a.duration_seconds || ' seconds')::interval, b.tt) AS e\n  FROM app_usage_logs a, b\n  WHERE a.process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'System_LockScreen')\n    AND a.start_time < b.tt\n    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.tf\n),\nislands AS (\n  SELECT s, e,\n         CASE WHEN s > MAX(e) OVER (ORDER BY s, e ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING)\n              THEN 1 ELSE 0 END AS new_island\n  FROM clip\n),\ngrouped AS (\n  SELECT s, e, SUM(new_island) OVER (ORDER BY s, e ROWS UNBOUNDED PRECEDING) AS grp\n  FROM islands\n)\nSELECT COALESCE(SUM(EXTRACT(EPOCH FROM (mx - mn))), 0)::bigint AS value\nFROM (SELECT MIN(s) AS mn, MAX(e) AS mx FROM grouped GROUP BY grp) t;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 2,
+        "links": [],
+        "title": "键鼠活跃估计总时间",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                },
+                "min": 0,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "area",
+              "justifyMode": "auto",
+              "orientation": "auto",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "auto",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-3": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "-- 🎯 裁剪到窗口 + COALESCE 防空：窗口内无熄屏/睡眠时返回 0 而非 NULL(否则面板空白)。\n-- 睡眠/熄屏是单流互斥状态、不会相互重叠，无需区间并集。\nWITH b AS (SELECT $__timeFrom()::timestamptz AS tf, $__timeTo()::timestamptz AS tt)\nSELECT\n  COALESCE(SUM(CASE WHEN process_name = 'System_DisplayOff' THEN clip_sec END), 0)::bigint AS \"显示器熄灭时长\",\n  COALESCE(SUM(CASE WHEN process_name = 'System_Sleep'      THEN clip_sec END), 0)::bigint AS \"操作系统深睡眠时长\"\nFROM (\n  SELECT process_name,\n         EXTRACT(EPOCH FROM (LEAST(start_time + (duration_seconds || ' seconds')::interval, b.tt)\n                           - GREATEST(start_time, b.tf))) AS clip_sec\n  FROM app_usage_logs a, b\n  WHERE process_name IN ('System_DisplayOff', 'System_Sleep')\n    AND start_time < b.tt\n    AND start_time + (duration_seconds || ' seconds')::interval > b.tf\n) q;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 3,
+        "links": [],
+        "title": "显示屏和睡眠",
+        "vizConfig": {
+          "group": "stat",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "justifyMode": "center",
+              "orientation": "vertical",
+              "percentChangeColorMode": "standard",
+              "reduceOptions": {
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": "",
+                "values": false
+              },
+              "showPercentChange": false,
+              "textMode": "value_and_name",
+              "wideLayout": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-4": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "SELECT\r\n  CASE \r\n    -- 💻 核心核心生产力 (研发、数据与终端)\r\n    WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe') THEN '💻 开发工具: VS Code / Cursor'\r\n    WHEN LOWER(process_name) = 'idea64.exe' THEN '☕ 开发工具: IntelliJ IDEA'\r\n    WHEN LOWER(process_name) = 'datagrip64.exe' THEN '🗄️ 数仓工具: DataGrip'\r\n    WHEN LOWER(process_name) = 'windowsterminal.exe' THEN '💻 终端工具: Windows Terminal'\r\n    WHEN LOWER(process_name) = 'powershell_ise.exe' THEN '💻 终端工具: PowerShell ISE'\r\n    WHEN LOWER(process_name) = 'cmd.exe' THEN '💻 终端工具: Command Prompt'\r\n    WHEN LOWER(process_name) = 'typora.exe' THEN '📝 笔记工具: Typora'\r\n    WHEN LOWER(process_name) = 'notepad.exe' THEN '📝 文本编辑: 记事本'\r\n    WHEN LOWER(process_name) = 'winword.exe' THEN '📄 办公软件: Microsoft Word'\r\n    WHEN LOWER(process_name) = 'git-credential-manager.exe' THEN '💻 开发工具: Git 凭据管理器'\r\n    WHEN LOWER(process_name) = 'java.exe' THEN '💻 运行环境: Java 虚拟机'\r\n    WHEN LOWER(process_name) LIKE 'python%' THEN '💻 开发工具: Python 运行环境/安装器'\r\n\r\n    -- 🌐 网络、社交、AI与云服务\r\n    WHEN LOWER(process_name) IN ('chrome.exe', 'msedge.exe') THEN '🌐 网络浏览器: ' || process_name\r\n    WHEN LOWER(process_name) = 'weixin.exe' THEN '💬 社交软件: 微信'\r\n    WHEN LOWER(process_name) = 'baidunetdiskunite.exe' THEN '☁️ 网络云盘: 百度网盘'\r\n    WHEN LOWER(process_name) = 'thunder.exe' THEN '⚡ 下载工具: 迅雷'\r\n    WHEN LOWER(process_name) = 'chatlab.exe' THEN '🤖 效率工具: ChatLab AI客户端'\r\n\r\n    -- 📊 硬件监测与外设驱动\r\n    WHEN LOWER(process_name) = 'librehardwaremonitor.exe' THEN '📊 硬件监测: LibreHardwareMonitor'\r\n    WHEN LOWER(process_name) = 'presentmonconsole.exe' THEN '📊 硬件监测: PresentMon 帧率探测'\r\n    WHEN LOWER(process_name) = 'trafficmonitor.exe' THEN '📊 硬件监测: TrafficMonitor'\r\n    WHEN LOWER(process_name) = 'aida64.exe' THEN '📊 硬件监测: AIDA64 性能分析'\r\n    WHEN LOWER(process_name) = 'turzx.exe' THEN '📊 硬件监测: TURZX 智能副屏驱动'\r\n    WHEN LOWER(process_name) = 'cinebench.exe' THEN '📊 性能测试: Cinebench 跑分压测'\r\n    WHEN LOWER(process_name) = 'nvidia app.exe' THEN '⚙️ 驱动控制: NVIDIA App'\r\n    WHEN LOWER(process_name) = 'razerappengine.exe' THEN '⚙️ 驱动控制: Razer 雷云外设管理'\r\n    WHEN LOWER(process_name) = 'evnia precision center.exe' THEN '⚙️ 驱动控制: 飞利浦 Evnia 显示中心'\r\n    WHEN LOWER(process_name) = 'alta2dpconfig.exe' THEN '🎵 音频控制: 蓝牙 A2DP 高清配置'\r\n\r\n    -- 🛠️ 系统辅助与效率工具\r\n    WHEN LOWER(process_name) = 'autohotkey64.exe' THEN '🛠️ 自动化脚本: AutoHotkey'\r\n    WHEN LOWER(process_name) = 'pixpin.exe' THEN '✂️ 截图工具: PixPin'\r\n    WHEN LOWER(process_name) = 'powertoys.filelocksmithui.exe' THEN '🛠️ 系统工具: PowerToys 文件锁分析'\r\n    WHEN LOWER(process_name) = 'docker desktop.exe' THEN '🐳 容器工具: Docker Desktop'\r\n    WHEN LOWER(process_name) = 'fancyrd.exe' THEN '🖥️ 远程桌面: FancyRd Client'\r\n    WHEN LOWER(process_name) = '360zip.exe' THEN '📦 压缩解压: 360压缩'\r\n    WHEN LOWER(process_name) = 'wallpaperui.exe' THEN '🖼️ 桌面美化: 动态壁纸组件'\r\n\r\n    -- 🎮 游戏与媒体娱乐\r\n    WHEN LOWER(process_name) = 'slaythespire2.exe' THEN '🎮 电脑游戏: 杀戮尖塔 2'\r\n    WHEN LOWER(process_name) = 'steamwebhelper.exe' THEN '🎮 游戏平台: Steam 核心服务'\r\n    WHEN LOWER(process_name) = 'uu.exe' THEN '🎮 游戏加速: 网易 UU 加速器'\r\n    WHEN LOWER(process_name) = 'cloudmusic.exe' THEN '🎵 媒体娱乐: 网易云音乐'\r\n\r\n    -- 🖥️ Windows 原生底层核心组件\r\n    WHEN process_name = 'explorer.exe' AND window_title LIKE '文件管理器:%' THEN '📁 系统组件: 文件管理器'\r\n    WHEN process_name = 'explorer.exe' AND window_title = 'Windows 桌面 / 壁纸层' THEN '🖥️ 系统组件: 桌面壁纸层'\r\n    WHEN LOWER(process_name) = 'systemsettings.exe' THEN '⚙️ 系统页面: Windows系统设置'\r\n    WHEN LOWER(process_name) = 'taskmgr.exe' THEN '📊 系统页面: 任务管理器'\r\n    WHEN LOWER(process_name) = 'mmc.exe' THEN '⚙️ 系统页面: MMC 微软管理控制台'\r\n    WHEN LOWER(process_name) = 'regedit.exe' THEN '⚙️ 系统页面: 注册表编辑器'\r\n    WHEN LOWER(process_name) = 'lockapp.exe' THEN '🖥️ 系统组件: Windows 锁屏界面'\r\n    WHEN LOWER(process_name) = 'searchhost.exe' THEN '🖥️ 系统组件: Windows 本地搜索栏'\r\n    WHEN LOWER(process_name) = 'applicationframehost.exe' THEN '🖥️ 系统组件: UWP 应用外壳框架'\r\n    WHEN LOWER(process_name) = 'startmenuexperiencehost.exe' THEN '🖥️ 系统组件: Windows 开始菜单'\r\n    WHEN LOWER(process_name) IN ('shellexperiencehost.exe', 'shellhost.exe') THEN '🖥️ 系统组件: Windows 外壳体验宿主'\r\n    WHEN LOWER(process_name) = 'phoneexperiencehost.exe' THEN '🖥️ 系统组件: 手机连接 (Phone Link)'\r\n    WHEN LOWER(process_name) = 'credentialuibroker.exe' THEN '🖥️ 系统组件: 凭据认证弹窗'\r\n    WHEN LOWER(process_name) = 'openwith.exe' THEN '🖥️ 系统组件: 打开方式选择器'\r\n    WHEN LOWER(process_name) = 'fvenotify.exe' THEN '🖥️ 系统组件: BitLocker 加密通知'\r\n    WHEN LOWER(process_name) = 'pcaui.exe' THEN '🖥️ 系统组件: 程序兼容性助手'\r\n    WHEN LOWER(process_name) = 'wscript.exe' THEN '🖥️ 系统组件: Windows 脚本宿主'\r\n\r\n    -- 🛡️ 安全防御与 360 附属升级/通知组件\r\n    WHEN LOWER(process_name) IN ('360safe.exe', '360tray.exe', '360logcenter.exe', '360leakfix.exe', '360speedld.exe', '360desktoplite64.exe', '360settingcenter.exe', '360dnsopt.exe', '360zipupdate.exe', 'softupnotify.exe', 'pcbu_desktop.exe', 'datamain.exe') THEN '🛡️ 安全防护: 360安全隐私服务群'\r\n    \r\n    -- 🏁 兜底未清洗的离散应用\r\n    ELSE '🚀 应用: ' || process_name \r\n  END as \"活动归属\",\r\n  SUM(duration_seconds) as \"累计时长\"\r\nFROM app_usage_logs\r\nWHERE $__timeFilter(start_time)\r\n  AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\r\nGROUP BY 1\r\nORDER BY 2 DESC;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 4,
+        "links": [],
+        "title": "前台独占工时高精分布 (今天/实时)",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                },
+                "custom": {
+                  "align": "center",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": false,
+                  "tooltip": {
+                    "field": "持续总秒数",
+                    "placement": "top"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "累计时长",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "gauge",
+                        "valueDisplayMode": "color"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "enablePagination": true,
+              "showHeader": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-5": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH base_logs AS (\r\n    SELECT \r\n        process_name,\r\n        -- 🧼 1. 统一阻击：在底层直接利用正则切掉所有 IDE、浏览器和编辑器的末尾冗余后缀\r\n        REGEXP_REPLACE(\r\n            window_title, \r\n            ' - (Google Chrome|Microsoft Edge|Visual Studio Code|Cursor|Typora|IntelliJ IDEA|DataGrip)$', \r\n            '', \r\n            'i'\r\n        ) AS cleaned_title,\r\n        duration_seconds\r\n    FROM app_usage_logs\r\n    WHERE $__timeFilter(start_time)\r\n      -- 🚫 剔除无交互的系统挂机噪音\r\n      AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\r\n      AND window_title IS NOT NULL \r\n      AND window_title != ''\r\n      AND window_title != 'Windows 桌面 / 壁纸层'\r\n),\r\ncontext_mapped AS (\r\n    SELECT\r\n        CASE\r\n            -- 💬 1. 隐私护卫网 (核心升级)：对微信强制脱敏，隐藏具体的聊天对象或群组名称，保护隐私安全\r\n            WHEN LOWER(process_name) = 'weixin.exe' THEN '💬 社交沟通: 微信 (窗口标题已脱敏)'\r\n\r\n            -- 🤖 2. AI 生产力原生工程 (精准捕获你的大模型交互上下文)\r\n            WHEN cleaned_title LIKE '%Google AI Studio%' THEN '🤖 AI 调试: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%Gemini%' THEN '🤖 AI 对话: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%ChatGPT%' OR cleaned_title LIKE '%xAI%' THEN '🤖 AI 助理: ' || cleaned_title\r\n            \r\n            -- 🐙 3. 线上开源库与本地调试纵深\r\n            WHEN cleaned_title LIKE '%GitHub%' THEN '🐙 开源社区: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%localhost%' OR cleaned_title LIKE '%127.0.0.1%' THEN '🌐 本地联调: ' || cleaned_title\r\n\r\n            -- ☕ 4. Java 核心研发与数据库重装数仓\r\n            WHEN LOWER(process_name) = 'idea64.exe' THEN '☕ IDEA项目: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'datagrip64.exe' THEN '🗄️ SQL架构: ' || cleaned_title\r\n            WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe') THEN '💻 代码心流: ' || cleaned_title\r\n\r\n            -- 📝 5. 知识沉淀、终端运维与系统组件\r\n            WHEN LOWER(process_name) = 'typora.exe' THEN '📝 Markdown: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'windowsterminal.exe' THEN '💻 终端指令: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'taskmgr.exe' THEN '📊 系统内核: 任务管理器'\r\n            WHEN LOWER(process_name) = 'explorer.exe' AND cleaned_title LIKE '文件管理器:%' THEN '📁 磁盘路径: ' || cleaned_title\r\n\r\n            -- 🛡️ 6. 后台防御及安全组件归类\r\n            WHEN LOWER(process_name) IN ('360safe.exe', '360tray.exe', '360logcenter.exe') THEN '🛡️ 系统防护: 360安全卫士'\r\n            \r\n            -- 🏁 7. 兜底未清洗的长尾离散上下文\r\n            ELSE '🚀 [' || process_name || '] ' || cleaned_title\r\n        END AS task_context,\r\n        duration_seconds\r\n    FROM base_logs\r\n)\r\n-- 📊 3. 终审收盘：去除首尾空格并执行高精聚合，完美防重漏\r\nSELECT \r\n    TRIM(task_context) AS \"微观任务上下文\",\r\n    SUM(duration_seconds) AS \"累计时长\"\r\nFROM context_mapped\r\nGROUP BY 1\r\nORDER BY \"累计时长\" DESC;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 5,
+        "links": [],
+        "title": "标题排行",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "center",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": false
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "累计时长",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "dthms"
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "gauge",
+                        "valueDisplayMode": "color"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "enablePagination": true,
+              "showHeader": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-6": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH base_logs AS (\r\n    SELECT \r\n        start_time,\r\n        process_name,\r\n        -- 🧼 1. 统一阻击：切掉所有软件的末尾冗余后缀\r\n        REGEXP_REPLACE(\r\n            window_title, \r\n            ' - (Google Chrome|Microsoft Edge|Visual Studio Code|Cursor|Typora|IntelliJ IDEA|DataGrip)$', \r\n            '', \r\n            'i'\r\n        ) AS cleaned_title,\r\n        duration_seconds\r\n    FROM app_usage_logs\r\n    WHERE $__timeFilter(start_time)\r\n      -- 🚫 剔除挂机和锁屏\r\n      AND process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle', 'Idle')\r\n      AND window_title IS NOT NULL \r\n      AND window_title != ''\r\n      AND window_title != 'Windows 桌面 / 壁纸层'\r\n),\r\ncontext_mapped AS (\r\n    SELECT\r\n        start_time,\r\n        CASE\r\n            -- 💬 1. 微信隐私护卫\r\n            WHEN LOWER(process_name) = 'weixin.exe' THEN '💬 社交沟通: 微信 (窗口标题已脱敏)'\r\n\r\n            -- 🤖 2. AI 炼丹与调试\r\n            WHEN cleaned_title LIKE '%Google AI Studio%' THEN '🤖 AI 调试: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%Gemini%' THEN '🤖 AI 对话: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%ChatGPT%' OR cleaned_title LIKE '%xAI%' THEN '🤖 AI 助理: ' || cleaned_title\r\n            \r\n            -- 🐙 3. 开源社区与本地联调\r\n            WHEN cleaned_title LIKE '%GitHub%' THEN '🐙 开源社区: ' || cleaned_title\r\n            WHEN cleaned_title LIKE '%localhost%' OR cleaned_title LIKE '%127.0.0.1%' THEN '🌐 本地联调: ' || cleaned_title\r\n\r\n            -- ☕ 4. 研发核心工具\r\n            WHEN LOWER(process_name) = 'idea64.exe' THEN '☕ IDEA项目: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'datagrip64.exe' THEN '🗄️ SQL架构: ' || cleaned_title\r\n            WHEN LOWER(process_name) IN ('code.exe', 'cursor.exe') THEN '💻 代码心流: ' || cleaned_title\r\n\r\n            -- 📝 5. 运维与系统组件\r\n            WHEN LOWER(process_name) = 'typora.exe' THEN '📝 Markdown: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'windowsterminal.exe' THEN '💻 终端指令: ' || cleaned_title\r\n            WHEN LOWER(process_name) = 'taskmgr.exe' THEN '📊 系统内核: 任务管理器'\r\n            WHEN LOWER(process_name) = 'explorer.exe' AND cleaned_title LIKE '文件管理器:%' THEN '📁 磁盘路径: ' || cleaned_title\r\n\r\n            -- 🛡️ 6. 安全服务\r\n            WHEN LOWER(process_name) IN ('360safe.exe', '360tray.exe', '360logcenter.exe') THEN '🛡️ 系统防护: 360安全卫士'\r\n            \r\n            -- 🏁 7. 长尾离散应用\r\n            ELSE '🚀 [' || process_name || '] ' || cleaned_title\r\n        END AS task_context,\r\n        duration_seconds\r\n    FROM base_logs\r\n)\r\n-- 📊 3. 时区强制对齐：将时间戳先转换至东八区再进行切片，彻底干掉时区差\r\nSELECT \r\n    TO_CHAR(start_time AT TIME ZONE 'Asia/Shanghai', 'HH24:MI:SS') AS \"切换时刻\",\r\n    TRIM(task_context) AS \"动作上下文\",\r\n    duration_seconds AS \"停留时长\"\r\nFROM context_mapped\r\nORDER BY start_time DESC; -- 👈 底层依然按原生时间线绝对倒序",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 6,
+        "links": [],
+        "title": "最近显示",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "center",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": false
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "s"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "停留时长",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "type": "gauge",
+                        "valueDisplayMode": "color"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "sorting_marker",
+                    "scope": "series"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "dateTimeAsLocalNoDateIfToday"
+                    },
+                    {
+                      "id": "custom.hideFrom.viz",
+                      "value": true
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "切换时刻"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 70
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "动作上下文"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 566
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "enablePagination": true,
+              "showHeader": true,
+              "sortBy": [
+                {
+                  "desc": false,
+                  "displayName": "日志时间"
+                }
+              ]
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-7": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH time_bounds AS (\n  SELECT \n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ninterval_calc AS (\n  SELECT \n    GREATEST(interval '1 minute', make_interval(secs => ceil(extract(epoch from (b.t_to - b.t_from)) / 2000)::int)) AS dt\n  FROM time_bounds b\n),\ntime_grid AS (\n  SELECT g.grid_time\n  FROM time_bounds b, interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from b.t_from) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from b.t_to) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(grid_time)\n),\nstate_aligned AS (\n  SELECT DISTINCT ON (g.bucket_time)\n    g.bucket_time,\n    a.duration_seconds,\n    CASE\n      WHEN a.process_name = 'System_Sleep' THEN '⬛ 绝对睡眠 (风扇停转)'\n      WHEN a.process_name = 'System_DisplayOff' THEN '🟥 屏幕关闭 (伪睡眠/锁屏)'\n      WHEN a.process_name = 'System_Idle' THEN '🟡 键鼠静止 (人不在暂离)'\n      ELSE '🟢 深度工作 (正常使用中)'\n    END as state\n  FROM app_usage_logs a, time_bounds b, interval_calc i\n  CROSS JOIN LATERAL generate_series(\n    to_timestamp(floor(extract(epoch from a.start_time) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    to_timestamp(floor(extract(epoch from (a.start_time + (a.duration_seconds || ' seconds')::interval)) / extract(epoch from i.dt)) * extract(epoch from i.dt))::timestamptz,\n    i.dt\n  ) g(bucket_time)\n  WHERE a.start_time >= b.t_from - interval '1 day' AND a.start_time >= b.t_from - interval '1 day' AND a.start_time <= b.t_to AND a.start_time + (a.duration_seconds || ' seconds')::interval >= b.t_from\n  ORDER BY g.bucket_time, a.start_time DESC\n)\nSELECT\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as time,\n  COALESCE(sa.duration_seconds, extract(epoch from i.dt)::int) as \"持续秒数\",\n  COALESCE(sa.state, '📴 关机离线 (未通电/无数据)') as \"全盘宏观状态\"\nFROM time_grid g\nCROSS JOIN interval_calc i\nLEFT JOIN state_aligned sa ON g.grid_time = sa.bucket_time\nORDER BY time ASC;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": [
+              {
+                "group": "organize",
+                "kind": "Transformation",
+                "spec": {
+                  "options": {
+                    "excludeByName": {
+                      "持续秒数": true
+                    },
+                    "includeByName": {},
+                    "indexByName": {},
+                    "renameByName": {}
+                  }
+                }
+              }
+            ]
+          }
+        },
+        "description": "",
+        "id": 7,
+        "links": [],
+        "title": "用户使用电脑状态时间轴",
+        "vizConfig": {
+          "group": "state-timeline",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "axisPlacement": "auto",
+                  "fillOpacity": 100,
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineWidth": 0,
+                  "spanNulls": false
+                },
+                "mappings": [
+                  {
+                    "options": {
+                      "⬛ 绝对睡眠 (风扇停转)": {
+                        "color": "blue",
+                        "index": 3
+                      },
+                      "📴 关机离线 (未通电/无数据)": {
+                        "color": "text",
+                        "index": 4
+                      },
+                      "🟡 键鼠静止 (人不在暂离)": {
+                        "color": "yellow",
+                        "index": 1
+                      },
+                      "🟢 深度工作 (正常使用中)": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "🟥 屏幕关闭 (伪睡眠/锁屏)": {
+                        "color": "red",
+                        "index": 2
+                      }
+                    },
+                    "type": "value"
+                  }
+                ],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                },
+                "unit": "dthms"
+              },
+              "overrides": []
+            },
+            "options": {
+              "alignValue": "left",
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "mergeValues": true,
+              "rowHeight": 0.8,
+              "showValue": "never",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-8": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH marked_leads AS (\r\n  SELECT\r\n    start_time,\r\n    duration_seconds,\r\n    process_name,\r\n    window_title,\r\n    -- ⚡ 降维进化：只判断进程名是否改变！只要还在同一个应用里切换窗口，心流就绝对不断\r\n    CASE \r\n      WHEN process_name = LAG(process_name) OVER (ORDER BY start_time) THEN 0\r\n      ELSE 1\r\n    END as is_new_session\r\n  FROM app_usage_logs\r\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle')\r\n    AND $__timeFilter(start_time)\r\n),\r\nsession_groups AS (\r\n  SELECT\r\n    start_time,\r\n    duration_seconds,\r\n    process_name,\r\n    window_title,\r\n    -- 动态累加组标签\r\n    SUM(is_new_session) OVER (ORDER BY start_time) as grp\r\n  FROM marked_leads\r\n),\r\npacked_sessions AS (\r\n  SELECT\r\n    MIN(start_time) as flow_start,\r\n    SUM(duration_seconds) as total_seconds,\r\n    process_name,\r\n    -- 🎯 聚合代表性上下文：提取该专注时间块内最具代表性的窗口名称\r\n    MAX(window_title) as sample_title\r\n  FROM session_groups\r\n  GROUP BY grp, process_name\r\n)\r\nSELECT\r\n  -- 1. 进入时刻\r\n  (flow_start AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') as \"进入心流时刻\",\r\n  -- 2. 核心进程美化显示\r\n  CASE \r\n    WHEN process_name = 'chrome.exe' THEN '🌐 浏览器 (Chrome)'\r\n    WHEN process_name = 'Code.exe' THEN '💻 编译器 (VS Code)'\r\n    WHEN process_name = 'idea64.exe' THEN '☕ 编译器 (IntelliJ IDEA)'\r\n    WHEN process_name = 'explorer.exe' THEN '📁 系统组件 (文件管理器)'\r\n    ELSE '🚀 ' || process_name\r\n  END as \"核心应用\",\r\n  -- 3. 主要任务上下文\r\n  sample_title as \"主要任务上下文\",\r\n  -- 4. 听老哥的，转换成分钟级显示\r\n  ROUND(total_seconds / 60.0, 1) as \"持续专注时间(分钟)\"\r\nFROM packed_sessions\r\n-- 🎯 生产阈值：听老哥的，只要连续呆够 5 分钟（300秒）就定义为黄金心流块\r\nWHERE total_seconds >= 300\r\nORDER BY flow_start DESC;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "",
+        "id": 8,
+        "links": [],
+        "title": "专注时间",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "center",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": false
+                },
+                "decimals": 2,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "核心应用"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 188
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "进入心流时刻"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 156
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "主要任务上下文"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 429
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "enablePagination": true,
+              "showHeader": true
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-9": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "dataset": "time_audit",
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH bucket_params AS (\r\n  SELECT\r\n    GREATEST(interval '1 minute', ('$__interval')::interval) AS bucket_size,\r\n    '2000-01-01 00:00:00+08'::timestamptz AS bucket_origin\r\n),\r\ntime_grid AS (\r\n  SELECT generate_series(\r\n    date_bin(p.bucket_size, $__timeFrom()::timestamptz, p.bucket_origin),\r\n    date_bin(p.bucket_size, $__timeTo()::timestamptz, p.bucket_origin),\r\n    p.bucket_size\r\n  ) AS grid_time\r\n  FROM bucket_params p\r\n),\r\nflagged_switches AS (\r\n  SELECT\r\n    date_bin(p.bucket_size, start_time::timestamptz, p.bucket_origin) AS bucket_time,\r\n    CASE\r\n      WHEN process_name = LAG(process_name) OVER (ORDER BY start_time)\r\n           AND window_title = LAG(window_title) OVER (ORDER BY start_time) THEN 0\r\n      ELSE 1\r\n    END AS is_switch\r\n  FROM app_usage_logs\r\n  CROSS JOIN bucket_params p\r\n  WHERE process_name NOT IN ('System_Sleep', 'System_DisplayOff', 'System_Idle')\r\n    AND $__timeFilter(start_time)\r\n),\r\nbucket_counts AS (\r\n  SELECT bucket_time, SUM(is_switch) AS switch_count\r\n  FROM flagged_switches\r\n  GROUP BY bucket_time\r\n)\r\nSELECT\r\n  (g.grid_time AT TIME ZONE 'Asia/Shanghai' AT TIME ZONE 'Asia/Shanghai') AS time,\r\n  COALESCE(bc.switch_count, 0) / (EXTRACT(EPOCH FROM p.bucket_size) / 60.0) AS \"每分钟前台闪切次数\"\r\nFROM time_grid g\r\nCROSS JOIN bucket_params p\r\nLEFT JOIN bucket_counts bc ON g.grid_time = bc.bucket_time\r\nORDER BY time ASC;",
+                      "sql": {
+                        "columns": [
+                          {
+                            "parameters": [],
+                            "type": "function"
+                          }
+                        ],
+                        "groupBy": [
+                          {
+                            "property": {
+                              "type": "string"
+                            },
+                            "type": "groupBy"
+                          }
+                        ],
+                        "limit": 50
+                      }
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {
+              "interval": "1m",
+              "maxDataPoints": 1441
+            },
+            "transformations": []
+          }
+        },
+        "description": "短范围按分钟计数；长范围显示每个时间桶内的每分钟平均切换次数，无切换时为 0。",
+        "id": 9,
+        "links": [],
+        "title": "前台上下文“频繁闪切”干扰指数",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "left",
+                  "axisSoftMin": 0,
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "bars",
+                  "fillOpacity": 90,
+                  "gradientMode": "opacity",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "auto",
+                  "showValues": false,
+                  "spanNulls": true,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "normal"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "line+area"
+                  }
+                },
+                "mappings": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "green",
+                        "index": 0
+                      },
+                      "10": {
+                        "color": "red",
+                        "index": 2
+                      },
+                      "5": {
+                        "color": "yellow",
+                        "index": 1
+                      }
+                    },
+                    "type": "value"
+                  }
+                ],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "#EAB839",
+                      "value": 5
+                    },
+                    {
+                      "color": "red",
+                      "value": 10
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    }
+  },
+  "layout": {
+    "kind": "GridLayout",
+    "spec": {
+      "items": [
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-1"
+            },
+            "height": 3,
+            "width": 7,
+            "x": 0,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-2"
+            },
+            "height": 3,
+            "width": 5,
+            "x": 7,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-3"
+            },
+            "height": 3,
+            "width": 12,
+            "x": 12,
+            "y": 0
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-4"
+            },
+            "height": 16,
+            "width": 12,
+            "x": 0,
+            "y": 3
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-5"
+            },
+            "height": 9,
+            "width": 12,
+            "x": 12,
+            "y": 3
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-6"
+            },
+            "height": 10,
+            "width": 12,
+            "x": 12,
+            "y": 12
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-7"
+            },
+            "height": 5,
+            "width": 12,
+            "x": 0,
+            "y": 19
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-8"
+            },
+            "height": 9,
+            "width": 12,
+            "x": 12,
+            "y": 22
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-9"
+            },
+            "height": 7,
+            "width": 6,
+            "x": 0,
+            "y": 24
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-10"
+            },
+            "height": 7,
+            "width": 6,
+            "x": 6,
+            "y": 24
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-11"
+            },
+            "height": 8,
+            "width": 8,
+            "x": 0,
+            "y": 31
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-12"
+            },
+            "height": 17,
+            "width": 16,
+            "x": 8,
+            "y": 31
+          }
+        },
+        {
+          "kind": "GridLayoutItem",
+          "spec": {
+            "element": {
+              "kind": "ElementReference",
+              "name": "panel-13"
+            },
+            "height": 9,
+            "width": 8,
+            "x": 0,
+            "y": 39
+          }
+        }
+      ]
+    }
+  },
+  "links": [],
+  "liveNow": false,
   "preload": false,
-  "refresh": "10s",
-  "schemaVersion": 42,
   "tags": [
     "时间审计",
     "系统监控"
   ],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-24h",
-    "to": "now"
-  },
-  "timepicker": {
-    "refresh_intervals": [
+  "timeSettings": {
+    "autoRefresh": "10s",
+    "autoRefreshIntervals": [
       "5s",
       "10s",
       "30s",
@@ -1391,11 +1811,15 @@
       "1h",
       "2h",
       "1d"
-    ]
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-24h",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
   },
-  "timezone": "browser",
   "title": "📊 屏幕使用时间",
   "uid": "adfkm96",
-  "version": 69,
-  "weekStart": ""
+  "variables": [],
+  "version": 70
 }
