@@ -2,6 +2,7 @@
 import sys
 import os
 import json
+import re
 
 for _s in (sys.stdout, sys.stderr):
     try:
@@ -42,9 +43,11 @@ def optimize_sql(sql):
     )
 
     # 2. 🔌 功耗与电费诊断舱 优化
-    sql = sql.replace(
-        "WHERE timestamp >= date_trunc('month', now() AT TIME ZONE 'Asia/Shanghai')",
-        "WHERE timestamp >= date_trunc('month', now() AT TIME ZONE 'Asia/Shanghai') AND timestamp <= now()"
+    month_start = "WHERE timestamp >= date_trunc('month', now() AT TIME ZONE 'Asia/Shanghai')"
+    sql = re.sub(
+        re.escape(month_start) + r"(?!\s*AND\s+timestamp\s*<=\s*now\s*\(\s*\))",
+        month_start + " AND timestamp <= now()",
+        sql,
     )
     sql = sql.replace(
         "WHERE timestamp >= now() - interval '1 hour' ORDER BY timestamp DESC LIMIT 1",
