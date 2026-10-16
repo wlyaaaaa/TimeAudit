@@ -39,6 +39,7 @@ import sys
 import tempfile
 import time
 import urllib.request
+from urllib.parse import quote
 
 from grafana_dashboard_contract import validate_dashboard_document
 from backup_file_warnings import file_warning, sqlite_warning
@@ -344,7 +345,7 @@ def export_dashboards_from_db(database_path=None, changed_paths=None, before_wri
     if database_path is None:
         database_path = GRAFANA_DB
     absolute = os.path.abspath(database_path)
-    connection = sqlite3.connect(f"file:{absolute}?mode=ro", uri=True)
+    connection = sqlite3.connect("file:" + quote(absolute, safe="/\\:") + "?mode=ro", uri=True)
     try:
         connection.execute("BEGIN")
         documents = _dashboard_documents_from_sqlite(connection)
@@ -378,7 +379,7 @@ def _backup_grafana_db(keep, candidates):
     dst = os.path.join(DB_BACKUP_DIR, f"grafana_{ts}.db")
     candidate = dst + ".partial"
     candidates.append((candidate, "grafana.db"))
-    source = sqlite3.connect(f"file:{os.path.abspath(GRAFANA_DB)}?mode=ro", uri=True)
+    source = sqlite3.connect("file:" + quote(os.path.abspath(GRAFANA_DB), safe="/\\:") + "?mode=ro", uri=True)
     try:
         target = sqlite3.connect(candidate)
     except BaseException:

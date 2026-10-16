@@ -1,8 +1,10 @@
+import hashlib
 import json
 import os
 import sqlite3
 import tempfile
 import unittest
+from pathlib import Path
 
 import backup_grafana as backup
 
@@ -57,6 +59,33 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         )
         connection.commit()
         connection.close()
+
+    def test_literal_database_uri_paths_remain_read_only(self):
+        backup.GRAFANA_DB = os.path.join(self.temp.name, "grafana#sample%25.db")
+        self.create_unified_database()
+        source = Path(backup.GRAFANA_DB)
+        source_hash = hashlib.sha256(source.read_bytes()).hexdigest()
+
+        written = backup.export_dashboards_from_db(before_write=lambda: None)
+        self.assertEqual({"dash-1__Main _ Dashboard.json"}, written)
+        document = json.loads((Path(backup.DASH_DIR) / next(iter(written))).read_text(encoding="utf-8"))
+        self.assertEqual({"uid": "dash-1", "title": "Main / Dashboard", "version": 7, "panels": []}, document)
+        backup.backup_grafana_db(keep=2)
+        snapshots = list(Path(backup.DB_BACKUP_DIR).glob("*.db"))
+        self.assertEqual(1, len(snapshots))
+        connection = sqlite3.connect(snapshots[0])
+        try:
+            self.assertEqual(1, connection.execute("SELECT COUNT(*) FROM resource").fetchone()[0])
+        finally:
+            connection.close()
+        self.assertEqual(source_hash, hashlib.sha256(source.read_bytes()).hexdigest())
+        self.assertFalse(source.with_name("grafana").exists())
+
+        absent = source.with_name("absent#sample%25.db")
+        with self.assertRaises(sqlite3.OperationalError):
+            backup.export_dashboards_from_db(str(absent), before_write=lambda: None)
+        self.assertFalse(absent.exists())
+        self.assertFalse(absent.with_name("absent").exists())
 
     def test_unified_storage_exports_normalized_dashboard_without_credentials(self):
         self.create_unified_database()
