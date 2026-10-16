@@ -154,7 +154,8 @@ def _normalize_dashboard_value(value, parent_key=None):
         # transformation ids, however, are semantic Grafana configuration
         # (for example ``byName`` and ``organize``); Grafana 13 rejects either
         # object when its id is missing.
-        if key == "id" and parent_key not in {"matcher", "transformations"}:
+        # Field override property ids such as unit and thresholds are semantic too.
+        if key == "id" and parent_key not in {"matcher", "transformations", "properties"}:
             continue
         if key == "title" and isinstance(child, str):
             child = HARDWARE_SKU_IN_TITLE.sub("", child).strip()

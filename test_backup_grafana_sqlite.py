@@ -273,7 +273,14 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
                                 "matcher": {
                                     "id": "byName",
                                     "options": "GPU 温度",
-                                }
+                                },
+                                "properties": [
+                                    {"id": "unit", "value": "celsius"},
+                                    {"id": "thresholds", "value": {
+                                        "mode": "absolute",
+                                        "steps": [{"color": "red", "value": 80}],
+                                    }},
+                                ],
                             }
                         ]
                     },
@@ -289,6 +296,7 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
             ],
         }
 
+        original = json.loads(json.dumps(dashboard))
         normalized = backup.normalize_dashboard_for_public_backup(dashboard)
 
         self.assertNotIn("id", normalized)
@@ -303,6 +311,11 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
             normalized["panels"][0]["transformations"][0]["id"],
             "organize",
         )
+        self.assertEqual(
+            normalized["panels"][0]["fieldConfig"]["overrides"][0]["properties"],
+            original["panels"][0]["fieldConfig"]["overrides"][0]["properties"],
+        )
+        self.assertEqual(dashboard, original)
         self.assertEqual(normalized["panels"][0]["title"], "GPU 温度与功率")
         self.assertEqual(normalized["panels"][1]["title"], "CPU 频率")
         self.assertEqual(normalized["panels"][2]["title"], "整机显存 监控")
