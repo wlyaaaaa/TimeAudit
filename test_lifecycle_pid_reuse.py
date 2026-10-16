@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 import datetime
 import unittest
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from lifecycle_worker import ProcessLifecycleWorker
 
@@ -51,6 +53,59 @@ def _metadata(name):
 
 
 class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
+    async def test_duplicate_and_snapshot_missing_handles_close_once(self):
+        for query_fails in (False, True):
+            with self.subTest(query_fails=query_fails):
+                worker = ProcessLifecycleWorker({})
+                key = (4242, 100.0)
+                retained, duplicate = 0x100000001, 0x100000002
+                closed, queried = [], []
+                ticks = 0
+
+                def sleep(_seconds):
+                    nonlocal ticks
+                    ticks += 1
+                    if ticks == 3:
+                        worker.is_running = False
+
+                def exit_code(handle, code):
+                    queried.append(handle)
+                    if query_fails:
+                        raise OSError("synthetic exit query failure")
+                    code._obj.value = 7
+                    return True
+
+                native = SimpleNamespace(
+                    OpenProcess=Mock(side_effect=[retained, duplicate]),
+                    CloseHandle=Mock(side_effect=closed.append),
+                    GetExitCodeProcess=Mock(side_effect=exit_code),
+                )
+                snapshots = Mock(return_value=[])
+                loop = SimpleNamespace(call_soon_threadsafe=lambda callback, event: callback(event))
+                with (
+                    patch("lifecycle_worker.kernel32", native),
+                    patch.dict("sys.modules", {"activity_worker": SimpleNamespace(fetch_system_processes=snapshots)}),
+                    patch("lifecycle_worker.time.sleep", side_effect=sleep),
+                    patch("lifecycle_worker.psutil.process_iter", side_effect=AssertionError("no real sampling")) as fallback,
+                ):
+                    worker._track_pid_handle(key)
+                    worker._track_pid_handle(key)
+                    self.assertEqual([duplicate], closed)
+                    self.assertEqual({key: retained}, worker.pid_handles)
+                    worker.pid_start_time[key] = key[1]
+                    worker.is_running = True
+                    worker._differential_scanner_loop(loop)
+                    self.assertEqual([duplicate, retained], closed)
+                    self.assertEqual([retained], queried)
+                    self.assertEqual({}, worker.pid_handles)
+                    self.assertEqual({}, worker.pid_start_time)
+                    self.assertEqual(3, snapshots.call_count)
+                    fallback.assert_not_called()
+                    if not query_fails:
+                        event = worker.event_queue.get_nowait()
+                        self.assertEqual(key, event["instance_key"])
+                        self.assertEqual("0x00000007", event["exit_code"])
+
     async def test_old_exit_stays_bound_when_pid_is_reused(self):
         shared_map = {}
         worker = ProcessLifecycleWorker(shared_map)
