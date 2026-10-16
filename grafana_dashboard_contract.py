@@ -16,6 +16,14 @@ class DashboardContractError(ValueError):
     """A dashboard snapshot is unsafe or ambiguous for recovery."""
 
 
+def is_v2_dashboard(dashboard):
+    return (
+        isinstance(dashboard, dict)
+        and isinstance(dashboard.get("elements"), dict)
+        and "layout" in dashboard
+    )
+
+
 def _walk(value, path="dashboard"):
     yield value, path
     if isinstance(value, dict):
@@ -59,7 +67,9 @@ def validate_dashboard_document(dashboard, source="dashboard", expected_uid=None
                         f"{source}: transformation must be an object at "
                         f"{path}.transformations[{index}]"
                     )
-                transformation_id = transformation.get("id")
+                transformation_id = transformation.get(
+                    "group" if transformation.get("kind") == "Transformation" else "id"
+                )
                 if not isinstance(transformation_id, str) or not transformation_id.strip():
                     raise DashboardContractError(
                         f"{source}: transformation.id is missing at "
@@ -75,6 +85,16 @@ def validate_dashboard_document(dashboard, source="dashboard", expected_uid=None
                 )
 
         datasource_type = node.get("type")
+        if (
+            is_v2_dashboard(dashboard)
+            and node.get("kind") == "DataQuery"
+            and node.get("group") in POSTGRES_DATASOURCE_TYPES
+        ):
+            datasource = node.get("datasource")
+            if not isinstance(datasource, dict) or datasource.get("name") != RECOVERY_DATASOURCE_UID:
+                raise DashboardContractError(
+                    f"{source}: PostgreSQL datasource name is not the recovery uid at {path}"
+                )
         if datasource_type in POSTGRES_DATASOURCE_TYPES:
             datasource_uid = node.get("uid")
             if datasource_uid in RETIRED_DATASOURCE_UIDS:

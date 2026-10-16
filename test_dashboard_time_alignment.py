@@ -17,8 +17,18 @@ def load_panel_sql():
     with DASHBOARD_PATH.open(encoding="utf-8") as dashboard_file:
         dashboard = json.load(dashboard_file)
 
+    def nested_panels(panels):
+        for panel in panels:
+            yield panel
+            yield from nested_panels(panel.get("panels", []))
+
+    panels = nested_panels(dashboard.get("panels", []))
+    if "elements" in dashboard:
+        panels = (item["spec"] for item in dashboard["elements"].values()
+                  if item.get("kind") == "Panel")
     matching_panels = [
-        panel for panel in dashboard.get("panels", []) if panel.get("title") == PANEL_TITLE
+        panel for panel in panels
+        if panel.get("title") in (PANEL_TITLE, PANEL_TITLE + "（明细仅近60天）")
     ]
     if len(matching_panels) != 1:
         raise AssertionError(
@@ -26,6 +36,15 @@ def load_panel_sql():
         )
 
     targets = matching_panels[0].get("targets", [])
+    if "elements" in dashboard:
+        targets = [
+            {
+                "refId": item["spec"].get("refId"),
+                "rawSql": item["spec"].get("query", {}).get("spec", {}).get("rawSql"),
+            }
+            for item in matching_panels[0].get("data", {}).get("spec", {}).get("queries", [])
+            if item.get("kind") == "PanelQuery"
+        ]
     matching_targets = [target for target in targets if target.get("refId") == "A"]
     if len(matching_targets) != 1 or not matching_targets[0].get("rawSql"):
         raise AssertionError("expected panel target A to contain rawSql")

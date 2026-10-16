@@ -2,6 +2,7 @@ import json
 import os
 import tempfile
 import unittest
+from urllib.error import HTTPError, URLError
 from pathlib import Path
 from unittest import mock
 
@@ -9,7 +10,7 @@ import restore_grafana as restore
 from grafana_dashboard_contract import RECOVERY_DATASOURCE_UID
 
 
-def write_dashboard(directory, uid="dash-1"):
+def write_dashboard(directory, uid="dash-1", v2=False):
     path = Path(directory, f"{uid}.json")
     path.write_text(
         json.dumps(
@@ -28,6 +29,10 @@ def write_dashboard(directory, uid="dash-1"):
         ),
         encoding="utf-8",
     )
+    if v2:
+        document = {"uid": "dash/ 1?#", "version": 4, "id": 99, "title": "V2",
+                    "elements": {"panel-1": {"kind": "Panel", "spec": {"id": 7}}}, "layout": {}}
+        path.write_text(json.dumps(document), encoding="utf-8")
     return path
 
 
@@ -88,15 +93,60 @@ class GrafanaRestoreTests(unittest.TestCase):
 
     def test_dry_run_is_static_and_does_not_call_api(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = write_dashboard(directory)
-            with mock.patch.object(restore, "api_get") as api_get, mock.patch.object(
-                restore, "api_post"
-            ) as api_post:
-                self.assertEqual(
-                    restore.main(["--dry-run", "--file", str(path)]), 0
-                )
-            api_get.assert_not_called()
-            api_post.assert_not_called()
+            for v2 in (False, True):
+                path = write_dashboard(directory, v2=v2)
+                with mock.patch.object(restore, "api_get") as api_get, mock.patch.object(
+                    restore, "api_post"
+                ) as api_post:
+                    self.assertEqual(restore.main(["--dry-run", "--file", str(path)]), 0)
+                api_get.assert_not_called()
+                api_post.assert_not_called()
+
+    def test_v2_restore_creation_updates_and_errors_keep_exact_uid(self):
+        uid = "dash/ 1?#"
+        collection = "/apis/dashboard.grafana.app/v2/namespaces/default/dashboards"
+        exact = collection + "/dash%2F%201%3F%23"
+        resource = {"metadata": {"name": uid, "resourceVersion": "rv-1", "generation": 10}}
+        wrong = {"metadata": {"name": "wrong"}}
+        cases = [
+            ("create", HTTPError(exact, 404, "missing", {}, None), resource, resource, 0),
+            ("update", resource, resource, resource, 0),
+            ("update_without_version", {"metadata": {"name": uid}}, resource, resource, 0),
+            ("denied", HTTPError(exact, 403, "denied", {}, None), None, None, 1),
+            ("network", URLError("offline"), None, None, 1),
+            ("conflict", resource, HTTPError(exact, 409, "conflict", {}, None), None, 1),
+            ("response_uid", resource, wrong, resource, 1),
+            ("readback_uid", resource, resource, wrong, 1),
+            ("existing_uid", wrong, resource, resource, 1),
+        ]
+        for label, existing, response, readback, result in cases:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                path = write_dashboard(directory, v2=True)
+                original = json.loads(path.read_text(encoding="utf-8"))
+                api_get = mock.Mock(side_effect=[
+                    {"uid": RECOVERY_DATASOURCE_UID, "type": "postgres"}, existing, readback])
+                api_post = mock.Mock(side_effect=[response])
+                with mock.patch.object(restore, "log") as log:
+                    self.assertEqual(self.run_restore(path, api_get, api_post), result)
+                self.assertEqual(api_get.call_args_list[1].args[1], exact)
+                if label in {"denied", "network", "existing_uid"}:
+                    api_post.assert_not_called()
+                    continue
+                api_post.assert_called_once()
+                call = api_post.call_args
+                self.assertEqual(call.args[1], collection if label == "create" else exact)
+                self.assertEqual(call.kwargs["method"], "POST" if label == "create" else "PUT")
+                body = call.args[3]
+                self.assertEqual(body["apiVersion"], "dashboard.grafana.app/v2")
+                self.assertEqual(body["kind"], "Dashboard")
+                self.assertEqual(body["metadata"]["name"], uid)
+                self.assertEqual(body["metadata"]["annotations"], {"grafana.app/folder": ""})
+                self.assertEqual(body["spec"], {k: v for k, v in original.items() if k not in {"uid", "version", "id"}})
+                self.assertEqual(body["metadata"].get("resourceVersion"), None if label in {"create", "update_without_version"} else "rv-1")
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+                if result == 0:
+                    self.assertEqual(api_get.call_args_list[-1].args[1], exact)
+                    self.assertTrue(any("generation=10" in c.args[0] for c in log.call_args_list))
 
     def test_invalid_batch_is_rejected_before_credentials_or_api(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -73,6 +73,27 @@ class GrafanaDashboardContractTests(unittest.TestCase):
         with self.assertRaisesRegex(DashboardContractError, "transformation.id"):
             validate_dashboard_document(dashboard)
 
+    def test_v2_contract_uses_transformation_group_and_query_datasource_name(self):
+        query = {"kind": "DataQuery", "group": "postgres",
+                 "datasource": {"name": RECOVERY_DATASOURCE_UID}, "spec": {}}
+        transformation = {"kind": "Transformation", "group": "organize", "spec": {"options": {}}}
+        data = {"queries": [{"kind": "PanelQuery", "spec": {"query": query}}],
+                "transformations": [transformation]}
+        dashboard = {"uid": "v2", "elements": {"panel-1": {"kind": "Panel", "spec": {
+            "id": 1, "data": {"kind": "QueryGroup", "spec": data}}}}, "layout": {}}
+        for group in ("postgres", "grafana-postgresql-datasource"):
+            with self.subTest(group=group):
+                query["group"] = group
+                self.assertIs(validate_dashboard_document(dashboard), dashboard)
+                for datasource in ({"name": "unknown"}, {}, None):
+                    query["datasource"] = datasource
+                    with self.assertRaisesRegex(DashboardContractError, "recovery uid"):
+                        validate_dashboard_document(dashboard)
+                query["datasource"] = {"name": RECOVERY_DATASOURCE_UID}
+        del transformation["group"]
+        with self.assertRaisesRegex(DashboardContractError, "transformation.id"):
+            validate_dashboard_document(dashboard)
+
     def test_backup_validates_all_documents_before_writing(self):
         dashboard = valid_dashboard()
         dashboard["panels"][0]["datasource"]["uid"] = "bfoc1vymtgni8a"

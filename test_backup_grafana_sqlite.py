@@ -4,6 +4,7 @@ import os
 import sqlite3
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 import backup_grafana as backup
@@ -99,6 +100,29 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         self.assertEqual(document["uid"], "dash-1")
         self.assertEqual(document["version"], 7)
         self.assertNotIn("id", document)
+
+    def test_v2_backup_preserves_element_ids_and_reports_element_count(self):
+        dashboard = {
+            "uid": "v2", "version": 7, "id": 99, "title": "Hardware (RTX5080)",
+            "elements": {"panel-1": {"kind": "Panel", "spec": {
+                "id": 7, "title": "Panel",
+                "data": {"kind": "QueryGroup", "spec": {"transformations": [
+                    {"kind": "Transformation", "group": "organize", "spec": {"options": {}}}
+                ]}},
+                "fieldConfig": {"overrides": [{"matcher": {"id": "byName"},
+                    "properties": [{"id": "unit", "value": "short"}]}]},
+            }}}, "layout": {},
+        }
+        original = json.loads(json.dumps(dashboard))
+        with mock.patch.object(backup, "log") as log:
+            written = backup.write_dashboard_documents([("v2", dashboard)], before_write=lambda: None)
+        document = json.loads((Path(backup.DASH_DIR) / next(iter(written))).read_text(encoding="utf-8"))
+        self.assertEqual(document["elements"], dashboard["elements"])
+        self.assertNotIn("id", document)
+        self.assertEqual(document["title"], "Hardware")
+        self.assertEqual(document["version"], 7)
+        self.assertEqual(dashboard, original)
+        self.assertIn("面板 1 个", log.call_args.args[0])
 
     def test_public_dashboard_snapshots_keep_semantic_matcher_ids(self):
         snapshot_dir = os.path.join(os.path.dirname(__file__), "grafana_dashboards")

@@ -41,7 +41,7 @@ import time
 import urllib.request
 from urllib.parse import quote
 
-from grafana_dashboard_contract import validate_dashboard_document
+from grafana_dashboard_contract import is_v2_dashboard, validate_dashboard_document
 from backup_file_warnings import file_warning, sqlite_warning
 
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
@@ -143,9 +143,9 @@ HARDWARE_SKU_IN_TITLE = re.compile(
 )
 
 
-def _normalize_dashboard_value(value, parent_key=None):
+def _normalize_dashboard_value(value, parent_key=None, preserve_ids=False):
     if isinstance(value, list):
-        return [_normalize_dashboard_value(item, parent_key) for item in value]
+        return [_normalize_dashboard_value(item, parent_key, preserve_ids) for item in value]
     if not isinstance(value, dict):
         return value
     normalized = {}
@@ -155,17 +155,20 @@ def _normalize_dashboard_value(value, parent_key=None):
         # (for example ``byName`` and ``organize``); Grafana 13 rejects either
         # object when its id is missing.
         # Field override property ids such as unit and thresholds are semantic too.
-        if key == "id" and parent_key not in {"matcher", "transformations", "properties"}:
+        if key == "id" and (parent_key is None or (
+            not preserve_ids and parent_key not in {"matcher", "transformations", "properties"}
+        )):
             continue
         if key == "title" and isinstance(child, str):
             child = HARDWARE_SKU_IN_TITLE.sub("", child).strip()
-        normalized[key] = _normalize_dashboard_value(child, key)
+        normalized[key] = _normalize_dashboard_value(child, key, preserve_ids)
     return normalized
 
 
 def normalize_dashboard_for_public_backup(dashboard):
     """Remove machine-local ids/SKUs while preserving semantic config ids."""
-    return _normalize_dashboard_value(dashboard)
+    # V2 element/config ids participate in references inside the native spec.
+    return _normalize_dashboard_value(dashboard, preserve_ids=is_v2_dashboard(dashboard))
 
 
 def _dashboard_version(dashboard):
@@ -227,6 +230,7 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
     os.makedirs(DASH_DIR, exist_ok=True)
     written = set()
     for uid, dash in normalized_documents:
+        panel_count = len(dash["elements"] if is_v2_dashboard(dash) else dash.get("panels", []))
         title = dash.get("title", uid)
         fname = f"{uid}__{safe_filename(title)}.json"
         fpath = os.path.join(DASH_DIR, fname)
@@ -243,7 +247,7 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
             try:
                 if previous is not None and json.loads(previous) == dash:
                     written.add(fname)
-                    log(f"  ✓ {fname}  (面板 {len(dash.get('panels', []))} 个，内容已一致)")
+                    log(f"  ✓ {fname}  (面板 {panel_count} 个，内容已一致)")
                     continue
             except (ValueError, TypeError):
                 pass
@@ -256,7 +260,7 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
             _write_dashboard_json_atomically(fpath, content)
             _record_dashboard_change(changed_paths, fpath)
         written.add(fname)
-        log(f"  ✓ {fname}  (面板 {len(dash.get('panels', []))} 个)")
+        log(f"  ✓ {fname}  (面板 {panel_count} 个)")
 
     # 清理已在 Grafana 中删除的仪表盘对应的旧 JSON（保持备份目录与现状一致）。
     for old in glob.glob(os.path.join(DASH_DIR, "*.json")):

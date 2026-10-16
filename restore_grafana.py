@@ -23,11 +23,14 @@ import json
 import os
 import sys
 import urllib.request
+import urllib.error
+from urllib.parse import quote
 
 from grafana_dashboard_contract import (
     DashboardContractError,
     RECOVERY_DATASOURCE_UID,
     discover_dashboard_files,
+    is_v2_dashboard,
     validate_dashboard_document,
 )
 
@@ -45,8 +48,8 @@ def log(msg):
     print(f"[grafana-restore] {msg}", flush=True)
 
 
-def api_post(base_url, path, auth_header, body, timeout=15):
-    req = urllib.request.Request(base_url.rstrip("/") + path, method="POST")
+def api_post(base_url, path, auth_header, body, timeout=15, method="POST"):
+    req = urllib.request.Request(base_url.rstrip("/") + path, method=method)
     req.add_header("Authorization", auth_header)
     req.add_header("Content-Type", "application/json")
     data = json.dumps(body).encode("utf-8")
@@ -86,6 +89,36 @@ def validate_dashboard_readback(base_url, auth_header, expected_uid):
     dashboard = readback.get("dashboard") if isinstance(readback, dict) else None
     if not isinstance(dashboard, dict) or dashboard.get("uid") != expected_uid:
         raise RuntimeError(f"dashboard UID readback failed for {expected_uid}")
+
+
+def restore_v2_dashboard(base_url, auth_header, dashboard):
+    uid = dashboard["uid"]
+    collection = "/apis/dashboard.grafana.app/v2/namespaces/default/dashboards"
+    path = collection + "/" + quote(uid, safe="")
+    metadata = {"name": uid, "annotations": {"grafana.app/folder": ""}}
+    method = "PUT"
+    try:
+        existing = api_get(base_url, path, auth_header)
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise
+        existing = None
+        method = "POST"
+    if method == "PUT":
+        old_metadata = existing.get("metadata", {}) if isinstance(existing, dict) else {}
+        if old_metadata.get("name") != uid:
+            raise RuntimeError(f"dashboard UID readback failed for {uid}")
+        if "resourceVersion" in old_metadata:
+            metadata["resourceVersion"] = old_metadata["resourceVersion"]
+    body = {"apiVersion": "dashboard.grafana.app/v2", "kind": "Dashboard",
+            "metadata": metadata,
+            "spec": {key: value for key, value in dashboard.items() if key not in {"uid", "version", "id"}}}
+    response = api_post(base_url, collection if method == "POST" else path, auth_header, body, method=method)
+    for readback in (False, True):
+        resource = api_get(base_url, path, auth_header) if readback else response
+        if not isinstance(resource, dict) or (resource.get("metadata") or {}).get("name") != uid:
+            raise RuntimeError(f"dashboard UID readback failed for {uid}")
+    return resource["metadata"].get("generation")
 
 
 def main(argv=None):
@@ -144,6 +177,11 @@ def main(argv=None):
         try:
             title = dash.get("title", "?")
             uid = dash["uid"]
+            if is_v2_dashboard(dash):
+                generation = restore_v2_dashboard(args.url, auth_header, dash)
+                log(f"  ✓ 已恢复: {title}  (uid={uid}, generation={generation})")
+                ok += 1
+                continue
             res = api_post(args.url, "/api/dashboards/db", auth_header,
                            {"dashboard": dash, "overwrite": True, "folderUid": ""})
             if res.get("status") == "success":
