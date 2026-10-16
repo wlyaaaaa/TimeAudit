@@ -1,1132 +1,1513 @@
 {
-  "annotations": {
-    "list": [
-      {
-        "builtIn": 1,
-        "datasource": {
-          "type": "grafana",
-          "uid": "-- Grafana --"
-        },
+  "annotations": [
+    {
+      "kind": "AnnotationQuery",
+      "spec": {
+        "builtIn": true,
         "enable": true,
         "hide": true,
         "iconColor": "rgba(0, 211, 255, 1)",
         "name": "Annotations & Alerts",
-        "type": "dashboard"
+        "query": {
+          "datasource": {
+            "name": "-- Grafana --"
+          },
+          "group": "grafana",
+          "kind": "DataQuery",
+          "spec": {},
+          "version": "v0"
+        }
       }
-    ]
-  },
+    }
+  ],
+  "cursorSync": "Crosshair",
   "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。",
   "editable": true,
-  "fiscalYearStartMonth": 0,
-  "graphTooltip": 1,
-  "links": [],
-  "liveNow": false,
-  "panels": [
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": true
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
+  "elements": {
+    "panel-1": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
               {
-                "color": "green"
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('code.exe', '📝 VS Code 编辑器'),\n    ('idea64.exe', '☕ IntelliJ IDEA'),\n    ('datagrip64.exe', '🛢️ DataGrip 数据库'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('discord.exe', '💬 Discord 社区'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('docker desktop.exe', '🐳 Docker 桌面端'),\n    ('windowsterminal.exe', '💻 Windows 终端'),\n    ('blackmythwukong.exe', '🐒 黑神话：悟空'),\n    ('cyberpunk2077.exe', '🦾 赛博朋克 2077'),\n    ('league of legends.exe', '⚔️ 英雄联盟'),\n    ('cities2.exe', '🏗️ 城市：天际线 2'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2'),\n    ('qq.exe', '🐧 QQ 电脑版'),\n    ('bilibili.exe', '📺 哔哩哔哩')\n)\nSELECT * FROM (\nSELECT COALESCE(pm.alias_name, '⚙️ ' || process_name) AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(proc_cpu_usage_sum) / NULLIF(sum(proc_cpu_usage_count),0))::numeric,2) AS \"平均 CPU (%)\", ROUND(max(proc_cpu_usage_max)::numeric,2) AS \"峰值 CPU (%)\", ROUND((sum(proc_gpu_usage_sum) / NULLIF(sum(proc_gpu_usage_count),0))::numeric,2) AS \"平均 GPU (%)\", ROUND((sum(proc_ram_mb_sum) / NULLIF(sum(proc_ram_mb_count),0))::numeric,0) AS \"平均内存 (MB)\", ROUND(max(proc_ram_mb_max)::numeric,0) AS \"峰值内存 (MB)\", ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,3) AS \"平均显存 (GB)\", sum(sample_count)::bigint AS \"采样点数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nLEFT JOIN process_map pm ON LOWER(process_name)=pm.proc_name\nGROUP BY process_name, executable_path, pm.alias_name\nHAVING sum(sample_count) >= 3\n\n) totals ORDER BY \"平均 CPU (%)\" + \"平均 GPU (%)\" + \"平均内存 (MB)\"/1024.0 DESC NULLS LAST LIMIT 25;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
               }
-            ]
+            ],
+            "queryOptions": {},
+            "transformations": []
           }
         },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "平均 CPU (%)"
-            },
-            "properties": [
-              {
-                "value": {
-                  "mode": "gradient",
-                  "type": "gauge"
-                }
-              },
-              {
-                "value": 100
-              },
-              {
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "平均 GPU (%)"
-            },
-            "properties": [
-              {
-                "value": {
-                  "mode": "gradient",
-                  "type": "gauge"
-                }
-              },
-              {
-                "value": 100
-              },
-              {
-                "value": 0
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "平均内存 (MB)"
-            },
-            "properties": [
-              {
-                "value": "mbytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "峰值内存 (MB)"
-            },
-            "properties": [
-              {
-                "value": "mbytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "平均显存 (GB)"
-            },
-            "properties": [
-              {
-                "value": "gbytes"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 12,
-        "w": 24,
-        "x": 0,
-        "y": 0
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": []
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH process_map(proc_name, alias_name) AS (\n  VALUES\n    ('weixin.exe', '💬 微信电脑版'),\n    ('pixpin.exe', '📌 PixPin 截图工具'),\n    ('code.exe', '📝 VS Code 编辑器'),\n    ('idea64.exe', '☕ IntelliJ IDEA'),\n    ('datagrip64.exe', '🛢️ DataGrip 数据库'),\n    ('chrome.exe', '🌐 Chrome 浏览器'),\n    ('msedge.exe', '🌐 Edge 浏览器'),\n    ('discord.exe', '💬 Discord 社区'),\n    ('claude.exe', '🤖 Claude 桌面端'),\n    ('docker desktop.exe', '🐳 Docker 桌面端'),\n    ('windowsterminal.exe', '💻 Windows 终端'),\n    ('blackmythwukong.exe', '🐒 黑神话：悟空'),\n    ('cyberpunk2077.exe', '🦾 赛博朋克 2077'),\n    ('league of legends.exe', '⚔️ 英雄联盟'),\n    ('cities2.exe', '🏗️ 城市：天际线 2'),\n    ('slaythespire2.exe', '🃏 杀戮尖塔 2'),\n    ('qq.exe', '🐧 QQ 电脑版'),\n    ('bilibili.exe', '📺 哔哩哔哩')\n)\nSELECT * FROM (\nSELECT COALESCE(pm.alias_name, '⚙️ ' || process_name) AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(proc_cpu_usage_sum) / NULLIF(sum(proc_cpu_usage_count),0))::numeric,2) AS \"平均 CPU (%)\", ROUND(max(proc_cpu_usage_max)::numeric,2) AS \"峰值 CPU (%)\", ROUND((sum(proc_gpu_usage_sum) / NULLIF(sum(proc_gpu_usage_count),0))::numeric,2) AS \"平均 GPU (%)\", ROUND((sum(proc_ram_mb_sum) / NULLIF(sum(proc_ram_mb_count),0))::numeric,0) AS \"平均内存 (MB)\", ROUND(max(proc_ram_mb_max)::numeric,0) AS \"峰值内存 (MB)\", ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,3) AS \"平均显存 (GB)\", sum(sample_count)::bigint AS \"采样点数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nLEFT JOIN process_map pm ON LOWER(process_name)=pm.proc_name\nGROUP BY process_name, executable_path, pm.alias_name\nHAVING sum(sample_count) >= 3\n\n) totals ORDER BY \"平均 CPU (%)\" + \"平均 GPU (%)\" + \"平均内存 (MB)\"/1024.0 DESC NULLS LAST LIMIT 25;",
-          "refId": "A"
-        }
-      ],
-      "title": "🏆 全进程 CPU/GPU/内存/显存 Top 25（单进程采样口径）",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": true
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "CPU 均值 (%)"
-            },
-            "properties": [
-              {
-                "value": {
-                  "mode": "gradient",
-                  "type": "gauge"
-                }
-              },
-              {
-                "value": 30
-              },
-              {
-                "value": 0
-              },
-              {
-                "value": {
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
+        "id": 1,
+        "links": [],
+        "title": "🏆 全进程 CPU/GPU/内存/显存 Top 25（单进程采样口径）",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "filterable": true,
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": true
+                },
+                "thresholds": {
                   "mode": "absolute",
                   "steps": [
                     {
-                      "color": "green"
-                    },
-                    {
-                      "color": "yellow",
-                      "value": 3
-                    },
-                    {
-                      "color": "orange",
-                      "value": 10
-                    },
-                    {
-                      "color": "red",
-                      "value": 20
+                      "color": "green",
+                      "value": 0
                     }
                   ]
                 }
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "签名状态"
-            },
-            "properties": [
-              {
-                "value": 100
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "内存均值 (MB)"
-            },
-            "properties": [
-              {
-                "value": "mbytes"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 12,
-        "w": 24,
-        "x": 0,
-        "y": 12
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": []
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "\nWITH fg_procs AS (\n  SELECT DISTINCT process_key, os_pid\n  FROM public.fact_process_context\n  WHERE timestamp BETWEEN $__timeFrom()::timestamptz - interval '2 hours' AND $__timeTo()::timestamptz\n    AND is_foreground = 1\n),\nbg_stats AS (\n  SELECT\n    a.process_key,\n    ROUND(AVG(a.proc_cpu_usage)::numeric, 2) AS \"CPU 均值 (%)\",\n    ROUND(MAX(a.proc_cpu_usage)::numeric, 2) AS \"CPU 峰值 (%)\",\n    ROUND(AVG(a.proc_gpu_usage)::numeric, 2) AS \"GPU 均值 (%)\",\n    ROUND(AVG(a.proc_ram_mb)::numeric, 0) AS \"内存均值 (MB)\",\n    ROUND(AVG(a.proc_disk_read_rate_mb + a.proc_disk_write_rate_mb)::numeric, 2) AS \"磁盘 IO (MB/s)\",\n    ROUND(AVG(a.proc_network_send_kb + a.proc_network_recv_kb)::numeric, 1) AS \"网络 (KB/s)\",\n    COUNT(*) AS \"后台采样数\"\n  FROM public.fact_process_activity a\n  WHERE $__timeFilter(a.\"timestamp\")\n    AND NOT EXISTS (\n      SELECT 1 FROM fg_procs f\n      WHERE a.process_key = f.process_key AND a.os_pid = f.os_pid\n    )\n  GROUP BY a.process_key\n  HAVING COUNT(*) >= 3\n)\nSELECT\n  r.process_name AS \"后台内鬼进程\",\n  bs.\"CPU 均值 (%)\",\n  bs.\"CPU 峰值 (%)\",\n  bs.\"GPU 均值 (%)\",\n  bs.\"内存均值 (MB)\",\n  bs.\"磁盘 IO (MB/s)\",\n  bs.\"网络 (KB/s)\",\n  r.service_name AS \"服务名\",\n  CASE WHEN r.signature_status = 1 THEN '✅ 已签名'\n       WHEN r.signature_status = 0 THEN '⚠️ 未签名'\n       ELSE '❓ 未知' END AS \"签名状态\",\n  bs.\"后台采样数\"\nFROM bg_stats bs\nJOIN public.dim_process_registry r ON bs.process_key = r.process_key\nORDER BY bs.\"CPU 均值 (%)\" + bs.\"GPU 均值 (%)\" + bs.\"内存均值 (MB)\" / 1024.0 DESC\nLIMIT 20;\n",
-          "refId": "A"
-        }
-      ],
-      "title": "👿 后台内鬼榜 (is_foreground=0 静默高占用)（明细仅近60天）",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": true
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计写入 (GB)"
-            },
-            "properties": [
-              {
-                "value": "gbytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "累计读取 (GB)"
-            },
-            "properties": [
-              {
-                "value": "gbytes"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 11,
-        "w": 12,
-        "x": 0,
-        "y": 24
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": []
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "SELECT * FROM (\nSELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(active_proc_disk_read_rate_mb_sum) / NULLIF(sum(active_proc_disk_read_rate_mb_count),0))::numeric,3) AS \"平均读速 (MB/s)\", ROUND(max(active_proc_disk_read_rate_mb_max)::numeric,2) AS \"峰值读速 (MB/s)\", ROUND((sum(active_proc_disk_write_rate_mb_sum) / NULLIF(sum(active_proc_disk_write_rate_mb_count),0))::numeric,3) AS \"平均写速 (MB/s)\", ROUND(max(active_proc_disk_write_rate_mb_max)::numeric,2) AS \"峰值写速 (MB/s)\", ROUND((sum(active_proc_disk_iops_sum) / NULLIF(sum(active_proc_disk_iops_count),0))::numeric,0) AS \"平均 IOPS\", sum(active_proc_disk_write_rate_mb_sum)*3.1/1024.0 AS \"累计写入 (GB)\", sum(active_proc_disk_read_rate_mb_sum)*3.1/1024.0 AS \"累计读取 (GB)\", sum(disk_sample_count)::bigint AS \"采样数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(disk_sample_count) >= 2\n\n) totals ORDER BY \"累计写入 (GB)\" + \"累计读取 (GB)\" DESC NULLS LAST LIMIT 20;",
-          "refId": "A"
-        }
-      ],
-      "title": "💾 磁盘 I/O 与 SSD 写入损耗大户（累计量为估算）",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": true
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              }
-            ]
-          }
-        },
-        "overrides": []
-      },
-      "gridPos": {
-        "h": 11,
-        "w": 12,
-        "x": 12,
-        "y": 24
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": []
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH totals AS (SELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(active_proc_network_send_kb_sum) / NULLIF(sum(active_proc_network_send_kb_count),0))::numeric,1) AS \"发送均速 (KB/s)\", ROUND((sum(active_proc_network_recv_kb_sum) / NULLIF(sum(active_proc_network_recv_kb_count),0))::numeric,1) AS \"接收均速 (KB/s)\", (sum(active_proc_network_send_kb_sum)+sum(active_proc_network_recv_kb_sum))*3.1/1024.0 AS \"累计流量 (MB)\", max(active_proc_active_connections_max) AS \"最大连接数\", sum(network_sample_count)::bigint AS \"采样数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(network_sample_count) >= 2\nORDER BY \"累计流量 (MB)\" DESC NULLS LAST LIMIT 20)\nSELECT totals.*, (\n SELECT a.proc_remote_ip_port FROM public.fact_process_activity a\n JOIN public.dim_process_registry r USING(process_key)\n WHERE r.process_name=totals.\"进程\" AND r.executable_path=totals.\"程序路径\"\n AND a.timestamp >= GREATEST($__timeFrom()::timestamptz, $__timeTo()::timestamptz - interval '2 hours')\n AND a.timestamp < $__timeTo()::timestamptz\n AND a.proc_remote_ip_port IS NOT NULL AND a.proc_remote_ip_port <> ''\n ORDER BY a.timestamp DESC LIMIT 1\n) AS \"最近远端 IP:Port\" FROM totals ORDER BY \"累计流量 (MB)\" DESC NULLS LAST;",
-          "refId": "A"
-        }
-      ],
-      "title": "🌐 网络流量大户 + 远端 IP 追踪（累计量为估算）",
-      "type": "table"
-    },
-    {
-      "datasource": {
-        "type": "grafana-postgresql-datasource",
-        "uid": "P7A9DAD60F8AB4C18"
-      },
-      "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
-      "fieldConfig": {
-        "defaults": {
-          "color": {
-            "mode": "thresholds"
-          },
-          "custom": {
-            "align": "auto",
-            "cellOptions": {
-              "type": "auto"
-            },
-            "filterable": true,
-            "inspect": true
-          },
-          "thresholds": {
-            "mode": "absolute",
-            "steps": [
-              {
-                "color": "green"
-              }
-            ]
-          }
-        },
-        "overrides": [
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "共享显存均值 (MB)"
-            },
-            "properties": [
-              {
-                "value": "mbytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "共享显存峰值 (MB)"
-            },
-            "properties": [
-              {
-                "value": "mbytes"
-              }
-            ]
-          },
-          {
-            "matcher": {
-              "id": "byName",
-              "options": "专用显存均值 (MB)"
-            },
-            "properties": [
-              {
-                "value": "mbytes"
-              }
-            ]
-          }
-        ]
-      },
-      "gridPos": {
-        "h": 10,
-        "w": 24,
-        "x": 0,
-        "y": 35
-      },
-      "options": {
-        "cellHeight": "sm",
-        "footer": {
-          "countRows": false,
-          "fields": "",
-          "reducer": [
-            "sum"
-          ],
-          "show": false
-        },
-        "showHeader": true,
-        "sortBy": []
-      },
-      "pluginVersion": "13.0.2",
-      "targets": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "editorMode": "code",
-          "format": "table",
-          "rawQuery": true,
-          "rawSql": "WITH totals AS (SELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(proc_thread_count_sum) / NULLIF(sum(proc_thread_count_count),0))::numeric,0) AS \"平均线程数\", ROUND(max(proc_thread_count_max)::numeric,0) AS \"峰值线程数\", ROUND((sum(proc_vram_shared_mb_sum) / NULLIF(sum(proc_vram_shared_mb_count),0))::numeric,0) AS \"共享显存均值 (MB)\", ROUND(max(proc_vram_shared_mb_max)::numeric,0) AS \"共享显存峰值 (MB)\", ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,3) * 1024 AS \"专用显存均值 (MB)\", sum(sample_count)::bigint AS \"采样数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(sample_count) >= 3\nORDER BY \"平均线程数\" DESC NULLS LAST LIMIT 20)\nSELECT totals.*, (\n SELECT CASE WHEN max(a.proc_cpu_affinity) IS NULL THEN '无可用明细（仅近60天）'\n WHEN max(a.proc_cpu_affinity)=-1 THEN '全核 (所有 CPU)'\n ELSE 'mask=' || max(a.proc_cpu_affinity)::text END\n FROM public.fact_process_activity a JOIN public.dim_process_registry r USING(process_key)\n WHERE r.process_name=totals.\"进程\" AND r.executable_path=totals.\"程序路径\"\n AND a.timestamp >= $__timeFrom()::timestamptz AND a.timestamp < $__timeTo()::timestamptz\n) AS \"CPU 亲和性\" FROM totals ORDER BY \"平均线程数\" DESC NULLS LAST;",
-          "refId": "A"
-        }
-      ],
-      "title": "🧵 线程/亲和性/共享显存细览",
-      "type": "table"
-    },
-    {
-      "collapsed": true,
-      "gridPos": {
-        "h": 1,
-        "w": 24,
-        "x": 0,
-        "y": 45
-      },
-      "panels": [
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
               },
-              "custom": {
-                "fillOpacity": 100,
-                "lineWidth": 0
-              },
-              "mappings": [
+              "overrides": [
                 {
-                  "options": {
-                    "0": {
-                      "color": "green",
-                      "index": 0,
-                      "text": "🟢 正常"
+                  "matcher": {
+                    "id": "byName",
+                    "options": "平均 CPU (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "mode": "gradient",
+                        "type": "gauge"
+                      }
                     },
-                    "1": {
-                      "color": "red",
-                      "index": 1,
-                      "text": "🔴 无响应"
+                    {
+                      "id": "max",
+                      "value": 100
+                    },
+                    {
+                      "id": "min",
+                      "value": 0
                     }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "平均 GPU (%)"
                   },
-                  "type": "value"
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "mode": "gradient",
+                        "type": "gauge"
+                      }
+                    },
+                    {
+                      "id": "max",
+                      "value": 100
+                    },
+                    {
+                      "id": "min",
+                      "value": 0
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "平均内存 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "峰值内存 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "平均显存 (GB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "gbytes"
+                    }
+                  ]
                 }
-              ],
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  },
-                  {
-                    "color": "red",
-                    "value": 1
-                  }
-                ]
-              }
+              ]
             },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 8,
-            "w": 24,
-            "x": 0,
-            "y": 46
-          },
-          "options": {
-            "alignValue": "left",
-            "annotations": {
-              "clustering": -1,
-              "multiLane": false
-            },
-            "legend": {
-              "displayMode": "hidden",
-              "placement": "bottom",
-              "showLegend": false
-            },
-            "mergeValues": true,
-            "rowHeight": 0.8,
-            "showValue": "never",
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "single",
-              "sort": "none"
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true,
+              "sortBy": []
             }
           },
-          "pluginVersion": "13.0.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "P7A9DAD60F8AB4C18"
-              },
-              "editorMode": "code",
-              "format": "time_series",
-              "rawQuery": true,
-              "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\n-- 1. Identify which processes have ANY stuck event in the raw time range\nstuck_candidates AS (\n  SELECT DISTINCT a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n),\n-- 2. Baseline running minutes (sampled to be fast) for these candidates\nbaseline_events AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    0 AS is_stuck\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.process_key = ANY(ARRAY(SELECT process_key FROM stuck_candidates))\n    AND (EXTRACT(second FROM a.\"timestamp\")::int % 60) < 4\n),\n-- 3. Actual stuck events (unsampled, highly selective check on is_not_responding = 1)\nactual_stuck_events AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    1 AS is_stuck\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND a.is_not_responding = 1\n),\n-- 4. Combine baseline and stuck events, taking MAX(is_stuck)\ncombined_events AS (\n  SELECT time_min, process_key, MAX(is_stuck) AS is_stuck\n  FROM (\n    SELECT time_min, process_key, is_stuck FROM baseline_events\n    UNION ALL\n    SELECT time_min, process_key, is_stuck FROM actual_stuck_events\n  ) unioned\n  GROUP BY time_min, process_key\n),\n-- 5. Filter sleep/shutdown minutes\nfiltered_events AS (\n  SELECT\n    ce.time_min AS time,\n    ce.process_key,\n    ce.is_stuck\n  FROM combined_events ce\n  CROSS JOIN time_bounds b\n  WHERE NOT EXISTS (\n    SELECT 1 FROM public.app_usage_logs l\n    WHERE l.process_name IN ('System_Sleep', 'System_DisplayOff', 'LockApp.exe', 'System_Idle', 'Idle')\n      AND ce.time_min >= l.start_time - interval '1 minute'\n      AND ce.time_min <= l.start_time + (l.duration_seconds || ' seconds')::interval + interval '1 minute'\n      AND l.start_time >= b.t_from - interval '1 day' AND l.start_time <= b.t_to AND l.start_time + (l.duration_seconds || ' seconds')::interval >= b.t_from\n  )\n),\n-- 6. Identify processes that still have at least one stuck event AFTER filtering\nfinal_stuck_processes AS (\n  SELECT DISTINCT process_key\n  FROM filtered_events\n  WHERE is_stuck = 1\n)\n-- 7. Final output: only processes with actual visible stuck events\nSELECT\n  fe.time,\n  r.process_name AS metric,\n  fe.is_stuck AS value\nFROM filtered_events fe\nJOIN public.dim_process_registry r ON fe.process_key = r.process_key\nWHERE fe.process_key = ANY(ARRAY(SELECT process_key FROM final_stuck_processes))\nUNION ALL\nSELECT\n  b.t_from AS time,\n  CASE WHEN b.t_from < (SELECT raw_since FROM public.activity_retention_state WHERE singleton) THEN '⚪ 旧明细已汇总，无法判断历史卡死' ELSE '🟢 无卡死事件' END::text AS metric,\n  0::int AS value\nFROM time_bounds b\nWHERE NOT EXISTS (SELECT 1 FROM final_stuck_processes)\nORDER BY time ASC;\n",
-              "refId": "A"
-            }
-          ],
-          "title": "🔴 无响应卡死进程时间线 (红色:卡死 | 绿色:正常)（明细仅近60天）",
-          "type": "state-timeline"
-        },
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "thresholds"
-              },
-              "custom": {
-                "align": "auto",
-                "cellOptions": {
-                  "type": "auto"
-                },
-                "filterable": true,
-                "inspect": true
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green"
-                  }
-                ]
-              }
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "内存增幅 (%)"
-                },
-                "properties": [
-                  {
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "green"
-                        },
-                        {
-                          "color": "yellow",
-                          "value": 20
-                        },
-                        {
-                          "color": "orange",
-                          "value": 50
-                        },
-                        {
-                          "color": "red",
-                          "value": 100
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "value": {
-                      "mode": "gradient",
-                      "type": "gauge"
-                    }
-                  },
-                  {
-                    "value": 200
-                  },
-                  {
-                    "value": 0
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "内存增量 (MB)"
-                },
-                "properties": [
-                  {
-                    "value": {
-                      "mode": "absolute",
-                      "steps": [
-                        {
-                          "color": "green"
-                        },
-                        {
-                          "color": "yellow",
-                          "value": 50
-                        },
-                        {
-                          "color": "red",
-                          "value": 200
-                        }
-                      ]
-                    }
-                  },
-                  {
-                    "value": {
-                      "mode": "gradient",
-                      "type": "gauge"
-                    }
-                  },
-                  {
-                    "value": 500
-                  },
-                  {
-                    "value": 0
-                  },
-                  {
-                    "value": "mbytes"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "起始内存 (MB)"
-                },
-                "properties": [
-                  {
-                    "value": "mbytes"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "结束内存 (MB)"
-                },
-                "properties": [
-                  {
-                    "value": "mbytes"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "起始显存 (MB)"
-                },
-                "properties": [
-                  {
-                    "value": "mbytes"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "结束显存 (MB)"
-                },
-                "properties": [
-                  {
-                    "value": "mbytes"
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "显存增量 (MB)"
-                },
-                "properties": [
-                  {
-                    "value": "mbytes"
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 54
-          },
-          "options": {
-            "cellHeight": "sm",
-            "footer": {
-              "countRows": false,
-              "fields": "",
-              "reducer": [
-                "sum"
-              ],
-              "show": false
-            },
-            "showHeader": true,
-            "sortBy": []
-          },
-          "pluginVersion": "13.0.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "P7A9DAD60F8AB4C18"
-              },
-              "editorMode": "code",
-              "format": "table",
-              "rawQuery": true,
-              "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\n-- 1. 先进行分钟级并使用 60s 抽样进行预聚合，大幅降低 I/O 和 CPU 负担\nminutely_data AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    AVG(a.proc_ram_mb) AS avg_ram,\n    AVG(COALESCE(a.proc_vram_used_gb, 0)) AS avg_vram\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND (EXTRACT(second FROM a.\"timestamp\")::int % 60) < 4\n  GROUP BY 1, 2\n),\n-- 2. 计算生命周期\nprocess_lifespan AS (\n  SELECT\n    md.process_key,\n    MIN(md.time_min) AS first_t,\n    MAX(md.time_min) AS last_t,\n    COUNT(*) AS samples\n  FROM minutely_data md\n  GROUP BY md.process_key\n  HAVING COUNT(*) >= 5 AND (MAX(md.time_min) - MIN(md.time_min)) >= interval '5 minutes'\n),\n-- 3. 计算趋势\nprocess_mem_trend AS (\n  SELECT\n    pl.process_key,\n    pl.samples,\n    AVG(CASE WHEN md.time_min < pl.first_t + (pl.last_t - pl.first_t) * 0.1 THEN md.avg_ram END) AS mem_start,\n    AVG(CASE WHEN md.time_min > pl.last_t - (pl.last_t - pl.first_t) * 0.1 THEN md.avg_ram END) AS mem_end,\n    AVG(CASE WHEN md.time_min < pl.first_t + (pl.last_t - pl.first_t) * 0.1 THEN md.avg_vram END) AS vram_start,\n    AVG(CASE WHEN md.time_min > pl.last_t - (pl.last_t - pl.first_t) * 0.1 THEN md.avg_vram END) AS vram_end\n  FROM minutely_data md\n  JOIN process_lifespan pl ON md.process_key = pl.process_key\n  GROUP BY pl.process_key, pl.samples\n)\nSELECT\n  r.process_name AS \"进程名\",\n  ROUND(mem_start::numeric, 0) AS \"起始内存 (MB)\",\n  ROUND(mem_end::numeric, 0) AS \"结束内存 (MB)\",\n  ROUND((mem_end - mem_start)::numeric, 0) AS \"内存增量 (MB)\",\n  CASE WHEN mem_start > 0 THEN ROUND(((mem_end - mem_start) / mem_start * 100)::numeric, 1) ELSE 0 END AS \"内存增幅 (%)\",\n  ROUND(vram_start::numeric * 1024, 0) AS \"起始显存 (MB)\",\n  ROUND(vram_end::numeric * 1024, 0) AS \"结束显存 (MB)\",\n  ROUND((vram_end - vram_start)::numeric * 1024, 0) AS \"显存增量 (MB)\",\n  samples AS \"采样数\"\nFROM process_mem_trend pmt\nJOIN public.dim_process_registry r ON pmt.process_key = r.process_key\nWHERE mem_start IS NOT NULL AND mem_end IS NOT NULL\n  AND (mem_end - mem_start) > 10\nORDER BY (mem_end - mem_start) DESC\nLIMIT 15;\n",
-              "refId": "A"
-            }
-          ],
-          "title": "🧪 进程内存/显存泄漏嫌疑榜 (首末差值)（明细仅近60天）",
-          "type": "table"
-        },
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
-          "fieldConfig": {
-            "defaults": {
-              "color": {
-                "mode": "palette-classic"
-              },
-              "custom": {
-                "axisBorderShow": false,
-                "axisCenteredZero": false,
-                "axisColorMode": "text",
-                "axisLabel": "",
-                "axisPlacement": "auto",
-                "barAlignment": 0,
-                "barWidthFactor": 0.6,
-                "drawStyle": "line",
-                "fillOpacity": 30,
-                "gradientMode": "opacity",
-                "hideFrom": {
-                  "legend": false,
-                  "tooltip": false,
-                  "viz": false
-                },
-                "insertNulls": false,
-                "lineInterpolation": "smooth",
-                "lineWidth": 2,
-                "pointSize": 5,
-                "scaleDistribution": {
-                  "type": "linear"
-                },
-                "showPoints": "never",
-                "showValues": false,
-                "spanNulls": false,
-                "stacking": {
-                  "group": "A",
-                  "mode": "none"
-                },
-                "thresholdsStyle": {
-                  "mode": "off"
-                }
-              },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  {
-                    "color": "green",
-                    "value": 0
-                  },
-                  {
-                    "color": "red",
-                    "value": 80
-                  }
-                ]
-              },
-              "unit": "percent"
-            },
-            "overrides": [
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "前台进程 CPU (%)"
-                },
-                "properties": [
-                  {
-                    "value": {
-                      "fixedColor": "semi-dark-green",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "后台总 CPU (%)"
-                },
-                "properties": [
-                  {
-                    "value": {
-                      "fixedColor": "semi-dark-red",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "前台进程 GPU (%)"
-                },
-                "properties": [
-                  {
-                    "value": {
-                      "fixedColor": "semi-dark-blue",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              },
-              {
-                "matcher": {
-                  "id": "byName",
-                  "options": "后台总 GPU (%)"
-                },
-                "properties": [
-                  {
-                    "value": {
-                      "fixedColor": "semi-dark-orange",
-                      "mode": "fixed"
-                    }
-                  }
-                ]
-              }
-            ]
-          },
-          "gridPos": {
-            "h": 10,
-            "w": 24,
-            "x": 0,
-            "y": 64
-          },
-          "options": {
-            "legend": {
-              "calcs": [],
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "hideZeros": false,
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "pluginVersion": "13.0.2",
-          "targets": [
-            {
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "P7A9DAD60F8AB4C18"
-              },
-              "editorMode": "code",
-              "format": "table",
-              "rawQuery": true,
-              "rawSql": "WITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ntime_grid AS (\n  -- 【修复1】起点对齐到整分钟，否则 generate_series 带秒数，与下方 date_trunc('minute') 桶永不相等，前台联结全落空\n  SELECT generate_series(\n    date_trunc('minute', b.t_from),\n    b.t_to,\n    interval '1 minute'\n  ) AS grid_time\n  FROM time_bounds b\n),\nfg_keys AS (\n  SELECT DISTINCT ON (g.grid_time)\n    g.grid_time AS time_min,\n    ctx.process_key,\n    ctx.os_pid\n  FROM time_grid g\n  JOIN public.fact_process_context ctx\n    ON g.grid_time >= ctx.\"timestamp\" AND (g.grid_time < ctx.end_timestamp OR ctx.end_timestamp IS NULL) AND ctx.is_foreground = 1 AND ctx.timestamp >= (SELECT t_from - interval '1 day' FROM time_bounds) AND ctx.timestamp <= (SELECT t_to FROM time_bounds)\n  ORDER BY g.grid_time, ctx.\"timestamp\" DESC\n),\nraw_activity AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    a.os_pid,\n    SUM(a.proc_cpu_usage) AS sum_cpu,\n    SUM(a.proc_gpu_usage) AS sum_gpu,\n    COUNT(*) AS cnt\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN b.t_from AND b.t_to\n    AND (EXTRACT(second FROM a.\"timestamp\")::int % 60) < 4\n  GROUP BY 1, 2, 3\n),\nper_min AS (\n  -- 【修复2】每个(分钟,进程)先算该进程的均值 sum_cpu/cnt，再把前台那一个 / 后台所有进程分别求和；\n  -- 旧写法 SUM(前台 cpu)/SUM(全部进程 cnt) 等于除以进程总数，前台(单进程)恒被稀释成≈0。\n  SELECT\n    ra.time_min,\n    SUM(CASE WHEN fk.process_key IS NOT NULL THEN ra.sum_cpu / ra.cnt ELSE 0 END) AS fg_cpu,\n    SUM(CASE WHEN fk.process_key IS NULL     THEN ra.sum_cpu / ra.cnt ELSE 0 END) AS bg_cpu,\n    SUM(CASE WHEN fk.process_key IS NOT NULL THEN ra.sum_gpu / ra.cnt ELSE 0 END) AS fg_gpu,\n    SUM(CASE WHEN fk.process_key IS NULL     THEN ra.sum_gpu / ra.cnt ELSE 0 END) AS bg_gpu\n  FROM raw_activity ra\n  LEFT JOIN fg_keys fk\n    ON ra.time_min = fk.time_min\n    AND ra.process_key = fk.process_key\n    AND ra.os_pid = fk.os_pid\n  GROUP BY ra.time_min\n)\nSELECT\n  $__timeGroupAlias(time_min, $__interval),\n  ROUND(AVG(fg_cpu)::numeric, 2) AS \"前台进程 CPU (%)\",\n  ROUND(AVG(bg_cpu)::numeric, 2) AS \"后台总 CPU (%)\",\n  ROUND(AVG(fg_gpu)::numeric, 2) AS \"前台进程 GPU (%)\",\n  ROUND(AVG(bg_gpu)::numeric, 2) AS \"后台总 GPU (%)\"\nFROM per_min\nGROUP BY 1\nORDER BY 1 ASC;",
-              "refId": "A"
-            }
-          ],
-          "title": "⚔️ 前台 vs 后台资源争抢时序 (CPU/GPU)（明细仅近60天）",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。",
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 8,
-                "lineWidth": 1,
-                "spanNulls": false
-              },
-              "unit": "percent"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 12,
-            "x": 0,
-            "y": 74
-          },
-          "options": {
-            "legend": {
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "P7A9DAD60F8AB4C18"
-              },
-              "format": "time_series",
-              "rawQuery": true,
-              "rawSql": "WITH series AS (WITH points AS (\n SELECT bucket_start, process_name, executable_path, app_total_proc_cpu_usage_sum, app_total_proc_cpu_usage_count, app_total_proc_cpu_usage_max FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, '均值 · ' || process_name || ' · ' || executable_path AS metric,\n sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, '峰值 · ' || process_name || ' · ' || executable_path, max(app_total_proc_cpu_usage_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
-              "refId": "A"
-            }
-          ],
-          "title": "应用 CPU 趋势 · 小时/日均值与应用合计峰值",
-          "type": "timeseries"
-        },
-        {
-          "datasource": {
-            "type": "grafana-postgresql-datasource",
-            "uid": "P7A9DAD60F8AB4C18"
-          },
-          "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。",
-          "fieldConfig": {
-            "defaults": {
-              "custom": {
-                "drawStyle": "line",
-                "fillOpacity": 8,
-                "lineWidth": 1,
-                "spanNulls": false
-              },
-              "unit": "decmbytes"
-            },
-            "overrides": []
-          },
-          "gridPos": {
-            "h": 9,
-            "w": 12,
-            "x": 12,
-            "y": 74
-          },
-          "options": {
-            "legend": {
-              "displayMode": "list",
-              "placement": "bottom",
-              "showLegend": true
-            },
-            "tooltip": {
-              "mode": "multi",
-              "sort": "desc"
-            }
-          },
-          "targets": [
-            {
-              "datasource": {
-                "type": "grafana-postgresql-datasource",
-                "uid": "P7A9DAD60F8AB4C18"
-              },
-              "format": "time_series",
-              "rawQuery": true,
-              "rawSql": "WITH series AS (WITH points AS (\n SELECT bucket_start, process_name, executable_path, app_total_proc_ram_mb_sum, app_total_proc_ram_mb_count, app_total_proc_ram_mb_max FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, '均值 · ' || process_name || ' · ' || executable_path AS metric,\n sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, '峰值 · ' || process_name || ' · ' || executable_path, max(app_total_proc_ram_mb_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;",
-              "refId": "A"
-            }
-          ],
-          "title": "应用内存趋势 · 小时/日均值与应用合计峰值",
-          "type": "timeseries"
+          "version": "13.0.2"
         }
-      ],
-      "title": "卡死、泄漏与应用趋势 · 展开查看",
-      "type": "row"
+      }
+    },
+    "panel-10": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "format": "time_series",
+                      "rawQuery": true,
+                      "rawSql": "WITH series AS (WITH points AS (\n SELECT bucket_start, process_name, executable_path, app_total_proc_ram_mb_sum, app_total_proc_ram_mb_count, app_total_proc_ram_mb_max FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, '均值 · ' || process_name || ' · ' || executable_path AS metric,\n sum(app_total_proc_ram_mb_sum)/NULLIF(sum(app_total_proc_ram_mb_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, '峰值 · ' || process_name || ' · ' || executable_path, max(app_total_proc_ram_mb_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。",
+        "id": 10,
+        "links": [],
+        "title": "应用内存趋势 · 小时/日均值与应用合计峰值",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 8,
+                  "lineWidth": 1,
+                  "spanNulls": false
+                },
+                "unit": "decmbytes"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": ""
+        }
+      }
+    },
+    "panel-2": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "\nWITH fg_procs AS (\n  SELECT DISTINCT process_key, os_pid\n  FROM public.fact_process_context\n  WHERE timestamp BETWEEN $__timeFrom()::timestamptz - interval '2 hours' AND $__timeTo()::timestamptz\n    AND is_foreground = 1\n),\nbg_stats AS (\n  SELECT\n    a.process_key,\n    ROUND(AVG(a.proc_cpu_usage)::numeric, 2) AS \"CPU 均值 (%)\",\n    ROUND(MAX(a.proc_cpu_usage)::numeric, 2) AS \"CPU 峰值 (%)\",\n    ROUND(AVG(a.proc_gpu_usage)::numeric, 2) AS \"GPU 均值 (%)\",\n    ROUND(AVG(a.proc_ram_mb)::numeric, 0) AS \"内存均值 (MB)\",\n    ROUND(AVG(a.proc_disk_read_rate_mb + a.proc_disk_write_rate_mb)::numeric, 2) AS \"磁盘 IO (MB/s)\",\n    ROUND(AVG(a.proc_network_send_kb + a.proc_network_recv_kb)::numeric, 1) AS \"网络 (KB/s)\",\n    COUNT(*) AS \"后台采样数\"\n  FROM public.fact_process_activity a\n  WHERE $__timeFilter(a.\"timestamp\")\n    AND NOT EXISTS (\n      SELECT 1 FROM fg_procs f\n      WHERE a.process_key = f.process_key AND a.os_pid = f.os_pid\n    )\n  GROUP BY a.process_key\n  HAVING COUNT(*) >= 3\n)\nSELECT\n  r.process_name AS \"后台内鬼进程\",\n  bs.\"CPU 均值 (%)\",\n  bs.\"CPU 峰值 (%)\",\n  bs.\"GPU 均值 (%)\",\n  bs.\"内存均值 (MB)\",\n  bs.\"磁盘 IO (MB/s)\",\n  bs.\"网络 (KB/s)\",\n  r.service_name AS \"服务名\",\n  CASE WHEN r.signature_status = 1 THEN '✅ 已签名'\n       WHEN r.signature_status = 0 THEN '⚠️ 未签名'\n       ELSE '❓ 未知' END AS \"签名状态\",\n  bs.\"后台采样数\"\nFROM bg_stats bs\nJOIN public.dim_process_registry r ON bs.process_key = r.process_key\nORDER BY bs.\"CPU 均值 (%)\" + bs.\"GPU 均值 (%)\" + bs.\"内存均值 (MB)\" / 1024.0 DESC\nLIMIT 20;\n"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
+        "id": 2,
+        "links": [],
+        "title": "👿 后台内鬼榜 (is_foreground=0 静默高占用)（明细仅近60天）",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "filterable": true,
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": true
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "CPU 均值 (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "mode": "gradient",
+                        "type": "gauge"
+                      }
+                    },
+                    {
+                      "id": "max",
+                      "value": 30
+                    },
+                    {
+                      "id": "min",
+                      "value": 0
+                    },
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green",
+                            "value": 0
+                          },
+                          {
+                            "color": "yellow",
+                            "value": 3
+                          },
+                          {
+                            "color": "orange",
+                            "value": 10
+                          },
+                          {
+                            "color": "red",
+                            "value": 20
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "签名状态"
+                  },
+                  "properties": [
+                    {
+                      "id": "custom.width",
+                      "value": 100
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "内存均值 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true,
+              "sortBy": []
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-3": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "SELECT * FROM (\nSELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(active_proc_disk_read_rate_mb_sum) / NULLIF(sum(active_proc_disk_read_rate_mb_count),0))::numeric,3) AS \"平均读速 (MB/s)\", ROUND(max(active_proc_disk_read_rate_mb_max)::numeric,2) AS \"峰值读速 (MB/s)\", ROUND((sum(active_proc_disk_write_rate_mb_sum) / NULLIF(sum(active_proc_disk_write_rate_mb_count),0))::numeric,3) AS \"平均写速 (MB/s)\", ROUND(max(active_proc_disk_write_rate_mb_max)::numeric,2) AS \"峰值写速 (MB/s)\", ROUND((sum(active_proc_disk_iops_sum) / NULLIF(sum(active_proc_disk_iops_count),0))::numeric,0) AS \"平均 IOPS\", sum(active_proc_disk_write_rate_mb_sum)*3.1/1024.0 AS \"累计写入 (GB)\", sum(active_proc_disk_read_rate_mb_sum)*3.1/1024.0 AS \"累计读取 (GB)\", sum(disk_sample_count)::bigint AS \"采样数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(disk_sample_count) >= 2\n\n) totals ORDER BY \"累计写入 (GB)\" + \"累计读取 (GB)\" DESC NULLS LAST LIMIT 20;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
+        "id": 3,
+        "links": [],
+        "title": "💾 磁盘 I/O 与 SSD 写入损耗大户（累计量为估算）",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "filterable": true,
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": true
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "累计写入 (GB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "gbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "累计读取 (GB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "gbytes"
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true,
+              "sortBy": []
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-4": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH totals AS (SELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(active_proc_network_send_kb_sum) / NULLIF(sum(active_proc_network_send_kb_count),0))::numeric,1) AS \"发送均速 (KB/s)\", ROUND((sum(active_proc_network_recv_kb_sum) / NULLIF(sum(active_proc_network_recv_kb_count),0))::numeric,1) AS \"接收均速 (KB/s)\", (sum(active_proc_network_send_kb_sum)+sum(active_proc_network_recv_kb_sum))*3.1/1024.0 AS \"累计流量 (MB)\", max(active_proc_active_connections_max) AS \"最大连接数\", sum(network_sample_count)::bigint AS \"采样数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(network_sample_count) >= 2\nORDER BY \"累计流量 (MB)\" DESC NULLS LAST LIMIT 20)\nSELECT totals.*, (\n SELECT a.proc_remote_ip_port FROM public.fact_process_activity a\n JOIN public.dim_process_registry r USING(process_key)\n WHERE r.process_name=totals.\"进程\" AND r.executable_path=totals.\"程序路径\"\n AND a.timestamp >= GREATEST($__timeFrom()::timestamptz, $__timeTo()::timestamptz - interval '2 hours')\n AND a.timestamp < $__timeTo()::timestamptz\n AND a.proc_remote_ip_port IS NOT NULL AND a.proc_remote_ip_port <> ''\n ORDER BY a.timestamp DESC LIMIT 1\n) AS \"最近远端 IP:Port\" FROM totals ORDER BY \"累计流量 (MB)\" DESC NULLS LAST;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
+        "id": 4,
+        "links": [],
+        "title": "🌐 网络流量大户 + 远端 IP 追踪（累计量为估算）",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "filterable": true,
+                  "footer": {
+                    "reducers": []
+                  },
+                  "inspect": true
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true,
+              "sortBy": []
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-5": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH totals AS (SELECT process_name AS \"进程\", executable_path AS \"程序路径\",\n  ROUND((sum(proc_thread_count_sum) / NULLIF(sum(proc_thread_count_count),0))::numeric,0) AS \"平均线程数\", ROUND(max(proc_thread_count_max)::numeric,0) AS \"峰值线程数\", ROUND((sum(proc_vram_shared_mb_sum) / NULLIF(sum(proc_vram_shared_mb_count),0))::numeric,0) AS \"共享显存均值 (MB)\", ROUND(max(proc_vram_shared_mb_max)::numeric,0) AS \"共享显存峰值 (MB)\", ROUND((sum(proc_vram_used_gb_sum) / NULLIF(sum(proc_vram_used_gb_count),0))::numeric,3) * 1024 AS \"专用显存均值 (MB)\", sum(sample_count)::bigint AS \"采样数\"\nFROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz, CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\nGROUP BY process_name, executable_path\nHAVING sum(sample_count) >= 3\nORDER BY \"平均线程数\" DESC NULLS LAST LIMIT 20)\nSELECT totals.*, (\n SELECT CASE WHEN max(a.proc_cpu_affinity) IS NULL THEN '无可用明细（仅近60天）'\n WHEN max(a.proc_cpu_affinity)=-1 THEN '全核 (所有 CPU)'\n ELSE 'mask=' || max(a.proc_cpu_affinity)::text END\n FROM public.fact_process_activity a JOIN public.dim_process_registry r USING(process_key)\n WHERE r.process_name=totals.\"进程\" AND r.executable_path=totals.\"程序路径\"\n AND a.timestamp >= $__timeFrom()::timestamptz AND a.timestamp < $__timeTo()::timestamptz\n) AS \"CPU 亲和性\" FROM totals ORDER BY \"平均线程数\" DESC NULLS LAST;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 应用均值按每个有效进程样本加权；峰值是单进程样本峰值，不是多个PID合计峰值。整机曲线先逐采样时刻合计，再计算桶内均值。累计量沿既有速率×3.1秒估算，网络按连接占比分摊。IP和亲和性仅有近期明细。",
+        "id": 5,
+        "links": [],
+        "title": "🧵 线程/亲和性/共享显存细览",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "filterable": true,
+                  "inspect": true
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "共享显存均值 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "共享显存峰值 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "专用显存均值 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true,
+              "sortBy": []
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-6": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "time_series",
+                      "rawQuery": true,
+                      "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\n-- 1. Identify which processes have ANY stuck event in the raw time range\nstuck_candidates AS (\n  SELECT DISTINCT a.process_key\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    AND a.is_not_responding = 1\n),\n-- 2. Baseline running minutes (sampled to be fast) for these candidates\nbaseline_events AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    0 AS is_stuck\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    AND a.process_key = ANY(ARRAY(SELECT process_key FROM stuck_candidates))\n    AND (EXTRACT(second FROM a.\"timestamp\")::int % 60) < 4\n),\n-- 3. Actual stuck events (unsampled, highly selective check on is_not_responding = 1)\nactual_stuck_events AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    1 AS is_stuck\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    AND a.is_not_responding = 1\n),\n-- 4. Combine baseline and stuck events, taking MAX(is_stuck)\ncombined_events AS (\n  SELECT time_min, process_key, MAX(is_stuck) AS is_stuck\n  FROM (\n    SELECT time_min, process_key, is_stuck FROM baseline_events\n    UNION ALL\n    SELECT time_min, process_key, is_stuck FROM actual_stuck_events\n  ) unioned\n  GROUP BY time_min, process_key\n),\n-- 5. Filter sleep/shutdown minutes\nfiltered_events AS (\n  SELECT\n    ce.time_min AS time,\n    ce.process_key,\n    ce.is_stuck\n  FROM combined_events ce\n  CROSS JOIN time_bounds b\n  WHERE NOT EXISTS (\n    SELECT 1 FROM public.app_usage_logs l\n    WHERE l.process_name IN ('System_Sleep', 'System_DisplayOff', 'LockApp.exe', 'System_Idle', 'Idle')\n      AND ce.time_min >= l.start_time - interval '1 minute'\n      AND ce.time_min <= l.start_time + (l.duration_seconds || ' seconds')::interval + interval '1 minute'\n      AND l.start_time >= $__timeFrom()::timestamptz - interval '1 day' AND l.start_time <= $__timeTo()::timestamptz AND l.start_time + (l.duration_seconds || ' seconds')::interval >= $__timeFrom()::timestamptz\n  )\n),\n-- 6. Identify processes that still have at least one stuck event AFTER filtering\nfinal_stuck_processes AS (\n  SELECT DISTINCT process_key\n  FROM filtered_events\n  WHERE is_stuck = 1\n)\n-- 7. Final output: only processes with actual visible stuck events\nSELECT\n  fe.time,\n  r.process_name AS metric,\n  fe.is_stuck AS value\nFROM filtered_events fe\nJOIN public.dim_process_registry r ON fe.process_key = r.process_key\nWHERE fe.process_key = ANY(ARRAY(SELECT process_key FROM final_stuck_processes))\nUNION ALL\nSELECT\n  b.t_from AS time,\n  CASE WHEN b.t_from < (SELECT raw_since FROM public.activity_retention_state WHERE singleton) THEN '⚪ 旧明细已汇总，无法判断历史卡死' ELSE '🟢 无卡死事件' END::text AS metric,\n  0::int AS value\nFROM time_bounds b\nWHERE NOT EXISTS (SELECT 1 FROM final_stuck_processes)\nORDER BY time ASC;\n"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
+        "id": 6,
+        "links": [],
+        "title": "🔴 无响应卡死进程时间线 (红色:卡死 | 绿色:正常)（明细仅近60天）",
+        "vizConfig": {
+          "group": "state-timeline",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "fillOpacity": 100,
+                  "lineWidth": 0
+                },
+                "mappings": [
+                  {
+                    "options": {
+                      "0": {
+                        "color": "green",
+                        "index": 0,
+                        "text": "🟢 正常"
+                      },
+                      "1": {
+                        "color": "red",
+                        "index": 1,
+                        "text": "🔴 无响应"
+                      }
+                    },
+                    "type": "value"
+                  }
+                ],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 1
+                    }
+                  ]
+                }
+              },
+              "overrides": []
+            },
+            "options": {
+              "alignValue": "left",
+              "annotations": {
+                "clustering": -1,
+                "multiLane": false
+              },
+              "legend": {
+                "displayMode": "hidden",
+                "placement": "bottom",
+                "showLegend": false
+              },
+              "mergeValues": true,
+              "rowHeight": 0.8,
+              "showValue": "never",
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "single",
+                "sort": "none"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-7": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "\nWITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\n-- 1. 先进行分钟级并使用 60s 抽样进行预聚合，大幅降低 I/O 和 CPU 负担\nminutely_data AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    AVG(a.proc_ram_mb) AS avg_ram,\n    AVG(COALESCE(a.proc_vram_used_gb, 0)) AS avg_vram\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    AND (EXTRACT(second FROM a.\"timestamp\")::int % 60) < 4\n  GROUP BY 1, 2\n),\n-- 2. 计算生命周期\nprocess_lifespan AS (\n  SELECT\n    md.process_key,\n    MIN(md.time_min) AS first_t,\n    MAX(md.time_min) AS last_t,\n    COUNT(*) AS samples\n  FROM minutely_data md\n  GROUP BY md.process_key\n  HAVING COUNT(*) >= 5 AND (MAX(md.time_min) - MIN(md.time_min)) >= interval '5 minutes'\n),\n-- 3. 计算趋势\nprocess_mem_trend AS (\n  SELECT\n    pl.process_key,\n    pl.samples,\n    AVG(CASE WHEN md.time_min < pl.first_t + (pl.last_t - pl.first_t) * 0.1 THEN md.avg_ram END) AS mem_start,\n    AVG(CASE WHEN md.time_min > pl.last_t - (pl.last_t - pl.first_t) * 0.1 THEN md.avg_ram END) AS mem_end,\n    AVG(CASE WHEN md.time_min < pl.first_t + (pl.last_t - pl.first_t) * 0.1 THEN md.avg_vram END) AS vram_start,\n    AVG(CASE WHEN md.time_min > pl.last_t - (pl.last_t - pl.first_t) * 0.1 THEN md.avg_vram END) AS vram_end\n  FROM minutely_data md\n  JOIN process_lifespan pl ON md.process_key = pl.process_key\n  GROUP BY pl.process_key, pl.samples\n)\nSELECT\n  r.process_name AS \"进程名\",\n  ROUND(mem_start::numeric, 0) AS \"起始内存 (MB)\",\n  ROUND(mem_end::numeric, 0) AS \"结束内存 (MB)\",\n  ROUND((mem_end - mem_start)::numeric, 0) AS \"内存增量 (MB)\",\n  CASE WHEN mem_start > 0 THEN ROUND(((mem_end - mem_start) / mem_start * 100)::numeric, 1) ELSE 0 END AS \"内存增幅 (%)\",\n  ROUND(vram_start::numeric * 1024, 0) AS \"起始显存 (MB)\",\n  ROUND(vram_end::numeric * 1024, 0) AS \"结束显存 (MB)\",\n  ROUND((vram_end - vram_start)::numeric * 1024, 0) AS \"显存增量 (MB)\",\n  samples AS \"采样数\"\nFROM process_mem_trend pmt\nJOIN public.dim_process_registry r ON pmt.process_key = r.process_key\nWHERE mem_start IS NOT NULL AND mem_end IS NOT NULL\n  AND (mem_end - mem_start) > 10\nORDER BY (mem_end - mem_start) DESC\nLIMIT 15;\n"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
+        "id": 7,
+        "links": [],
+        "title": "🧪 进程内存/显存泄漏嫌疑榜 (首末差值)（明细仅近60天）",
+        "vizConfig": {
+          "group": "table",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "thresholds"
+                },
+                "custom": {
+                  "align": "auto",
+                  "cellOptions": {
+                    "type": "auto"
+                  },
+                  "filterable": true,
+                  "inspect": true
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    }
+                  ]
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "内存增幅 (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green"
+                          },
+                          {
+                            "color": "yellow",
+                            "value": 20
+                          },
+                          {
+                            "color": "orange",
+                            "value": 50
+                          },
+                          {
+                            "color": "red",
+                            "value": 100
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "mode": "gradient",
+                        "type": "gauge"
+                      }
+                    },
+                    {
+                      "id": "max",
+                      "value": 200
+                    },
+                    {
+                      "id": "min",
+                      "value": 0
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "内存增量 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "thresholds",
+                      "value": {
+                        "mode": "absolute",
+                        "steps": [
+                          {
+                            "color": "green"
+                          },
+                          {
+                            "color": "yellow",
+                            "value": 50
+                          },
+                          {
+                            "color": "red",
+                            "value": 200
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "id": "custom.cellOptions",
+                      "value": {
+                        "mode": "gradient",
+                        "type": "gauge"
+                      }
+                    },
+                    {
+                      "id": "max",
+                      "value": 500
+                    },
+                    {
+                      "id": "min",
+                      "value": 0
+                    },
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "起始内存 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "结束内存 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "起始显存 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "结束显存 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "显存增量 (MB)"
+                  },
+                  "properties": [
+                    {
+                      "id": "unit",
+                      "value": "mbytes"
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "cellHeight": "sm",
+              "footer": {
+                "countRows": false,
+                "fields": "",
+                "reducer": [
+                  "sum"
+                ],
+                "show": false
+              },
+              "showHeader": true,
+              "sortBy": []
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-8": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "editorMode": "code",
+                      "format": "table",
+                      "rawQuery": true,
+                      "rawSql": "WITH time_bounds AS (\n  SELECT\n    $__timeFrom()::timestamptz AS t_from,\n    $__timeTo()::timestamptz AS t_to\n),\ntime_grid AS (\n  -- 【修复1】起点对齐到整分钟，否则 generate_series 带秒数，与下方 date_trunc('minute') 桶永不相等，前台联结全落空\n  SELECT generate_series(\n    date_trunc('minute', b.t_from),\n    b.t_to,\n    interval '1 minute'\n  ) AS grid_time\n  FROM time_bounds b\n),\nfg_keys AS (\n  SELECT DISTINCT ON (g.grid_time)\n    g.grid_time AS time_min,\n    ctx.process_key,\n    ctx.os_pid\n  FROM time_grid g\n  JOIN public.fact_process_context ctx\n    ON g.grid_time >= ctx.\"timestamp\" AND (g.grid_time < ctx.end_timestamp OR ctx.end_timestamp IS NULL) AND ctx.is_foreground = 1 AND ctx.timestamp >= (SELECT t_from - interval '1 day' FROM time_bounds) AND ctx.timestamp <= (SELECT t_to FROM time_bounds)\n  ORDER BY g.grid_time, ctx.\"timestamp\" DESC\n),\nraw_activity AS (\n  SELECT\n    date_trunc('minute', a.\"timestamp\") AS time_min,\n    a.process_key,\n    a.os_pid,\n    SUM(a.proc_cpu_usage) AS sum_cpu,\n    SUM(a.proc_gpu_usage) AS sum_gpu,\n    COUNT(*) AS cnt\n  FROM public.fact_process_activity a\n  CROSS JOIN time_bounds b\n  WHERE a.\"timestamp\" BETWEEN $__timeFrom()::timestamptz AND $__timeTo()::timestamptz\n    AND (EXTRACT(second FROM a.\"timestamp\")::int % 60) < 4\n  GROUP BY 1, 2, 3\n),\nper_min AS (\n  -- 【修复2】每个(分钟,进程)先算该进程的均值 sum_cpu/cnt，再把前台那一个 / 后台所有进程分别求和；\n  -- 旧写法 SUM(前台 cpu)/SUM(全部进程 cnt) 等于除以进程总数，前台(单进程)恒被稀释成≈0。\n  SELECT\n    ra.time_min,\n    SUM(CASE WHEN fk.process_key IS NOT NULL THEN ra.sum_cpu / ra.cnt ELSE 0 END) AS fg_cpu,\n    SUM(CASE WHEN fk.process_key IS NULL     THEN ra.sum_cpu / ra.cnt ELSE 0 END) AS bg_cpu,\n    SUM(CASE WHEN fk.process_key IS NOT NULL THEN ra.sum_gpu / ra.cnt ELSE 0 END) AS fg_gpu,\n    SUM(CASE WHEN fk.process_key IS NULL     THEN ra.sum_gpu / ra.cnt ELSE 0 END) AS bg_gpu\n  FROM raw_activity ra\n  LEFT JOIN fg_keys fk\n    ON ra.time_min = fk.time_min\n    AND ra.process_key = fk.process_key\n    AND ra.os_pid = fk.os_pid\n  GROUP BY ra.time_min\n)\nSELECT\n  $__timeGroupAlias(time_min, $__interval),\n  ROUND(AVG(fg_cpu)::numeric, 2) AS \"前台进程 CPU (%)\",\n  ROUND(AVG(bg_cpu)::numeric, 2) AS \"后台总 CPU (%)\",\n  ROUND(AVG(fg_gpu)::numeric, 2) AS \"前台进程 GPU (%)\",\n  ROUND(AVG(bg_gpu)::numeric, 2) AS \"后台总 GPU (%)\"\nFROM per_min\nGROUP BY 1\nORDER BY 1 ASC;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "最近60天保留逐进程明细（周边界可多留不足一周）；更早资源统计来自长期小时/北京时间日汇总，旧边界不足一小时按整小时统计。NULL表示缺测。 此面板需要PID、窗口关联或分钟级事件，超出明细保留范围不提供历史细节；空白不能解释为零活动或无异常。",
+        "id": 8,
+        "links": [],
+        "title": "⚔️ 前台 vs 后台资源争抢时序 (CPU/GPU)（明细仅近60天）",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                },
+                "custom": {
+                  "axisBorderShow": false,
+                  "axisCenteredZero": false,
+                  "axisColorMode": "text",
+                  "axisLabel": "",
+                  "axisPlacement": "auto",
+                  "barAlignment": 0,
+                  "barWidthFactor": 0.6,
+                  "drawStyle": "line",
+                  "fillOpacity": 30,
+                  "gradientMode": "opacity",
+                  "hideFrom": {
+                    "legend": false,
+                    "tooltip": false,
+                    "viz": false
+                  },
+                  "insertNulls": false,
+                  "lineInterpolation": "smooth",
+                  "lineWidth": 2,
+                  "pointSize": 5,
+                  "scaleDistribution": {
+                    "type": "linear"
+                  },
+                  "showPoints": "never",
+                  "showValues": false,
+                  "spanNulls": false,
+                  "stacking": {
+                    "group": "A",
+                    "mode": "none"
+                  },
+                  "thresholdsStyle": {
+                    "mode": "off"
+                  }
+                },
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "color": "green",
+                      "value": 0
+                    },
+                    {
+                      "color": "red",
+                      "value": 80
+                    }
+                  ]
+                },
+                "unit": "percent"
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "前台进程 CPU (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "semi-dark-green",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "后台总 CPU (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "semi-dark-red",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "前台进程 GPU (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "semi-dark-blue",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "后台总 GPU (%)"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "fixedColor": "semi-dark-orange",
+                        "mode": "fixed"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "calcs": [],
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "hideZeros": false,
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": "13.0.2"
+        }
+      }
+    },
+    "panel-9": {
+      "kind": "Panel",
+      "spec": {
+        "data": {
+          "kind": "QueryGroup",
+          "spec": {
+            "queries": [
+              {
+                "kind": "PanelQuery",
+                "spec": {
+                  "hidden": false,
+                  "query": {
+                    "datasource": {
+                      "name": "P7A9DAD60F8AB4C18"
+                    },
+                    "group": "grafana-postgresql-datasource",
+                    "kind": "DataQuery",
+                    "spec": {
+                      "format": "time_series",
+                      "rawQuery": true,
+                      "rawSql": "WITH series AS (WITH points AS (\n SELECT bucket_start, process_name, executable_path, app_total_proc_cpu_usage_sum, app_total_proc_cpu_usage_count, app_total_proc_cpu_usage_max FROM public.activity_app_stats($__timeFrom()::timestamptz, $__timeTo()::timestamptz,\n CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN 86400 ELSE 3600 END)\n), top_apps AS (\n SELECT process_name, executable_path FROM points GROUP BY process_name, executable_path\n ORDER BY sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) DESC NULLS LAST LIMIT 10\n), selected AS (SELECT p.* FROM points p JOIN top_apps USING(process_name,executable_path))\nSELECT bucket_start AS time, '均值 · ' || process_name || ' · ' || executable_path AS metric,\n sum(app_total_proc_cpu_usage_sum)/NULLIF(sum(app_total_proc_cpu_usage_count),0) AS value FROM selected\nGROUP BY bucket_start,process_name,executable_path\nUNION ALL\nSELECT bucket_start, '峰值 · ' || process_name || ' · ' || executable_path, max(app_total_proc_cpu_usage_max)\nFROM selected GROUP BY bucket_start,process_name,executable_path), ordered AS (\n SELECT *, lag(time) OVER (PARTITION BY metric ORDER BY time) AS previous_time FROM series\n)\nSELECT time, metric, value FROM series\nUNION ALL\nSELECT previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END), metric, NULL::double precision FROM ordered\nWHERE time > previous_time + (CASE WHEN $__timeTo()::timestamptz - $__timeFrom()::timestamptz >= interval '30 days' THEN interval '1 day' ELSE interval '1 hour' END) ORDER BY time;"
+                    },
+                    "version": "v0"
+                  },
+                  "refId": "A"
+                }
+              }
+            ],
+            "queryOptions": {},
+            "transformations": []
+          }
+        },
+        "description": "按应用名和路径区分，先把同一采样时刻的各PID资源相加，再统计小时/日的应用合计均值和峰值；每项指标按有效采样时刻加权。所选期间均值最高10个应用。缺测保留NULL断线，不补零；日段按日、小时段按小时。",
+        "id": 9,
+        "links": [],
+        "title": "应用 CPU 趋势 · 小时/日均值与应用合计峰值",
+        "vizConfig": {
+          "group": "timeseries",
+          "kind": "VizConfig",
+          "spec": {
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "drawStyle": "line",
+                  "fillOpacity": 8,
+                  "lineWidth": 1,
+                  "spanNulls": false
+                },
+                "unit": "percent"
+              },
+              "overrides": []
+            },
+            "options": {
+              "legend": {
+                "displayMode": "list",
+                "placement": "bottom",
+                "showLegend": true
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "desc"
+              }
+            }
+          },
+          "version": ""
+        }
+      }
     }
-  ],
-  "schemaVersion": 42,
+  },
+  "layout": {
+    "kind": "RowsLayout",
+    "spec": {
+      "rows": [
+        {
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": false,
+            "hideHeader": true,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-1"
+                      },
+                      "height": 12,
+                      "width": 24,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-2"
+                      },
+                      "height": 12,
+                      "width": 24,
+                      "x": 0,
+                      "y": 12
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-3"
+                      },
+                      "height": 11,
+                      "width": 12,
+                      "x": 0,
+                      "y": 24
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-4"
+                      },
+                      "height": 11,
+                      "width": 12,
+                      "x": 12,
+                      "y": 24
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-5"
+                      },
+                      "height": 10,
+                      "width": 24,
+                      "x": 0,
+                      "y": 35
+                    }
+                  }
+                ]
+              }
+            },
+            "title": ""
+          }
+        },
+        {
+          "kind": "RowsLayoutRow",
+          "spec": {
+            "collapse": true,
+            "layout": {
+              "kind": "GridLayout",
+              "spec": {
+                "items": [
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-6"
+                      },
+                      "height": 8,
+                      "width": 24,
+                      "x": 0,
+                      "y": 0
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-7"
+                      },
+                      "height": 10,
+                      "width": 24,
+                      "x": 0,
+                      "y": 8
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-8"
+                      },
+                      "height": 10,
+                      "width": 24,
+                      "x": 0,
+                      "y": 18
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-9"
+                      },
+                      "height": 9,
+                      "width": 12,
+                      "x": 0,
+                      "y": 28
+                    }
+                  },
+                  {
+                    "kind": "GridLayoutItem",
+                    "spec": {
+                      "element": {
+                        "kind": "ElementReference",
+                        "name": "panel-10"
+                      },
+                      "height": 9,
+                      "width": 12,
+                      "x": 12,
+                      "y": 28
+                    }
+                  }
+                ]
+              }
+            },
+            "title": "卡死、泄漏与应用趋势 · 展开查看"
+          }
+        }
+      ]
+    }
+  },
+  "links": [],
+  "liveNow": false,
+  "preload": false,
   "tags": [
     "时间审计",
     "进程资源",
     "后台监控"
   ],
-  "templating": {
-    "list": []
-  },
-  "time": {
-    "from": "now-5m",
-    "to": "now"
-  },
-  "timepicker": {
-    "refresh_intervals": [
+  "timeSettings": {
+    "autoRefresh": "",
+    "autoRefreshIntervals": [
       "5s",
       "10s",
       "30s",
@@ -1137,11 +1518,15 @@
       "1h",
       "2h",
       "1d"
-    ]
+    ],
+    "fiscalYearStartMonth": 0,
+    "from": "now-5m",
+    "hideTimepicker": false,
+    "timezone": "browser",
+    "to": "now"
   },
-  "timezone": "browser",
   "title": "🐀 资源大户与后台内鬼",
   "uid": "addrd7x",
-  "version": 25,
-  "weekStart": ""
+  "variables": [],
+  "version": 26
 }
