@@ -63,6 +63,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#15803d",
                   "mode": "fixed"
@@ -164,6 +165,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#15803d",
                   "mode": "fixed"
@@ -266,6 +268,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#15803d",
                   "mode": "fixed"
@@ -367,6 +370,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#15803d",
                   "mode": "fixed"
@@ -469,6 +473,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#15803d",
                   "mode": "fixed"
@@ -570,6 +575,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#15803d",
                   "mode": "fixed"
@@ -584,6 +590,7 @@
             },
             "properties": [
               {
+                "id": "color",
                 "value": {
                   "fixedColor": "#34a853",
                   "mode": "fixed"
