@@ -78,7 +78,7 @@ def query(sql, after, until):
                                 encoding="utf-8", timeout=25,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired:
-        raise RuntimeError("query_timeout") from None
+        raise RuntimeError("docker_unavailable") from None
     if result.returncode:
         if "statement timeout" in result.stderr:
             raise RuntimeError("query_timeout")

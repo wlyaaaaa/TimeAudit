@@ -17,6 +17,29 @@ def row(source, start, end, process="Example.exe", key=1):
 
 
 class ActivityTests(unittest.TestCase):
+    def test_query_distinguishes_docker_exec_timeout_from_sql_timeout(self):
+        with patch.object(reader.shutil, "which", return_value="docker"), \
+             patch.object(reader.subprocess, "run") as run:
+            run.side_effect = reader.subprocess.TimeoutExpired("docker", 25)
+            with self.assertRaisesRegex(RuntimeError, "^docker_unavailable$"):
+                reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
+            run.side_effect = None
+            run.return_value = reader.subprocess.CompletedProcess(
+                [], 1, "", "ERROR: canceling statement due to statement timeout")
+            with self.assertRaisesRegex(RuntimeError, "^query_timeout$"):
+                reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
+
+    @patch.object(reader, "check_personal_access")
+    def test_docker_exec_timeout_does_not_split_either_reader(self, access):
+        for entry in (reader.read_activity, reader.read_activity_summary):
+            with self.subTest(entry=entry.__name__):
+                query = unittest.mock.Mock(side_effect=[[{}], RuntimeError("docker_unavailable")])
+                with self.assertRaisesRegex(RuntimeError, "^docker_unavailable$"):
+                    entry(BASE, BASE+dt.timedelta(days=7), query_fn=query)
+                self.assertEqual(query.call_count, 2)
+                self.assertEqual([call.args[0] for call in query.call_args_list],
+                                 [reader.RANGE_SQL, reader.SQL])
+
     def test_access_failure_retains_owner_diagnostic_without_query_or_retry(self):
         decision = {"status": "blocked", "reason": "personal_access_adapter_unavailable",
                     "business_data_read": False, "diagnostic": {"stage": "broker", "code": "broker_timeout",

@@ -49,6 +49,14 @@ Shared health includes Grafana, so collectors alone cannot make the service
 healthy. Public HTTPS reachability is a separate tunnel/publication check.
 Recovery does not reconstruct telemetry that was never collected.
 
+The activity reader reports a Docker subprocess that exceeds its 25-second
+budget as `docker_unavailable` and does not retry smaller time windows. Only a
+PostgreSQL statement timeout (`query_timeout`) or oversized query output can
+trigger window splitting. Check Docker API availability before attributing a
+timeout to SQL; a fresh AHK heartbeat can coexist with a stopped database and
+unconsumed activity segments. After engine recovery, verify database timestamps
+and the ingester backlog separately from collector heartbeats.
+
 Autostart keeps an existing exact `TimeAudit.ahk` process; unhealthy activity
 capture remains the watchdog's responsibility. Bootstrap uses Compose
 `up -d --no-recreate`: it starts or supplies missing services, but does not
