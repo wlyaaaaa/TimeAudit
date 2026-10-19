@@ -38,9 +38,26 @@ The existing watchdog also restores the Docker dependencies before checking
 collectors. If Docker Desktop has exited, it invokes the existing registered
 `TimeAudit_AutoStart` task unless that task is already running, and checks
 readiness on the next minute's cycle. This preserves the registered interactive
-startup context instead of duplicating it in an ad hoc process. An already running but
-unavailable engine is reported as unavailable; the watchdog never restarts the
-shared engine. Existing stopped PostgreSQL and Grafana containers are started
+startup context instead of duplicating it in an ad hoc process. If Desktop is
+still present while the API is unavailable, only successful JSON output from
+`docker desktop status --format json` with `Status=stopped` starts a ten-minute
+confirmation window. Failed, timed-out, malformed or other status observations
+reset that window; observation gaps over three minutes also restart it.
+`log/docker_engine_recovery.json` preserves the window and an attempt latch
+between serialized watchdog runs. An unreadable receipt defers recovery.
+After ten continuously observed minutes, the watchdog records the attempt
+before running one official `desktop restart --timeout 110`, bounded to 120
+seconds. Success, or a subsequently healthy API, prevents any process termination.
+If restart fails, the API is still unavailable and a fresh bounded Desktop
+status probe still explicitly reports `stopped`, the fallback stops only
+`Docker Desktop.exe`, `com.docker.backend.exe`, `com.docker.build.exe` and
+`docker-desktop.exe` whose executable paths are inside the Docker installation
+directory, then invokes the existing `TimeAudit_AutoStart` task. A running or
+missing autostart task defers this recovery. The same unresolved incident never
+repeats the restart or fallback, even if Desktop subsequently disappears; a
+healthy API clears the latch for a later incident. Process identity is checked
+again using a live process handle; children that exit naturally do not abort bootstrap.
+Existing stopped PostgreSQL and Grafana containers are started
 without recreating containers, volumes or data. Grafana's local `/api/health`
 must report its database `ok`; a running Grafana that still fails after a grace
 period can be restarted individually. Docker commands have bounded waits, and
@@ -48,6 +65,22 @@ an unconfirmed mutation is inspected on the next cycle rather than replayed.
 Shared health includes Grafana, so collectors alone cannot make the service
 healthy. Public HTTPS reachability is a separate tunnel/publication check.
 Recovery does not reconstruct telemetry that was never collected.
+
+The activity reader reports a Docker subprocess that exceeds its 25-second
+budget as `docker_unavailable` and does not retry smaller time windows. Only a
+PostgreSQL statement timeout (`query_timeout`) or oversized query output can
+trigger window splitting. Check Docker API availability before attributing a
+timeout to SQL; a fresh AHK heartbeat can coexist with a stopped database and
+unconsumed activity segments. After engine recovery, verify database timestamps
+and the ingester backlog separately from collector heartbeats.
+
+Docker log directory metadata can lag behind file contents: a zero length or
+old modification time from `Get-ChildItem` does not prove logging stopped.
+Read the incident window directly with `Get-Content`/`Select-String`, and if
+necessary compare metadata from a read-only file handle. In this incident, the
+backend recorded a `StartupApproved\Run` registry watcher deletion error,
+followed by its own Stop sequence and `ExitBadState`. Repeated idle event-stream
+client cancellations/EOF are not evidence that Resource Saver triggered that stop.
 
 Autostart keeps an existing exact `TimeAudit.ahk` process; unhealthy activity
 capture remains the watchdog's responsibility. Bootstrap uses Compose
