@@ -33,7 +33,7 @@ def test_postgres_host_port_stays_outside_windows_dynamic_pool():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     db_config = (ROOT / "db_config.py").read_text(encoding="utf-8")
 
-    assert "${TIMEAUDIT_DB_HOST_PORT:-45432}:5432" in compose
+    assert '"127.0.0.1:${TIMEAUDIT_DB_HOST_PORT:-45432}:5432"' in compose
     assert "DEFAULT_DB_HOST_PORT = 45432" in db_config
     assert "55432" not in compose
     assert "55432" not in db_config
@@ -60,7 +60,7 @@ def test_recovery_bootstrap_preserves_existing_containers_and_exact_ahk():
 
 def test_grafana_defaults_agree_and_stay_outside_dynamic_pool():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert '"43000:3000"' in compose
+    assert '"127.0.0.1:43000:3000"' in compose
     assert "GF_LIVE_ALLOWED_ORIGINS=http://localhost:43000" in compose
     for filename in ("timeaudit_health.py", "telemetry_watchdog.ps1", "backup_grafana.py", "restore_grafana.py"):
         source = (ROOT / filename).read_text(encoding="utf-8-sig")

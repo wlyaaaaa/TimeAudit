@@ -38,7 +38,7 @@ services:
       POSTGRES_PASSWORD: '${TIMEAUDIT_DB_PASSWORD:?TIMEAUDIT_DB_PASSWORD is required}'
       POSTGRES_DB: 'time_audit'
     ports:
-      - "${TIMEAUDIT_DB_HOST_PORT:-45432}:5432"
+      - "127.0.0.1:${TIMEAUDIT_DB_HOST_PORT:-45432}:5432"
     volumes:
       - ./postgres_data:/var/lib/postgresql/data
     # /dev/shm 上限：并行查询(posix DSM)扫描大分区(fact_process_activity 周分区已达 ~1.8GB)时在此申请共享内存，
@@ -73,7 +73,7 @@ services:
     container_name: audit-grafana
     restart: always
     ports:
-      - "43000:3000"
+      - "127.0.0.1:43000:3000"
     environment:
       - GF_SERVER_ROOT_URL=https://grafana.wly0829.cn/
       - GF_LIVE_ALLOWED_ORIGINS=http://localhost:43000
