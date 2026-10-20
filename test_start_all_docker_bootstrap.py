@@ -33,7 +33,9 @@ def test_postgres_host_port_stays_outside_windows_dynamic_pool():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
     db_config = (ROOT / "db_config.py").read_text(encoding="utf-8")
 
-    assert '"127.0.0.1:${TIMEAUDIT_DB_HOST_PORT:-45432}:5432"' in compose
+    db_service = compose.split("  audit-db:", 1)[1].split("  audit-ingest:", 1)[0]
+    db_ports = db_service.split("    ports:", 1)[1].split("    volumes:", 1)[0]
+    assert [line.strip() for line in db_ports.splitlines() if line.strip()] == ['- "${TIMEAUDIT_DB_HOST_PORT:-45432}:5432"']
     assert "DEFAULT_DB_HOST_PORT = 45432" in db_config
     assert "55432" not in compose
     assert "55432" not in db_config
@@ -60,7 +62,9 @@ def test_recovery_bootstrap_preserves_existing_containers_and_exact_ahk():
 
 def test_grafana_defaults_agree_and_stay_outside_dynamic_pool():
     compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    assert '"127.0.0.1:43000:3000"' in compose
+    grafana_service = compose.split("  audit-dashboard:", 1)[1]
+    grafana_ports = grafana_service.split("    ports:", 1)[1].split("    environment:", 1)[0]
+    assert [line.strip() for line in grafana_ports.splitlines() if line.strip()] == ['- "127.0.0.1:43000:3000"']
     assert "GF_LIVE_ALLOWED_ORIGINS=http://localhost:43000" in compose
     for filename in ("timeaudit_health.py", "telemetry_watchdog.ps1", "backup_grafana.py", "restore_grafana.py"):
         source = (ROOT / filename).read_text(encoding="utf-8-sig")
@@ -72,3 +76,4 @@ if __name__ == "__main__":
     test_start_all_waits_for_docker_daemon_before_compose()
     test_start_all_uses_crlf_line_endings_for_cmd_exe()
     test_postgres_host_port_stays_outside_windows_dynamic_pool()
+    test_grafana_defaults_agree_and_stay_outside_dynamic_pool()
