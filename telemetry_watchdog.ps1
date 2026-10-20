@@ -251,7 +251,9 @@ function Restore-StoppedDocker([string]$Status, [long]$NowSeconds = ([DateTimeOf
 }
 
 function Restore-TimeAuditDependencies {
+    $probeTimer = [Diagnostics.Stopwatch]::StartNew()
     $engine = Invoke-DockerBounded 'info --format {{.ServerVersion}}'
+    $probeTimer.Stop()
     if (-not $engine.Success) {
         $desktop = Get-Process -Name 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue
         $desktopState = 'unknown'
@@ -262,7 +264,7 @@ function Restore-TimeAuditDependencies {
         if ($engine.TimedOut) {
             # A slow API probe alone does not justify bootstrap. Only the
             # separate explicit Desktop status above can authorize recovery.
-            Log 'Docker API probe timed out - separate Desktop status governs stopped-engine recovery'
+            Log ("Docker API probe timed out after {0:F2}s; desktop_status={1} - separate Desktop status governs stopped-engine recovery" -f $probeTimer.Elapsed.TotalSeconds, $desktopState)
             return
         }
         if (-not $desktop) {
@@ -532,8 +534,8 @@ if (-not $ahkProc) {
 # === 4. audit-ingester (CSV -> PostgreSQL sidecar) ===
 function Test-IngesterRunning {
     if (-not (Test-Path -LiteralPath $docker)) { return $false }
-    $state = & $docker inspect --format '{{.State.Running}}' audit-ingester 2>$null
-    return ($LASTEXITCODE -eq 0 -and "$state".Trim() -eq 'true')
+    $state = Invoke-DockerBounded 'inspect --format {{.State.Running}} audit-ingester'
+    return ($state.Success -and $state.Output -eq 'true')
 }
 
 function Restart-Ingester($reason) {
@@ -542,10 +544,11 @@ function Restart-Ingester($reason) {
         Log "ABORT: Docker CLI missing"
         return
     }
-    & $docker restart audit-ingester 2>&1 | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        & $docker compose -f $compose up -d audit-ingest 2>&1 | Out-Null
+    $result = Invoke-DockerBounded 'restart audit-ingester' 30
+    if (-not $result.Success -and -not $result.TimedOut) {
+        $result = Invoke-DockerBounded ('compose -f "{0}" up -d audit-ingest' -f $compose) 30
     }
+    if ($result.TimedOut) { Log 'audit-ingester recovery timed out - next cycle inspects state'; return }
     Start-Sleep -Seconds 12
     if ((Test-IngesterRunning) -and (Test-HeartbeatFresh $ingesterHeartbeat $ingesterHeartbeatMaxAgeSeconds)) {
         Log "RESTART OK - audit-ingester heartbeat fresh"

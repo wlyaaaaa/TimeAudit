@@ -4,7 +4,7 @@ TimeAudit 大盘 SQL 分区剪裁与执行计划自动回归测试
 =================================================
 背景：为了支撑 3 年及更久的海量数据高频写入与低延迟检索，各大盘 SQL 必须能够正确触发
 PostgreSQL 的“分区剪裁 (Partition Pruning)”，只扫描当前周/当前月分区，避免全分区扫描。
-本测试程序自动扫描 grafana_dashboards/ 目录下的所有 JSON 文件，提取全部 SQL 查询，
+本测试程序扫描 grafana_dashboards/ 和 grafana_provisioning/dashboards/ 的 JSON，提取全部 SQL 查询，
 在本地 Postgres 数据库上执行有界 EXPLAIN ANALYZE，并根据当前北京时间 ISO 周数/月份断言：
   1. 过去 1 小时时间段的查询中，fact_process_activity / fact_process_context 只会扫描本周的分区。
   2. fact_system_hardware 只会扫描本月的分区。
@@ -27,7 +27,8 @@ for _s in (sys.stdout, sys.stderr):
         pass
 
 DB_DSN = local_dsn()
-DASHBOARD_DIR = r"E:\Projects\Tools\TimeAudit\grafana_dashboards"
+ROOT = os.path.dirname(os.path.abspath(__file__))
+DASHBOARD_DIRS = [os.path.join(ROOT, "grafana_dashboards"), os.path.join(ROOT, "grafana_provisioning", "dashboards")]
 
 # 动态计算北京时间 (UTC+8) 的当前周、月后缀
 CN_TZ = datetime.timezone(datetime.timedelta(hours=8))
@@ -95,9 +96,9 @@ print("=" * 60)
 def extract_sql_from_dashboards():
     """遍历仪表盘文件，提取所有 targets 中的 SQL"""
     sql_list = []
-    files = sorted(glob.glob(os.path.join(DASHBOARD_DIR, "*.json")))
+    files = sorted(fp for directory in DASHBOARD_DIRS for fp in glob.glob(os.path.join(directory, "*.json")))
     if not files:
-        print(f"❌ 找不到 JSON 仪表盘文件于: {DASHBOARD_DIR}")
+        print(f"❌ 找不到 JSON 仪表盘文件于: {DASHBOARD_DIRS}")
         sys.exit(1)
         
     for fp in files:

@@ -25,9 +25,27 @@ NATIVE_CRASH_LOG = r"E:\Projects\Tools\TimeAudit\log\python_fatal.log"
 _native_crash_log_handle = None
 try:
     os.makedirs(os.path.dirname(NATIVE_CRASH_LOG), exist_ok=True)
+    start_at = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    rotation_note = ""
+    if __name__ == "__main__":
+        try:
+            if os.path.getsize(NATIVE_CRASH_LOG) > 5 * 1024 * 1024:
+                preserved = f"{NATIVE_CRASH_LOG}.{start_at:%Y%m%d-%H%M%S-%f}.{os.getpid()}"
+                # Preserve unique crash evidence instead of truncating it.
+                os.rename(NATIVE_CRASH_LOG, preserved)
+                rotation_note = f" preserved={os.path.basename(preserved)}"
+        except FileNotFoundError:
+            pass
+        except OSError as exc:
+            rotation_note = f" rotation_failed={exc!r}"
     _native_crash_log_handle = open(
         NATIVE_CRASH_LOG, "a", encoding="utf-8", buffering=1
     )
+    if __name__ == "__main__":
+        _native_crash_log_handle.write(
+            f"\n=== START {start_at.isoformat()} pid={os.getpid()}{rotation_note} ===\n"
+        )
+        _native_crash_log_handle.flush()
     faulthandler.enable(_native_crash_log_handle, all_threads=True)
 except Exception:
     _native_crash_log_handle = None

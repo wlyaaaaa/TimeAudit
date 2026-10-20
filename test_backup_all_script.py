@@ -85,13 +85,21 @@ def test_last_run_receipt(tmp_path, shell, db_exit, grafana_exit, local, cloud, 
     entry = tmp_path / "last-run-fixture.ps1"
     entry.write_text(fixture + script, encoding="utf-8-sig")
     (tmp_path / "log").mkdir()
+    history_path = tmp_path / "log" / "backup-history.jsonl"
+    history_path.write_text("".join(json.dumps({"run": i}) + "\n" for i in range(35)), encoding="utf-8")
     if blocked: (tmp_path / "log" / "backup-last-run.json").mkdir()
     elif db_exit: (tmp_path / "log" / "backup-last-run.json").write_text("old", encoding="utf-8")
     result = subprocess.run([shell, "-NoProfile", "-File", str(entry)], capture_output=True, timeout=20,
                             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     assert result.returncode == (db_exit or grafana_exit), result.stderr
+    history = [json.loads(line) for line in history_path.read_text(encoding="utf-8").splitlines()]
+    assert len(history) == 30 and history[0] == {"run": 6}
+    assert history[-1]["status"] == ("failed" if result.returncode else "pass")
+    assert history[-1]["failed_stages"] == (["database"] if db_exit else []) + (["grafana"] if grafana_exit else [])
+    assert history[-1]["exit_code"] == result.returncode
     if blocked: return
     receipt = json.loads((tmp_path / "log" / "backup-last-run.json").read_text(encoding="utf-8"))
+    assert history[-1] == receipt
     assert (receipt["local_snapshot_status"], receipt["cloud_sync_status"], receipt["reason"], receipt["exit_code"]) == (local, cloud, reason, result.returncode)
     started, completed = (datetime.fromisoformat(receipt[key]) for key in ("started_at", "completed_at"))
     assert receipt["schema"] == "timeaudit.backup-run.v1" and started.tzinfo and completed.tzinfo

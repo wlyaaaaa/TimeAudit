@@ -107,7 +107,7 @@ def test_main_reconnect_guard():
 
 def test_dashboards():
     print("\n[4] 前端仪表盘回归")
-    files = glob.glob(os.path.join(ROOT, "grafana_dashboards", "*.json"))
+    files = glob.glob(os.path.join(ROOT, "grafana_dashboards", "*.json")) + glob.glob(os.path.join(ROOT, "grafana_provisioning", "dashboards", "*.json"))
     bad, webshell = [], False
     for fp in files:
         try:

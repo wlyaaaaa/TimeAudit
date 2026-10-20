@@ -3,6 +3,7 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import backup_grafana as backup
 from grafana_dashboard_contract import (
@@ -110,7 +111,7 @@ class GrafanaDashboardContractTests(unittest.TestCase):
                 backup.DASH_DIR = original
 
     def test_repository_snapshots_and_recovery_datasource_share_contract(self):
-        snapshots = sorted((ROOT / "grafana_dashboards").glob("*.json"))
+        snapshots = sorted([*ROOT.glob("grafana_dashboards/*.json"), *ROOT.glob("grafana_provisioning/dashboards/*.json")])
         self.assertTrue(snapshots, "repository must contain active recovery snapshots")
         for path in snapshots:
             with path.open(encoding="utf-8") as handle:
@@ -123,6 +124,24 @@ class GrafanaDashboardContractTests(unittest.TestCase):
 
         compose = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertNotIn("./grafana_dashboards:", compose)
+
+    def test_provisioned_dashboards_are_omitted_from_backup_and_api_restore(self):
+        import restore_grafana as restore
+        uid = "website-computer-status"
+        dashboard = valid_dashboard(uid)
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "old.json")
+            path.write_text(json.dumps(dashboard), encoding="utf-8")
+            with mock.patch.object(backup, "DASH_DIR", directory):
+                written = backup.write_dashboard_documents(
+                    [(uid, dashboard), ("other", valid_dashboard("other"))], before_write=lambda: None)
+            self.assertEqual(written, {"other__Dashboard.json"})
+            self.assertFalse(path.exists())
+            path.write_text(json.dumps(dashboard), encoding="utf-8")
+            with mock.patch.object(restore, "api_get") as api_get, mock.patch.object(restore, "api_post") as api_post:
+                self.assertEqual(restore.main(["--file", str(path)]), 0)
+            api_get.assert_not_called()
+            api_post.assert_not_called()
 
     def test_tracked_historical_backup_is_not_recoverable(self):
         backup_path = ROOT / "grafana_dashboards" / "adfkm96__屏幕使用时间.json.bak"

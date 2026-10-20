@@ -52,6 +52,21 @@ function Write-RunReceipt {
     } finally {
         if ([IO.File]::Exists($tempReceiptPath)) { Remove-Item -LiteralPath $tempReceiptPath -Force -ErrorAction SilentlyContinue }
     }
+    if ($RunReceipt.completed_at) {
+        $historyPath = Join-Path (Split-Path $log) 'backup-history.jsonl'
+        $tempHistoryPath = "$historyPath.$PID.tmp"
+        try {
+            $history = @(if (Test-Path -LiteralPath $historyPath) { Get-Content -LiteralPath $historyPath -Tail 29 -Encoding UTF8 -ErrorAction Stop })
+            $history += ($RunReceipt | ConvertTo-Json -Compress -Depth 4)
+            [IO.File]::WriteAllLines($tempHistoryPath, [string[]]$history, [Text.UTF8Encoding]::new($false))
+            if ([IO.File]::Exists($historyPath)) { [IO.File]::Replace($tempHistoryPath, $historyPath, [NullString]::Value) }
+            else { [IO.File]::Move($tempHistoryPath, $historyPath) }
+        } catch {
+            '[backup-all] WARNING history receipt could not be written' | Out-File $log -Append -Encoding utf8 -ErrorAction SilentlyContinue
+        } finally {
+            if ([IO.File]::Exists($tempHistoryPath)) { Remove-Item -LiteralPath $tempHistoryPath -Force -ErrorAction SilentlyContinue }
+        }
+    }
 }
 
 $startedAt = [DateTimeOffset]::Now.ToString('o')
@@ -114,8 +129,10 @@ $summary = switch ($localStatus) {
 $summary += if ($cloudStatus -eq 'complete') { '、云端同步已完成' } elseif ($cloudStatus -eq 'failed') { '、云端推送失败' } else { '、云端同步未尝试或无结果' }
 $runReceipt = [ordered]@{
     schema = 'timeaudit.backup-run.v1'
+    status = $receipt.overall_status
     started_at = $startedAt
     completed_at = [DateTimeOffset]::Now.ToString('o')
+    failed_stages = @(if ($dbExit -ne 0) { 'database' }; if ($grafanaExit -ne 0) { 'grafana' })
     local_snapshot_status = $localStatus
     cloud_sync_status = $cloudStatus
     reason = $reason

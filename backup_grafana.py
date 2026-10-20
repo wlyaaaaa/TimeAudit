@@ -2,7 +2,7 @@
 """
 TimeAudit — Grafana 仪表盘自动备份
 ==================================
-把 Grafana 里的【所有仪表盘】通过官方 API 导出成可读、可 diff 的 JSON 文件，
+把 Grafana 里非文件预置的仪表盘导出成可读、可 diff 的 JSON 文件，
 存到 grafana_dashboards/，并且【只在内容有变化时】自动 git commit + push。
 同时把 grafana.db（SQLite 全量库）复制到 G:\\80_Backup\\TimeAudit\\grafana_db 做二进制兜底（带轮转、不进 git）。
 
@@ -41,7 +41,9 @@ import time
 import urllib.request
 from urllib.parse import quote
 
-from grafana_dashboard_contract import is_v2_dashboard, validate_dashboard_document
+from grafana_dashboard_contract import (
+    is_v2_dashboard, provisioned_dashboard_uids, validate_dashboard_document,
+)
 from backup_file_warnings import file_warning, sqlite_warning
 
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
@@ -212,11 +214,15 @@ def _assert_dashboard_export_is_not_stale(path, previous, incoming, content):
 
 def write_dashboard_documents(documents, changed_paths=None, before_write=None):
     """Write normalized dashboard documents and remove obsolete snapshots safely."""
+    provisioned_uids = provisioned_dashboard_uids()
     if before_write is None:
         before_write = assert_dashboard_worktree_clean
     before_write()
     normalized_documents = []
     for uid, dash in documents:
+        if uid in provisioned_uids:
+            log(f"  · 跳过文件预置仪表盘: {uid}")
+            continue
         if not uid or not isinstance(dash, dict):
             continue
         dash = normalize_dashboard_for_public_backup(dash)
@@ -267,7 +273,7 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
         if os.path.basename(old) not in written:
             os.remove(old)
             _record_dashboard_change(changed_paths, old)
-            log(f"  ✗ 删除已不存在的仪表盘备份: {os.path.basename(old)}")
+            log(f"  ✗ 删除不再需要的仪表盘快照: {os.path.basename(old)}")
     return written
 
 

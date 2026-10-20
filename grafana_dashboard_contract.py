@@ -2,6 +2,7 @@
 """Fail-closed contract shared by Grafana dashboard backup and restore."""
 
 import glob
+import json
 import os
 
 
@@ -121,3 +122,15 @@ def discover_dashboard_files(dashboard_dir, requested_file=None):
             raise DashboardContractError("requested dashboard file does not exist")
         return [path]
     return sorted(glob.glob(os.path.join(dashboard_dir, "*.json")))
+
+
+def provisioned_dashboard_uids():
+    """File-provisioned dashboards already have a canonical repository source."""
+    directory = os.path.join(os.path.dirname(__file__), "grafana_provisioning", "dashboards")
+    uids = set()
+    for path in discover_dashboard_files(directory):
+        with open(path, encoding="utf-8") as handle:
+            dashboard = json.load(handle)
+        validate_dashboard_document(dashboard, source=path)
+        uids.add(dashboard["uid"])
+    return uids

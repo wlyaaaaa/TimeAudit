@@ -14,6 +14,7 @@ TimeAudit — Grafana 仪表盘恢复
 
 说明：导入按仪表盘的 uid 匹配，overwrite=true 会覆盖 Grafana 中同 uid 的仪表盘。
       只接受扩展名精确为 .json 且通过 datasource/matcher 恢复合同的快照；编辑器 .bak 不可导入。
+      文件预置的仪表盘按 provisioning 源文件加载，遇到同 uid 快照时跳过 API 恢复。
       如果你只是想完整恢复整个 Grafana(含用户/数据源/偏好)，直接用 grafana.db 二进制备份更省事，
       方法见《快速部署.md》。
 """
@@ -31,6 +32,7 @@ from grafana_dashboard_contract import (
     RECOVERY_DATASOURCE_UID,
     discover_dashboard_files,
     is_v2_dashboard,
+    provisioned_dashboard_uids,
     validate_dashboard_document,
 )
 
@@ -131,7 +133,8 @@ def main(argv=None):
 
     try:
         files = discover_dashboard_files(DASH_DIR, args.file)
-    except DashboardContractError as exc:
+        provisioned_uids = provisioned_dashboard_uids()
+    except (DashboardContractError, OSError, ValueError) as exc:
         log(f"拒绝恢复候选: {exc}")
         return 2
 
@@ -144,6 +147,9 @@ def main(argv=None):
         try:
             with open(fp, encoding="utf-8") as f:
                 dash = json.load(f)
+            if isinstance(dash, dict) and dash.get("uid") in provisioned_uids:
+                log(f"  · 跳过文件预置仪表盘: {dash['uid']}")
+                continue
             validate_dashboard_document(dash, source=os.path.basename(fp))
             dash.pop("id", None)  # 让目标实例重新分配内部 id
             documents.append((fp, dash))
@@ -151,7 +157,9 @@ def main(argv=None):
             log(f"拒绝恢复候选 {os.path.basename(fp)}: {exc}")
             return 1
 
-    log(f"准备恢复 {len(files)} 个仪表盘" + ("（DRY-RUN，不实际写入）" if args.dry_run else ""))
+    log(f"准备恢复 {len(documents)} 个仪表盘" + ("（DRY-RUN，不实际写入）" if args.dry_run else ""))
+    if not documents:
+        return 0
     if args.dry_run:
         for _, dash in documents:
             log(f"  · 会导入: {dash.get('title', '?')}  (uid={dash['uid']})")

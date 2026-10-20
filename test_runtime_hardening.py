@@ -25,7 +25,7 @@ def test_dashboard_titles_do_not_hardcode_hardware_skus():
     sku_pattern = re.compile(r"(?:\bRTX\s*\d{4}\b|\b\d{4}X3D\b)", re.IGNORECASE)
     offenders = []
 
-    for path in DASHBOARD_DIR.glob("*.json"):
+    for path in [*DASHBOARD_DIR.glob("*.json"), *ROOT.glob("grafana_provisioning/dashboards/*.json")]:
         dashboard = json.loads(path.read_text(encoding="utf-8"))
         for title in _walk_titles(dashboard):
             if sku_pattern.search(title):
@@ -100,6 +100,27 @@ def test_main_updates_heartbeat_and_releases_singleton_mutex():
         and node.func.id == "_should_refresh_telemetry_heartbeat"
         for node in ast.walk(current.test)
     )
+
+
+def test_native_crash_log_preserves_oversize_evidence_and_marks_start(tmp_path):
+    import datetime
+    import os
+    from types import SimpleNamespace
+
+    path = tmp_path / "python_fatal.log"
+    old = b"diagnostic evidence\n" + b"x" * (5 * 1024 * 1024)
+    path.write_bytes(old)
+    tree = ast.parse((ROOT / "main.py").read_text(encoding="utf-8"))
+    init = next(node for node in tree.body if isinstance(node, ast.Try))
+    namespace = {"__name__": "__main__", "os": os, "datetime": datetime,
+                 "NATIVE_CRASH_LOG": str(path), "faulthandler": SimpleNamespace(enable=lambda *a, **k: None)}
+    exec(compile(ast.Module(body=[init], type_ignores=[]), "main.py", "exec"), namespace)
+    namespace["_native_crash_log_handle"].close()
+    preserved, = tmp_path.glob("python_fatal.log.*")
+    assert preserved.read_bytes() == old
+    marker = path.read_text(encoding="utf-8")
+    assert "=== START " in marker and "+08:00" in marker and f"pid={os.getpid()}" in marker
+    assert len(marker) < 1024
 
 
 def test_psutil_native_crash_paths_are_contained():

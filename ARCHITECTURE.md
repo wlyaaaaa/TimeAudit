@@ -39,7 +39,7 @@
 - 运行环境由 `setup_runtime.ps1` 准备，入口使用项目 `.venv\Scripts\pythonw.exe`。保持引擎单实例，不从全局 Python 混入其他工具依赖。
 - `telemetry_watchdog.ps1` 依据精确进程/容器身份和新鲜心跳有界恢复；先给唤醒留宽限，停止旧实例后才替换。任务定义归 PCConfig 的 `Install-TimeAuditRuntimeWatchdog.ps1`，日志在 `telemetry_watchdog.log`。
 - LibreHardwareMonitor 是独立运行任务，硬件 worker 仅读其本机 HTTP 接口；PresentMon 回退由项目管理；RTSS 共享内存只读且不由本项目启停。RTSS 映射存在却无唯一新鲜帧源时是空闲，不能因此启动回退程序。
-- `net_connections()` 在可重启的无状态子进程里运行，避免原生崩溃带走主采集器；`log/python_fatal.log` 保留不含业务正文的栈。启动时闭合未结束前台会话，按墙上时间预建分区。
+- `net_connections()` 在可重启的无状态子进程里运行，避免原生崩溃带走主采集器；`log/python_fatal.log` 保留不含业务正文的栈，主进程启动时写北京时间和 PID，超过 5 MiB 则换新活动文件，旧记录按时间和 PID 保留。诊断只结合对应启动标记之后、进程退出前的记录；Windows 已处理异常也可能被记录，不能仅凭 fatal 标题判断崩溃。保留文件不自动删除，总占用未设上限。启动时闭合未结束前台会话，按墙上时间预建分区。
 - 逐进程明细 `fact_process_activity` 保留 60 天，另存长期小时/北京时间日汇总；资源看板通过混合查询继续读取历史统计。首次部署先回填、更新看板，再启用清理，见 [PROCESS_ACTIVITY_RETENTION.md](PROCESS_ACTIVITY_RETENTION.md)。
 - 其他事实表仍使用 `RETENTION_DAYS=1200`；该常量设为 0 只关闭这些表的清理。activity 的启用开关独立，按真实分区上界退役整周，不用旧容量估算承诺磁盘永远够用。
 

@@ -231,7 +231,7 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
             FROM activity_app_stats('2026-06-01+08','2026-06-02+08',86400) WHERE process_name='example.exe'"""))
 
     def chart_queries(self, start, end, interval):
-        for path in ROOT.joinpath('grafana_dashboards').glob('*.json'):
+        for path in [*ROOT.glob("grafana_dashboards/*.json"), *ROOT.glob("grafana_provisioning/dashboards/*.json")]:
             dashboard = json.loads(path.read_text('utf-8'))
             for panel in dashboard.get('panels', []):
                 for target in panel.get('targets', []):
@@ -425,7 +425,7 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dashboard_queries_compile_in_postgresql(self):
         checked = 0
-        for path in ROOT.joinpath("grafana_dashboards").glob("*.json"):
+        for path in [*ROOT.glob("grafana_dashboards/*.json"), *ROOT.glob("grafana_provisioning/dashboards/*.json")]:
             dashboard = json.loads(path.read_text("utf-8"))
             for panel in dashboard.get("panels", []):
                 for target in panel.get("targets", []):

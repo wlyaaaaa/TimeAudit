@@ -125,7 +125,7 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         self.assertIn("面板 1 个", log.call_args.args[0])
 
     def test_public_dashboard_snapshots_keep_semantic_matcher_ids(self):
-        snapshot_dir = os.path.join(os.path.dirname(__file__), "grafana_dashboards")
+        root = Path(__file__).resolve().parent
         retired_datasource_uid = "bfoc1vymtgni8a"
 
         def assert_matchers(node, source, path="dashboard"):
@@ -153,10 +153,8 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
                 for index, value in enumerate(node):
                     assert_matchers(value, source, f"{path}[{index}]")
 
-        for name in sorted(os.listdir(snapshot_dir)):
-            if not name.endswith(".json"):
-                continue
-            path = os.path.join(snapshot_dir, name)
+        for path in sorted([*root.glob("grafana_dashboards/*.json"), *root.glob("grafana_provisioning/dashboards/*.json")]):
+            name = path.name
             with open(path, encoding="utf-8") as handle:
                 document = json.load(handle)
             self.assertNotIn(
