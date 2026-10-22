@@ -77,3 +77,29 @@ if __name__ == "__main__":
     test_start_all_uses_crlf_line_endings_for_cmd_exe()
     test_postgres_host_port_stays_outside_windows_dynamic_pool()
     test_grafana_defaults_agree_and_stay_outside_dynamic_pool()
+
+
+def test_engine_elevates_before_runtime_imports_and_preserves_arguments():
+    import ctypes
+    import sys
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    import pytest
+    prefix = (ROOT / "main.py").read_text(encoding="utf-8").split("import warnings", 1)[0]
+    for admin in (False, True):
+        shell = SimpleNamespace(shell32=SimpleNamespace(IsUserAnAdmin=lambda: admin))
+        with patch.object(sys, "platform", "win32"), patch.object(sys, "argv", [str(ROOT / "main.py"), "a b", "c'd"]), \
+             patch.object(ctypes, "windll", shell, create=True), patch("subprocess.call", return_value=11) as launch:
+            namespace = {"__name__": "__main__", "__file__": str(ROOT / "main.py")}
+            if admin:
+                exec(prefix, namespace)
+                launch.assert_not_called()
+            else:
+                with pytest.raises(SystemExit) as result:
+                    exec(prefix, namespace)
+                assert result.value.code == 11
+                args = launch.call_args.args[0]
+                assert args[:3] == ["pwsh.exe", "-NoProfile", "-NonInteractive"]
+                assert "Elevation.ps1" in args[-1] and "Invoke-ProjectElevated" in args[-1]
+                assert "a b" in args[-1] and "c" in args[-1]
+                assert launch.call_args.kwargs["creationflags"] == subprocess.CREATE_NO_WINDOW

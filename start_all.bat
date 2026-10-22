@@ -67,7 +67,8 @@ if not exist "%PYTHONW%" (
     echo [-] TimeAudit isolated runtime is missing. Run setup_runtime.ps1 first.
     exit /b 1
 )
-powershell -WindowStyle Hidden -Command "$isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator); if ($isAdmin) { Start-Process '%PYTHONW%' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden } else { Start-Process '%PYTHONW%' -ArgumentList '%PROJECT_DIR%\main.py' -WorkingDirectory '%PROJECT_DIR%' -WindowStyle Hidden -Verb RunAs }"
+pwsh -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%PROJECT_DIR%\Start-ElevatedEngine.ps1"
+if %errorlevel% neq 0 exit /b %errorlevel%
 
 echo [+] 引擎启动指令已下发！
 exit /b 0

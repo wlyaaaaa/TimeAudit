@@ -1,4 +1,17 @@
 # -*- coding: utf-8 -*-
+import os
+import sys
+if __name__ == "__main__" and sys.platform == "win32":
+    import ctypes
+    if not ctypes.windll.shell32.IsUserAnAdmin():
+        import subprocess
+        from pathlib import Path
+        def ps_quote(value):
+            return "'" + str(value).replace("'", "''") + "'"
+        command = ". " + ps_quote(Path(__file__).with_name("Elevation.ps1")) + "; Invoke-ProjectElevated "
+        invocation = "& " + ps_quote(sys.executable) + " " + " ".join(ps_quote(v) for v in [Path(__file__).resolve(), *sys.argv[1:]])
+        command += ps_quote(invocation) + "; exit $LASTEXITCODE"
+        raise SystemExit(subprocess.call(["pwsh.exe", "-NoProfile", "-NonInteractive", "-Command", command], creationflags=subprocess.CREATE_NO_WINDOW))
 import warnings
 warnings.filterwarnings("ignore", category=FutureWarning)
 
@@ -514,13 +527,6 @@ async def _run_collector():
     print(f"🚀 Windows 11 Native Telemetry Engine 正在拉起... [PID: {os.getpid()}]")
     print("====================================================")
     
-    try:
-        is_admin = ctypes.windll.shell32.IsUserAnAdmin()
-        if not is_admin:
-            print("[⚠️ 主控警告] 当前程序未以管理员权限（Elevation）拉起，开机自启任务可能无法成功启用 PresentMon 探测！")
-    except Exception:
-        pass
-
     pool = None
     while pool is None:
         candidate_pool = None
