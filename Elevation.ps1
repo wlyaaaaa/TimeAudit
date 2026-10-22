@@ -8,6 +8,7 @@ function New-ProjectInvocation([string]$Path, [System.Collections.IDictionary]$P
     return ('$p=[Management.Automation.PSSerializer]::Deserialize([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(''{0}''))); & ''{1}'' @p' -f $xml,$Path.Replace("'","''"))
 }
 function Invoke-ProjectElevated([string]$Command) {
+    [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
     $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User.Value
     $prefix='[Console]::OutputEncoding=[Text.UTF8Encoding]::new($false);$ErrorActionPreference="Stop";$global:LASTEXITCODE=0;'
     $prefix+='if(-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)){throw "需要本人在场提权"};'
