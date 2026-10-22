@@ -635,9 +635,28 @@ def git_network(args, delays=(5, 15, 30)):
     """Retry only transport failures; repository-state failures stay fail-closed."""
     attempts = len(delays) + 1
     for attempt in range(1, attempts + 1):
+        started_at = datetime.datetime.now().astimezone().isoformat()
         result = git(args)
         if result.returncode == 0:
             return result
+        failed_at = datetime.datetime.now().astimezone().isoformat()
+        try:
+            failure_dir = os.path.join(ROOT, "log")
+            os.makedirs(failure_dir, exist_ok=True)
+            with open(os.path.join(failure_dir, "backup-git-failures.jsonl"),
+                      "a", encoding="utf-8", newline="\n") as handle:
+                handle.write(json.dumps({
+                    "schema": "timeaudit.git-network-failure.v1",
+                    "started_at": started_at,
+                    "failed_at": failed_at,
+                    "exporter_pid": os.getpid(),
+                    "operation": args[0],
+                    "attempt": attempt,
+                    "exit_code": result.returncode,
+                    "stderr": result.stderr,
+                }, ensure_ascii=False) + "\n")
+        except Exception as exc:
+            log(f"警告：无法追加 Git 失败诊断记录：{exc}\n本次 Git stderr:\n{result.stderr}")
         if not retryable_git_network_failure(result) or attempt == attempts:
             detail = (result.stderr or result.stdout).strip()
             suffix = f": {detail}" if detail else ""

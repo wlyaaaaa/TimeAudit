@@ -40,6 +40,7 @@ class GitSyncTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory(prefix="timeaudit-git-sync-")
         self.original_root = backup.ROOT
         self.original_dash_dir = backup.DASH_DIR
+        self.use_backup_checkout(self.temp.name)
 
     def tearDown(self):
         backup.ROOT = self.original_root
@@ -458,6 +459,8 @@ class GitSyncTests(unittest.TestCase):
     def test_logged_schannel_handshake_failure_retries_in_cloud_sync_stage(self):
         remote, local, _ = self.bare_topology("schannel-handshake")
         self.use_backup_checkout(local)
+        with open(os.path.join(local, ".git", "info", "exclude"), "a", encoding="utf-8") as handle:
+            handle.write("/log/\n")
         original_git = backup.git
         before_oid = run_git(local, "rev-parse", "HEAD").stdout.strip()
         before_status = run_git(local, "status", "--porcelain").stdout
@@ -500,6 +503,48 @@ class GitSyncTests(unittest.TestCase):
                 self.assertEqual(run_git(local, "rev-parse", "HEAD").stdout.strip(), before_oid)
                 self.assertEqual(run_git(local, "status", "--porcelain").stdout, before_status)
                 self.assertEqual(run_git(remote, "rev-parse", "refs/heads/main").stdout.strip(), before_oid)
+
+    def test_network_failure_evidence_survives_retry_and_later_success(self):
+        stderr = "schannel: server closed abruptly\n完整第二行\n"
+        failed = subprocess.CompletedProcess(["git"], 128, "", stderr)
+        passed = subprocess.CompletedProcess(["git"], 0, "successful output", "")
+        clock_type = backup.datetime.datetime
+        ticks = [clock_type(2026, 10, 22, 4, second, tzinfo=backup.datetime.timezone.utc)
+                 for second in (0, 1, 2, 3)]
+        with (
+            mock.patch.object(backup.datetime, "datetime") as clock,
+            mock.patch.object(backup, "git", side_effect=[failed, passed, passed]),
+            mock.patch.object(backup.time, "sleep"),
+        ):
+            clock.now.side_effect = ticks
+            self.assertIs(backup.git_network(["fetch", "origin"], delays=(1,)), passed)
+            path = os.path.join(backup.ROOT, "log", "backup-git-failures.jsonl")
+            with open(path, "rb") as handle:
+                original = handle.read()
+            records = original.decode("utf-8").splitlines()
+            self.assertEqual(len(records), 1)
+            self.assertEqual(json.loads(records[0]), {
+                "schema": "timeaudit.git-network-failure.v1",
+                "started_at": ticks[0].astimezone().isoformat(),
+                "failed_at": ticks[1].astimezone().isoformat(),
+                "exporter_pid": os.getpid(),
+                "operation": "fetch", "attempt": 1, "exit_code": 128,
+                "stderr": stderr,
+            })
+            self.assertIs(backup.git_network(["fetch", "origin"]), passed)
+            with open(path, "rb") as handle:
+                self.assertEqual(handle.read(), original)
+        with (
+            mock.patch.object(backup, "git", side_effect=[failed, passed]),
+            mock.patch.object(backup.time, "sleep") as sleep,
+            mock.patch("builtins.open", side_effect=OSError("diagnostic blocked")),
+            mock.patch.object(backup, "log") as output,
+        ):
+            self.assertIs(backup.git_network(["fetch", "origin"], delays=(1,)), passed)
+            sleep.assert_called_once_with(1)
+            warning = output.call_args_list[0].args[0]
+            self.assertIn("警告", warning)
+            self.assertIn(stderr, warning)
 
 
 if __name__ == "__main__":
