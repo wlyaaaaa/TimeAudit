@@ -475,14 +475,14 @@ class GitSyncTests(unittest.TestCase):
                 calls = []
                 fetch_attempts = 0
 
-                def git_with_handshake_failure(args, check=False):
+                def git_with_handshake_failure(args, check=False, *, network_trace=False):
                     nonlocal fetch_attempts
                     calls.append(args)
                     if args[0] == "fetch":
                         fetch_attempts += 1
                         if persistent or fetch_attempts == 1:
                             return handshake_error
-                    return original_git(args, check=check)
+                    return original_git(args, check=check, network_trace=network_trace)
 
                 with (
                     mock.patch.object(backup, "git", side_effect=git_with_handshake_failure),
@@ -530,6 +530,7 @@ class GitSyncTests(unittest.TestCase):
                 "exporter_pid": os.getpid(),
                 "operation": "fetch", "attempt": 1, "exit_code": 128,
                 "stderr": stderr,
+                "curl_stages": [],
             })
             self.assertIs(backup.git_network(["fetch", "origin"]), passed)
             with open(path, "rb") as handle:
@@ -545,6 +546,39 @@ class GitSyncTests(unittest.TestCase):
             warning = output.call_args_list[0].args[0]
             self.assertIn("警告", warning)
             self.assertIn(stderr, warning)
+
+    def test_network_trace_drops_sensitive_headers_but_preserves_failed_stages(self):
+        prefix = "23:19:22.089786 http.c:1033 "
+        trace = ["=> Send header: Authorization: Bearer secret-auth",
+                 "=> Send header: Cookie: secret-cookie", "<= Recv header: Set-Cookie: secret-set",
+                 "=> Send data: secret-body", "== Info: unapproved secret-info",
+                 "== Info: Trying https://user:secret-password@proxy.invalid:443",
+                 "== Info: schannel: Cookie: secret-info-cookie"]
+        trace += ["== Info: Trying 198.18.0.47:443..."]
+        trace += ["== Info: schannel: failed to receive handshake, need more data"] * 42
+        trace += ["== Info: schannel: failed to receive handshake, SSL/TLS connection failed"]
+        fatal = "fatal: schannel: failed to receive handshake, SSL/TLS connection failed\n"
+        failed = subprocess.CompletedProcess(["git"], 128, "", "\n".join(prefix + line for line in trace) + "\n" + fatal)
+        passed = subprocess.CompletedProcess(["git"], 0, "", prefix + "== Info: schannel: failed to receive handshake, need more data\n")
+        with (mock.patch.object(backup.subprocess, "run", side_effect=[failed, passed, passed]) as run,
+              mock.patch.object(backup.time, "sleep")):
+            self.assertIs(backup.git_network(["fetch", "origin"], delays=(1,)), passed)
+            path = os.path.join(backup.ROOT, "log", "backup-git-failures.jsonl")
+            with open(path, encoding="utf-8") as handle:
+                original = handle.read()
+            record = json.loads(original)
+            self.assertEqual(record["stderr"], fatal)
+            self.assertEqual(failed.stderr, fatal)
+            self.assertEqual(len(record["curl_stages"]), 40)
+            self.assertIn("Trying 198.18.0.47", record["curl_stages"][0])
+            self.assertTrue(record["curl_stages"][-1].endswith("SSL/TLS connection failed"))
+            self.assertNotIn("secret", original + failed.stderr + passed.stderr)
+            env = run.call_args_list[0].kwargs["env"]
+            for name in ("GIT_TRACE_CURL", "GIT_TRACE_CURL_NO_DATA", "GIT_TRACE_REDACT"):
+                self.assertEqual(env[name], "1")
+            self.assertIs(backup.git_network(["fetch", "origin"]), passed)
+            with open(path, encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), original)
 
 
 if __name__ == "__main__":

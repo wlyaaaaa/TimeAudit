@@ -418,12 +418,39 @@ class GitSyncError(RuntimeError):
     """Git backup state is unsafe or could not be verified."""
 
 
-def git(args, check=False):
+def _separate_git_curl_trace(result):
+    """Retain bounded transport stages, never curl headers or payloads."""
+    trace = re.compile(r"^\d{2}:\d{2}:\d{2}(?:\.\d+)?\s+http\.c:\d+\b")
+    allowed = ("Trying ", "Connected ", "CONNECT tunnel", "Establish HTTP proxy tunnel",
+               "schannel:", "ALPN", "SSL connection", "Recv failure", "Send failure",
+               "Closing ", "Connection ", "Empty reply")
+    stderr, stages = [], []
+    for line in (result.stderr or "").splitlines(keepends=True):
+        if not trace.match(line):
+            stderr.append(line)
+            continue
+        if "== Info:" not in line:
+            continue
+        message = line.split("== Info:", 1)[1].strip()
+        if not message.startswith(allowed):
+            continue
+        if re.search(r"authorization|cookie|[a-z][a-z0-9+.-]*://[^/\s]*@", message, re.I):
+            continue
+        if len(stages) == 40:
+            del stages[10]  # Keep initial entry stages and the latest failure stages.
+        stages.append(line.rstrip("\r\n"))
+    result.stderr = "".join(stderr)
+    result.curl_stages = stages
+
+
+def git(args, check=False, *, network_trace=False):
     env = os.environ.copy()
     # A hidden scheduled task must fail rather than wait for an invisible
     # Git Credential Manager or terminal prompt.
     env["GIT_TERMINAL_PROMPT"] = "0"
     env["GCM_INTERACTIVE"] = "Never"
+    if network_trace:
+        env.update(GIT_TRACE_CURL="1", GIT_TRACE_CURL_NO_DATA="1", GIT_TRACE_REDACT="1")
     result = subprocess.run(
         ["git", "-C", ROOT] + args,
         capture_output=True,
@@ -432,6 +459,8 @@ def git(args, check=False):
         errors="replace",
         env=env,
     )
+    if network_trace:
+        _separate_git_curl_trace(result)
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
         suffix = f": {detail}" if detail else ""
@@ -636,7 +665,7 @@ def git_network(args, delays=(5, 15, 30)):
     attempts = len(delays) + 1
     for attempt in range(1, attempts + 1):
         started_at = datetime.datetime.now().astimezone().isoformat()
-        result = git(args)
+        result = git(args, network_trace=True)
         if result.returncode == 0:
             return result
         failed_at = datetime.datetime.now().astimezone().isoformat()
@@ -654,6 +683,7 @@ def git_network(args, delays=(5, 15, 30)):
                     "attempt": attempt,
                     "exit_code": result.returncode,
                     "stderr": result.stderr,
+                    "curl_stages": getattr(result, "curl_stages", []),
                 }, ensure_ascii=False) + "\n")
         except Exception as exc:
             log(f"警告：无法追加 Git 失败诊断记录：{exc}\n本次 Git stderr:\n{result.stderr}")
