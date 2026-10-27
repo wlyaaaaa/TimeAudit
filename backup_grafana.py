@@ -29,6 +29,7 @@ import base64
 import contextlib
 import datetime
 import glob
+import ipaddress
 import json
 import os
 import re
@@ -39,7 +40,7 @@ import sys
 import tempfile
 import time
 import urllib.request
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from grafana_dashboard_contract import (
     is_v2_dashboard, provisioned_dashboard_uids, validate_dashboard_document,
@@ -443,6 +444,47 @@ def _separate_git_curl_trace(result):
     result.curl_stages = stages
 
 
+def _git_proxy_environment(env):
+    snapshot = {}
+    for key in ("HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+                "ALL_PROXY", "all_proxy", "NO_PROXY", "no_proxy"):
+        if key not in env:
+            continue
+        raw = env[key]
+        snapshot[key] = {"status": "invalid"}
+        if (not isinstance(raw, str) or len(raw) > 4096
+                or any(ord(char) < 32 or ord(char) == 127 for char in raw)):
+            continue
+        if key.lower() == "no_proxy":
+            entries = [item.strip() for item in raw.split(",")]
+            allowed = []
+            for item in entries[:32]:
+                if len(item) > 255:
+                    continue
+                if not re.fullmatch(r"(?:[A-Za-z0-9_.*-]+(?::[0-9]{1,5})?|[0-9.]+/[0-9]{1,2})", item):
+                    ipv6 = re.fullmatch(r"\[([0-9a-fA-F:.]+)\](?::[0-9]{1,5})?|([0-9a-fA-F:.]+(?:/[0-9]{1,3})?)", item)
+                    if not ipv6:
+                        continue
+                    try:
+                        ipaddress.IPv6Network(ipv6[1] or ipv6[2], strict=False)
+                    except ValueError:
+                        continue
+                allowed.append(item)
+            snapshot[key] = {"status": "present", "entries": allowed}
+            continue
+        try:
+            parsed = urlsplit(raw if "://" in raw else "//" + raw)
+            host, port = parsed.hostname, parsed.port
+            if (not host or not re.fullmatch(r"[A-Za-z0-9_.:-]{1,253}", host)
+                    or parsed.scheme not in ("", "http", "https", "socks4", "socks4a", "socks5", "socks5h")):
+                continue
+            snapshot[key] = {"scheme": parsed.scheme or None, "hostname": host,
+                             "port": port, "has_credentials": parsed.username is not None}
+        except (ValueError, TypeError):
+            pass
+    return snapshot
+
+
 def git(args, check=False, *, network_trace=False):
     env = os.environ.copy()
     # A hidden scheduled task must fail rather than wait for an invisible
@@ -451,6 +493,10 @@ def git(args, check=False, *, network_trace=False):
     env["GCM_INTERACTIVE"] = "Never"
     if network_trace:
         env.update(GIT_TRACE_CURL="1", GIT_TRACE_CURL_NO_DATA="1", GIT_TRACE_REDACT="1")
+        try:
+            proxy_environment = _git_proxy_environment(env)
+        except Exception:
+            proxy_environment = {"status": "unavailable"}
     result = subprocess.run(
         ["git", "-C", ROOT] + args,
         capture_output=True,
@@ -460,6 +506,7 @@ def git(args, check=False, *, network_trace=False):
         env=env,
     )
     if network_trace:
+        result.proxy_environment = proxy_environment
         _separate_git_curl_trace(result)
     if check and result.returncode != 0:
         detail = (result.stderr or result.stdout).strip()
@@ -684,6 +731,7 @@ def git_network(args, delays=(5, 15, 30)):
                     "exit_code": result.returncode,
                     "stderr": result.stderr,
                     "curl_stages": getattr(result, "curl_stages", []),
+                    "proxy_environment": getattr(result, "proxy_environment", {}),
                 }, ensure_ascii=False) + "\n")
         except Exception as exc:
             log(f"警告：无法追加 Git 失败诊断记录：{exc}\n本次 Git stderr:\n{result.stderr}")

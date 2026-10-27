@@ -531,6 +531,7 @@ class GitSyncTests(unittest.TestCase):
                 "operation": "fetch", "attempt": 1, "exit_code": 128,
                 "stderr": stderr,
                 "curl_stages": [],
+                "proxy_environment": {},
             })
             self.assertIs(backup.git_network(["fetch", "origin"]), passed)
             with open(path, "rb") as handle:
@@ -547,6 +548,32 @@ class GitSyncTests(unittest.TestCase):
             self.assertIn("警告", warning)
             self.assertIn(stderr, warning)
 
+    def test_proxy_snapshot_is_bounded_and_uses_the_subprocess_environment(self):
+        for value in ("http://secret-host\n.invalid", "http://secret-host:bad", "x" * 4097,
+                      "http://bad%40secret.invalid", "http://[invalid", None):
+            with self.subTest(value_type=type(value).__name__), mock.patch.object(
+                    backup.os, "environ", {"HTTPS_PROXY": value}), mock.patch.object(
+                    backup.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "")):
+                self.assertEqual(backup.git(["fetch"], network_trace=True).proxy_environment,
+                                 {"HTTPS_PROXY": {"status": "invalid"}})
+        source = {"HTTP_PROXY": "original.invalid:80", "NO_PROXY": ",".join(["a.invalid"] * 31 + ["x" * 256] + ["ignored.invalid"] * 8)}
+        def invoke(*args, **kwargs):
+            self.assertIsNot(kwargs["env"], source)
+            self.assertEqual(kwargs["env"]["HTTP_PROXY"], "original.invalid:80")
+            source["HTTP_PROXY"] = "changed.invalid:81"
+            return subprocess.CompletedProcess([], 0, "", "")
+        with mock.patch.object(backup.os, "environ", source), mock.patch.object(
+                backup.subprocess, "run", side_effect=invoke):
+            snapshot = backup.git(["fetch"], network_trace=True).proxy_environment
+        self.assertEqual(snapshot["HTTP_PROXY"]["hostname"], "original.invalid")
+        self.assertEqual(snapshot["NO_PROXY"]["entries"], ["a.invalid"] * 31)
+        original = subprocess.CompletedProcess([], 128, "", "unchanged")
+        with mock.patch.object(backup, "_git_proxy_environment", side_effect=RuntimeError("secret")), mock.patch.object(
+                backup.subprocess, "run", return_value=original):
+            self.assertIs(backup.git(["fetch"], network_trace=True), original)
+            self.assertEqual(original.proxy_environment, {"status": "unavailable"})
+            self.assertEqual(original.stderr, "unchanged")
+
     def test_network_trace_drops_sensitive_headers_but_preserves_failed_stages(self):
         prefix = "23:19:22.089786 http.c:1033 "
         trace = ["=> Send header: Authorization: Bearer secret-auth",
@@ -560,7 +587,14 @@ class GitSyncTests(unittest.TestCase):
         fatal = "fatal: schannel: failed to receive handshake, SSL/TLS connection failed\n"
         failed = subprocess.CompletedProcess(["git"], 128, "", "\n".join(prefix + line for line in trace) + "\n" + fatal)
         passed = subprocess.CompletedProcess(["git"], 0, "", prefix + "== Info: schannel: failed to receive handshake, need more data\n")
-        with (mock.patch.object(backup.subprocess, "run", side_effect=[failed, passed, passed]) as run,
+        proxy_env = {"HTTP_PROXY": "http://secret-user:secret-pass@upper.invalid:8080/secret-path?secret-query#secret-fragment",
+                     "http_proxy": "lower.invalid:3128", "HTTPS_PROXY": "https://secure.invalid:443",
+                     "https_proxy": "http://[::1]:8888", "ALL_PROXY": "socks5h://socks.invalid:1080",
+                     "all_proxy": "http://bad.invalid:secret-port",
+                     "NO_PROXY": "localhost,.example.invalid,127.0.0.1,::1/128,*.internal,service.invalid:8080,dead:beef:cafe,https://secret-url,secret-user@host,host?secret-query,secret-user:secret-pass,https:secret-token,http://user:pass;secret;tail@proxy.invalid",
+                     "no_proxy": "lower.internal", "UNRELATED_SECRET": "secret-unrelated"}
+        with (mock.patch.object(backup.os, "environ", proxy_env),
+              mock.patch.object(backup.subprocess, "run", side_effect=[failed, passed, passed]) as run,
               mock.patch.object(backup.time, "sleep")):
             self.assertIs(backup.git_network(["fetch", "origin"], delays=(1,)), passed)
             path = os.path.join(backup.ROOT, "log", "backup-git-failures.jsonl")
@@ -573,6 +607,17 @@ class GitSyncTests(unittest.TestCase):
             self.assertIn("Trying 198.18.0.47", record["curl_stages"][0])
             self.assertTrue(record["curl_stages"][-1].endswith("SSL/TLS connection failed"))
             self.assertNotIn("secret", original + failed.stderr + passed.stderr)
+            proxies = record["proxy_environment"]
+            self.assertEqual(set(proxies), set(proxy_env) - {"UNRELATED_SECRET"})
+            self.assertEqual(proxies["HTTP_PROXY"], {"scheme": "http", "hostname": "upper.invalid",
+                                                   "port": 8080, "has_credentials": True})
+            self.assertEqual(proxies["http_proxy"], {"scheme": None, "hostname": "lower.invalid",
+                                                   "port": 3128, "has_credentials": False})
+            self.assertEqual(proxies["https_proxy"]["hostname"], "::1")
+            self.assertEqual(proxies["all_proxy"], {"status": "invalid"})
+            self.assertEqual(proxies["NO_PROXY"]["entries"],
+                             ["localhost", ".example.invalid", "127.0.0.1", "::1/128", "*.internal", "service.invalid:8080"])
+            self.assertEqual(proxies["no_proxy"]["entries"], ["lower.internal"])
             env = run.call_args_list[0].kwargs["env"]
             for name in ("GIT_TRACE_CURL", "GIT_TRACE_CURL_NO_DATA", "GIT_TRACE_REDACT"):
                 self.assertEqual(env[name], "1")
