@@ -106,7 +106,7 @@ class GrafanaRestoreTests(unittest.TestCase):
         uid = "dash/ 1?#"
         collection = "/apis/dashboard.grafana.app/v2/namespaces/default/dashboards"
         exact = collection + "/dash%2F%201%3F%23"
-        resource = {"metadata": {"name": uid, "resourceVersion": "rv-1", "generation": 10}}
+        resource = {"metadata": {"name": uid, "resourceVersion": "rv-1", "generation": 10, "annotations": {"grafana.app/folder": "original-folder"}}}
         wrong = {"metadata": {"name": "wrong"}}
         cases = [
             ("create", HTTPError(exact, 404, "missing", {}, None), resource, resource, 0),
@@ -140,7 +140,7 @@ class GrafanaRestoreTests(unittest.TestCase):
                 self.assertEqual(body["apiVersion"], "dashboard.grafana.app/v2")
                 self.assertEqual(body["kind"], "Dashboard")
                 self.assertEqual(body["metadata"]["name"], uid)
-                self.assertEqual(body["metadata"]["annotations"], {"grafana.app/folder": ""})
+                self.assertEqual(body["metadata"]["annotations"], {"grafana.app/folder": "" if label in {"create", "update_without_version"} else "original-folder"})
                 self.assertEqual(body["spec"], {k: v for k, v in original.items() if k not in {"uid", "version", "id"}})
                 self.assertEqual(body["metadata"].get("resourceVersion"), None if label in {"create", "update_without_version"} else "rv-1")
                 self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)

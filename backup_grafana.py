@@ -18,14 +18,13 @@ TimeAudit — Grafana 仪表盘自动备份
     --no-git           只导出文件，不碰 git
     --url   http://127.0.0.1:43000     Grafana 地址
     --source sqlite     默认；只读本机 grafana.db，不需要无人值守凭据
-    --source api        远程/手动 API 模式；认证从本机私密环境注入
-    GRAFANA_USER / GRAFANA_PASSWORD                     仅 API 模式使用
+    --source api        API 模式；本机默认由密码中心直接交付账号
+    GRAFANA_USER / GRAFANA_PASSWORD                     兼容已有私密进程环境
     --keep-db 14       grafana.db 二进制备份保留份数(默认 14)
 
 恢复方法见《快速部署.md》"Grafana 仪表盘备份与恢复"一节。
 """
 import argparse
-import base64
 import contextlib
 import datetime
 import glob
@@ -41,6 +40,8 @@ import tempfile
 import time
 import urllib.request
 from urllib.parse import quote, urlsplit
+
+from grafana_auth import authorization_header
 
 from grafana_dashboard_contract import (
     is_v2_dashboard, provisioned_dashboard_uids, validate_dashboard_document,
@@ -929,13 +930,7 @@ def main():
                         before_write=assert_dashboard_worktree_clean,
                     )
                 else:
-                    password = os.environ.get("GRAFANA_PASSWORD")
-                    if not args.user or not password:
-                        log("❌ API 模式需要私密 GRAFANA_USER / GRAFANA_PASSWORD。")
-                        return 2
-                    auth_header = "Basic " + base64.b64encode(
-                        f"{args.user}:{password}".encode()
-                    ).decode()
+                    auth_header = authorization_header(args.url, args.user)
                     export_dashboards(
                         args.url,
                         auth_header,

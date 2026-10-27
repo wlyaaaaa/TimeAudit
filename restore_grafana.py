@@ -9,7 +9,7 @@ TimeAudit — Grafana 仪表盘恢复
     python E:\\TimeAudit\\restore_grafana.py            # 把备份里的所有仪表盘导入(覆盖同 uid)
     python E:\\TimeAudit\\restore_grafana.py --dry-run  # 只看会导入哪些，不实际写入
 参数：
-    --url / --user                连接参数；密码只从 GRAFANA_PASSWORD 私密环境变量读取
+    --url / --user                连接参数；本机默认由密码中心直接交付账号
     --file 路径                    只恢复指定的一个 JSON 文件
 
 说明：导入按仪表盘的 uid 匹配，overwrite=true 会覆盖 Grafana 中同 uid 的仪表盘。
@@ -19,13 +19,14 @@ TimeAudit — Grafana 仪表盘恢复
       方法见《快速部署.md》。
 """
 import argparse
-import base64
 import json
 import os
 import sys
 import urllib.request
 import urllib.error
 from urllib.parse import quote
+
+from grafana_auth import authorization_header
 
 from grafana_dashboard_contract import (
     DashboardContractError,
@@ -112,6 +113,7 @@ def restore_v2_dashboard(base_url, auth_header, dashboard):
             raise RuntimeError(f"dashboard UID readback failed for {uid}")
         if "resourceVersion" in old_metadata:
             metadata["resourceVersion"] = old_metadata["resourceVersion"]
+        metadata["annotations"]["grafana.app/folder"] = old_metadata.get("annotations", {}).get("grafana.app/folder", "")
     body = {"apiVersion": "dashboard.grafana.app/v2", "kind": "Dashboard",
             "metadata": metadata,
             "spec": {key: value for key, value in dashboard.items() if key not in {"uid", "version", "id"}}}
@@ -166,13 +168,11 @@ def main(argv=None):
         log(f"完成：成功 {len(documents)}，失败 0。")
         return 0
 
-    password = os.environ.get("GRAFANA_PASSWORD")
-    if not args.user or not password:
-        log("GRAFANA_USER / GRAFANA_PASSWORD 未在私密运行环境中配置。")
+    try:
+        auth_header = authorization_header(args.url, args.user)
+    except RuntimeError as exc:
+        log(str(exc))
         return 2
-    auth_header = "Basic " + base64.b64encode(
-        f"{args.user}:{password}".encode()
-    ).decode()
     try:
         validate_recovery_datasource(args.url, auth_header)
         log(f"已验证恢复数据源 UID/type: {RECOVERY_DATASOURCE_UID}/postgres")
