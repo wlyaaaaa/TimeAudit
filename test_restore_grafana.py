@@ -124,7 +124,8 @@ class GrafanaRestoreTests(unittest.TestCase):
                 path = write_dashboard(directory, v2=True)
                 original = json.loads(path.read_text(encoding="utf-8"))
                 api_get = mock.Mock(side_effect=[
-                    {"uid": RECOVERY_DATASOURCE_UID, "type": "postgres"}, existing, readback])
+                    # Grafana 12+ reports the PostgreSQL plugin id instead of "postgres".
+                    {"uid": RECOVERY_DATASOURCE_UID, "type": "grafana-postgresql-datasource"}, existing, readback])
                 api_post = mock.Mock(side_effect=[response])
                 with mock.patch.object(restore, "log") as log:
                     self.assertEqual(self.run_restore(path, api_get, api_post), result)

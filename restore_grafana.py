@@ -30,6 +30,7 @@ from grafana_auth import authorization_header
 
 from grafana_dashboard_contract import (
     DashboardContractError,
+    POSTGRES_DATASOURCE_TYPES,
     RECOVERY_DATASOURCE_UID,
     discover_dashboard_files,
     is_v2_dashboard,
@@ -76,7 +77,7 @@ def validate_recovery_datasource(base_url, auth_header):
     if (
         not isinstance(datasource, dict)
         or datasource.get("uid") != RECOVERY_DATASOURCE_UID
-        or datasource.get("type") != "postgres"
+        or datasource.get("type") not in POSTGRES_DATASOURCE_TYPES
     ):
         raise RuntimeError(
             "recovery datasource UID/type does not match the dashboard contract"
