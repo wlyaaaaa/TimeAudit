@@ -208,6 +208,18 @@ def test_command_failure_keeps_stage_exit_and_safe_stderr(tmp_path, capsys):
     assert not any(value in receipt["error_summary"] for value in ("secret-value", "user:pass", "private success output"))
 
 
+@pytest.mark.parametrize("failures,detail,recovered", [(1,"",True),(3,"",False),(1,"context deadline exceeded",True),(1,"No such object",False)])
+def test_inspect_retries_only_bounded_transient_failures(failures, detail, recovered):
+    failure = subprocess.TimeoutExpired([], 30) if not detail else subprocess.CompletedProcess([], 1, b"", detail.encode())
+    success = subprocess.CompletedProcess([], 0, ("sha256:" + "a" * 64).encode(), b"")
+    with patch.object(backup,"docker_path",return_value="docker"), patch.object(backup.subprocess,"run",side_effect=[failure]*failures+[success]) as run, patch.object(backup.time,"sleep"):
+        if recovered: assert backup.image_for("fixture") == "sha256:" + "a" * 64
+        else:
+            with pytest.raises(backup.BackupCommandError): backup.image_for("fixture")
+    assert run.call_count == failures + int(recovered)
+    assert all(call.kwargs["timeout"] == 30 for call in run.call_args_list)
+
+
 def test_timeout_keeps_command_stage_and_stderr():
     with patch.object(backup.subprocess, "run", side_effect=subprocess.TimeoutExpired([], 30, stderr=b"daemon unavailable")):
         with pytest.raises(backup.BackupCommandError) as caught:
