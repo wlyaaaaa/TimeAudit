@@ -17,12 +17,42 @@ def row(source, start, end, process="Example.exe", key=1):
 
 
 class ActivityTests(unittest.TestCase):
+    def test_query_failures_keep_diagnostics_without_success_output(self):
+        cases = [(3, 'ERROR: 55P03: canceling statement due to lock timeout\nDETAIL: private-detail\nLINE 1: private-sql', 'private-stdout', 'lock_wait'),
+                 (2, 'psql: FATAL: 53300: too many clients already', '', 'connection'),
+                 (1, 'Error response from daemon: container stopped', '', 'docker_exec'),
+                 (0, '', 'private-row-not-json', 'serialization')]
+        for code, stderr, stdout, stage in cases:
+            with self.subTest(stage=stage), patch.object(reader.shutil, 'which', return_value='docker'), \
+                 patch.object(reader.subprocess, 'run', return_value=reader.subprocess.CompletedProcess(
+                     [], code, stdout, stderr + (' password=secret-value' if stderr else ''))):
+                with self.assertRaises(reader.ActivityQueryError) as caught:
+                    reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
+            error = caught.exception
+            self.assertEqual(str(error), 'query_failed')
+            self.assertEqual(error.diagnostic['stage'], stage)
+            self.assertNotIn('secret-value', json.dumps(error.diagnostic))
+            self.assertNotIn('private-row-not-json', json.dumps(error.diagnostic))
+            self.assertFalse(any(x in json.dumps(error.diagnostic) for x in ('private-detail', 'private-sql', 'private-stdout')))
+            if stage == 'lock_wait':
+                self.assertEqual(error.diagnostic['sqlstate'], '55P03')
+                self.assertEqual(error.diagnostic['exit_code'], 3)
+
+    def test_query_diagnostic_survives_cli_error_output(self):
+        error = reader.ActivityQueryError('query_failed', 'lock_wait', RuntimeError('lock timeout'))
+        with patch.object(reader, 'read_activity', side_effect=error), \
+             contextlib.redirect_stdout(io.StringIO()) as output:
+            code = reader.main(['--after', '2026-09-01T00:00:00Z', '--until', '2026-09-02T00:00:00Z'])
+        self.assertEqual(code, 1)
+        self.assertEqual(json.loads(output.getvalue())['diagnostic'], error.diagnostic)
+
     def test_query_distinguishes_docker_exec_timeout_from_sql_timeout(self):
         with patch.object(reader.shutil, "which", return_value="docker"), \
              patch.object(reader.subprocess, "run") as run:
             run.side_effect = reader.subprocess.TimeoutExpired("docker", 25)
-            with self.assertRaisesRegex(RuntimeError, "^docker_unavailable$"):
+            with self.assertRaisesRegex(RuntimeError, "^docker_unavailable$") as timed_out:
                 reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
+            self.assertEqual(timed_out.exception.diagnostic['exception_type'], 'TimeoutExpired')
             run.side_effect = None
             run.return_value = reader.subprocess.CompletedProcess(
                 [], 1, "", "ERROR: canceling statement due to statement timeout")

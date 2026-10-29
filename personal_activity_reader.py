@@ -12,12 +12,14 @@ import datetime as dt
 import importlib.util
 import json
 from pathlib import Path
+import re
 import shutil
 import subprocess
 import sys
 import time
 
 from timeaudit_diagnostic_summary import parse_utc, format_utc
+from timeaudit_backup import error_summary
 
 UTC = dt.timezone.utc
 SCHEMA = "timeaudit.personal-activity.v1"
@@ -64,28 +66,55 @@ SELECT json_build_object(
 """
 
 
+class ActivityQueryError(RuntimeError):
+    def __init__(self, reason, stage, exc, *, message=None, **details):
+        super().__init__(reason)
+        self.diagnostic = {"stage": stage, "exception_type": type(exc).__name__,
+                           "message": error_summary(message if message is not None else exc), **details}
+
+
 def query(sql, after, until):
     docker = shutil.which("docker.exe") or shutil.which("docker")
     if not docker:
-        raise RuntimeError("docker_unavailable")
+        raise ActivityQueryError("docker_unavailable", "docker_exec", FileNotFoundError("Docker executable not found"))
+    # Allow short schema-lock contention inside the unchanged 20-second SQL budget.
     command = [docker, "exec", "-i", "-e",
-               "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=20000 -c lock_timeout=1000",
+               "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=20000 -c lock_timeout=5000",
                "audit-postgres", "psql", "-X", "-U", "leyang", "-d", "time_audit",
-               "-At", "-v", "ON_ERROR_STOP=1", "-v", f"after_utc={format_utc(after)}",
+               "-At", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose", "-v", "SHOW_CONTEXT=never",
+               "-v", f"after_utc={format_utc(after)}",
                "-v", f"until_utc={format_utc(until)}"]
     try:
         result = subprocess.run(command, input=sql, capture_output=True, text=True,
                                 encoding="utf-8", timeout=25,
                                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-    except subprocess.TimeoutExpired:
-        raise RuntimeError("docker_unavailable") from None
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        message = f"Docker exec exceeded {exc.timeout}s" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
+        raise ActivityQueryError("docker_unavailable", "docker_exec", exc, message=message) from None
+    except UnicodeError as exc:
+        raise ActivityQueryError("query_failed", "serialization", exc) from None
     if result.returncode:
-        if "statement timeout" in result.stderr:
-            raise RuntimeError("query_timeout")
-        raise RuntimeError("query_failed")  # Do not echo database content/errors.
+        lines = result.stderr.strip().splitlines()
+        message = next((line for line in lines if re.search(r"(?:ERROR|FATAL|PANIC):", line)),
+                       lines[0] if lines else f"Docker exec/psql exited {result.returncode} without stderr")
+        code = re.search(r"(?:ERROR|FATAL|PANIC):\s+([0-9A-Z]{5}):", message)
+        stage = "lock_wait" if "lock timeout" in message else "execute_sql"
+        if "Error response from daemon" in message or "Cannot connect to the Docker daemon" in message:
+            stage = "docker_exec"
+        if result.returncode == 2 or "FATAL:" in message or "error during connect" in message:
+            stage = "connection"
+        timeout = "statement timeout" in message
+        raise ActivityQueryError("query_timeout" if timeout else "query_failed", stage,
+            subprocess.CalledProcessError(result.returncode, command), message=message,
+            sqlstate=code.group(1) if code else None, exit_code=result.returncode,
+            after_utc=format_utc(after), until_utc=format_utc(until),
+            query_kind="retention_bounds" if sql == RANGE_SQL else "activity") from None
     if len(result.stdout.encode("utf-8")) > 32 * 1024 * 1024:
         raise RuntimeError("query_output_too_large")
-    return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    try:
+        return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+    except ValueError as exc:
+        raise ActivityQueryError("query_failed", "serialization", exc) from None
 
 
 def merge(intervals):
@@ -550,10 +579,12 @@ def main(argv=None):
             print(payload)
         return 0
     except (RuntimeError, ValueError, OSError) as exc:
-        # No subprocess stderr, private paths or raw database rows on failures.
+        # Diagnostics contain bounded stderr, never successful output or raw rows.
         reason = str(exc) if isinstance(exc, RuntimeError) else type(exc).__name__
         failure = {"schema": SUMMARY_SCHEMA if args.summary else SCHEMA,
                    "status": "error", "reason": reason}
+        if isinstance(exc, ActivityQueryError):
+            failure["diagnostic"] = exc.diagnostic
         if isinstance(exc, PersonalDataAccessBlocked) and isinstance(exc.decision.get("diagnostic"), dict):
             failure["diagnostic"] = exc.decision["diagnostic"]
         print(json.dumps(failure))
