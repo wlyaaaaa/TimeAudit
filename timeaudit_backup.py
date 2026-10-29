@@ -78,7 +78,17 @@ def docker_path():
 def image_for(container):
     if not IDENTIFIER.fullmatch(container):
         raise ValueError("invalid_container")
-    image = command([docker_path(), "inspect", "--format", "{{.Image}}", container], timeout=5).decode("ascii").strip()
+    args = [docker_path(), "inspect", "--format", "{{.Image}}", container]
+    for attempt in range(3):
+        try:
+            image = command(args, timeout=30).decode("ascii").strip()
+        except BackupCommandError as exc:
+            transient = str(exc) == "backup_command_timed_out" or str(exc) == "backup_command_failed" and re.search(r"context deadline exceeded|temporarily unavailable|connection reset|i/o timeout", exc.detail, re.I)
+            if not transient or attempt == 2:
+                raise
+            time.sleep(2**attempt)
+        else:
+            break
     if not re.fullmatch(r"sha256:[a-f0-9]{64}", image):
         raise RuntimeError("container_image_identity_invalid")
     return image
