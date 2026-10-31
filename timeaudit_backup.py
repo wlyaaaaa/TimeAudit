@@ -271,7 +271,7 @@ def _completed_manifest_matches(path: Path):
         return False
 
 
-def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", retention_days=14):
+def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", retention_days=7):
     if not all(IDENTIFIER.fullmatch(v) for v in (container, db_user, db_name)) or not 1 <= retention_days <= 3650:
         raise ValueError("invalid_backup_parameters")
     with failure_stage("backup_directory"):
@@ -347,7 +347,7 @@ def main(argv=None):
     parser.add_argument("--container", default="audit-postgres")
     parser.add_argument("--db-user", default="leyang")
     parser.add_argument("--db-name", default="time_audit")
-    parser.add_argument("--retention-days", type=int, default=14)
+    parser.add_argument("--retention-days", type=int, default=7)
     parser.add_argument("--record", action="store_true")
     args = parser.parse_args(argv)
     try:

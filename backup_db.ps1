@@ -1,7 +1,7 @@
 ﻿#requires -Version 5.1
 # Atomic export and verification are owned by timeaudit_backup.py.
 param(
-    [ValidateRange(1,3650)][int]$RetentionDays=14,
+    [ValidateRange(1,3650)][int]$RetentionDays=7,
     [string]$BackupDir='G:\80_Backup\TimeAudit\postgresql',
     [string]$Container='audit-postgres',
     [string]$DbUser='leyang',
