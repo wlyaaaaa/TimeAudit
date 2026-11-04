@@ -123,10 +123,14 @@ WriteAhkHeartbeat() {
 }
 
 WriteAhkHealth() {
-    global tracker, healthPath, captureErrors, captureFailing, spool
+    global tracker, healthPath, captureErrors, captureFailing, spool, isLocked, isScreenOff
     status := tracker.pending.Length || tracker.overflowStart != "" || captureFailing ? "degraded" : "healthy"
+    ; 驾驶舱通知读这三项判断人在不在电脑前，见 PCConfig docs/runtime/cockpit-notify.md
     payload := '{"schema":"timeaudit.ahk-health.v1","state":"' . status
-        . '","pending_events":' . tracker.pending.Length
+        . '","idle_physical_ms":' . A_TimeIdlePhysical
+        . ',"locked":' . (isLocked ? "true" : "false")
+        . ',"screen_off":' . (isScreenOff ? "true" : "false")
+        . ',"pending_events":' . tracker.pending.Length
         . ',"pending_chars":' . tracker.pendingChars
         . ',"write_failures":' . tracker.writeFailures
         . ',"overflow_events":' . tracker.overflowEvents
