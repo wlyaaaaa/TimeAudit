@@ -51,7 +51,7 @@ def format_utc(value: dt.datetime) -> str:
 def build_aggregate_sql() -> str:
     """Return the single aggregate-only SQL statement used by the provider."""
     return r"""
-WITH bounds AS (
+WITH bounds AS NOT MATERIALIZED (
   SELECT :'after_utc'::timestamptz AS t_from,
          :'until_utc'::timestamptz AS t_to
 ),
@@ -190,13 +190,13 @@ state_clip AS MATERIALIZED (
     END AS state,
     GREATEST(a.start_time, b.t_from) AS s,
     LEAST(
-      a.start_time + (a.duration_seconds || ' seconds')::interval,
+      a.start_time + a.duration_seconds * INTERVAL '1 second',
       b.t_to
     ) AS e
   FROM public.app_usage_logs a, bounds b
   WHERE a.duration_seconds > 0
     AND a.start_time < b.t_to
-    AND a.start_time + (a.duration_seconds || ' seconds')::interval > b.t_from
+    AND a.start_time + a.duration_seconds * INTERVAL '1 second' > b.t_from
 ),
 state_with_previous AS (
   SELECT state, s, e,

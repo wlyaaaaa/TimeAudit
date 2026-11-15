@@ -716,6 +716,34 @@ class HardwareForegroundRefreshTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual("process-222", app_name)
 
 
+class DatabasePoolRecoveryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_failed_pool_cleanup_is_bounded_and_next_pool_can_close(self):
+        close_pool = _extract_function(_module_tree(), "_close_database_pool")
+        close_pool.__globals__["DB_CLOSE_TIMEOUT_SEC"] = 0.01
+
+        class Pool:
+            def __init__(self, stuck):
+                self.stuck = stuck
+                self.terminated = False
+                self.closed = False
+
+            async def close(self):
+                if self.stuck:
+                    await asyncio.Event().wait()
+                self.closed = True
+
+            def terminate(self):
+                self.terminated = True
+
+        failed, recovered = Pool(True), Pool(False)
+        await asyncio.wait_for(close_pool(failed), timeout=1)
+        await close_pool(recovered)
+        self.assertTrue(failed.terminated)
+        self.assertFalse(failed.closed)
+        self.assertTrue(recovered.closed)
+        self.assertFalse(recovered.terminated)
+
+
 class CollectorCadenceWiringTest(unittest.TestCase):
     def setUp(self):
         self.tree = _module_tree()
