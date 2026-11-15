@@ -108,6 +108,7 @@ function Test-DatabaseQuery {
     }
     try {
         $probe = Start-Process -FilePath $pyConsole -ArgumentList @('-B', $dbProbeScript) -WindowStyle Hidden -PassThru
+        try { $probe.PriorityClass = [Diagnostics.ProcessPriorityClass]::AboveNormal } catch { }
         if (-not $probe.WaitForExit(8000)) {
             try { $probe.Kill() } catch { }
             return $false
