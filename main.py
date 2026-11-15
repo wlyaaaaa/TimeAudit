@@ -549,6 +549,10 @@ async def _register_initial_processes(lifecycle_worker):
 
 
 async def _run_collector():
+    try:
+        psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
+    except (psutil.Error, OSError) as exc:
+        print(f"[主控] AboveNormal 优先级设置失败: {exc!r}")
     # 写入自身真实 PID 到 time_audit.pid，供外部运维/状态检查脚本读取当前采集进程号(单例由内核互斥体
     # 保证唯一，此文件仅作信息记录)。此前该文件无人维护、内容长期是过期 PID；写失败不影响采集。
     try:
