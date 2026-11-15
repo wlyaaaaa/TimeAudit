@@ -529,6 +529,25 @@ async def _close_database_pool(pool):
             pass
 
 
+async def _register_initial_processes(lifecycle_worker):
+    """Backfill the startup snapshot without gating the hardware cadence."""
+    pids = await asyncio.to_thread(psutil.pids)
+    print(f"[主控] 后台补登记 {len(pids)} 个进程；硬件采集不等待登记完成。")
+    for pid in pids:
+        while True:
+            try:
+                if lifecycle_worker.pool is None:
+                    await asyncio.sleep(1.0)
+                    continue
+                async with lifecycle_worker.pool.acquire() as conn:
+                    await lifecycle_worker.register_live_pid(conn, pid)
+                break
+            except Exception as exc:
+                print(f"[启动登记] PID {pid} 暂时失败，稍后重试: {exc}")
+                await asyncio.sleep(1.0)
+    print(f"[主控] 初次活体映射扫描完毕，共计登记了 {len(lifecycle_worker.shared_pid_key_map)} 个存活进程。")
+
+
 async def _run_collector():
     # 写入自身真实 PID 到 time_audit.pid，供外部运维/状态检查脚本读取当前采集进程号(单例由内核互斥体
     # 保证唯一，此文件仅作信息记录)。此前该文件无人维护、内容长期是过期 PID；写失败不影响采集。
@@ -577,15 +596,6 @@ async def _run_collector():
     
     lifecycle_worker.start_kernel_listener(pool)
     
-    print("[主控] 正在同步系统当前活体运行映像...")
-    async with pool.acquire() as conn:
-        for proc in psutil.process_iter(['pid']):
-            try: 
-                await lifecycle_worker.register_live_pid(conn, proc.info['pid'])
-            except Exception: 
-                continue
-    print(f"[主控] 初次活体映射扫描完毕，共计登记了 {len(global_pid_key_map)} 个存活进程。")
-
     # 冷启动闭合上次关机遗留的幽灵前台会话(end_timestamp 永久 NULL)。
     await cleanup_orphan_context_sessions(pool)
 
@@ -650,6 +660,9 @@ async def _run_collector():
         warmup_retry_deadline_wall = 0.0
         warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
 
+    initial_registration_task = asyncio.create_task(
+        _register_initial_processes(lifecycle_worker)
+    )
     try:
         while True:
             # Timers may wake one clock-resolution early. Never consume a
@@ -947,6 +960,8 @@ async def _run_collector():
     except asyncio.CancelledError:
         print("[主控] 捕获终止信号，停机...")
     finally:
+        initial_registration_task.cancel()
+        await asyncio.gather(initial_registration_task, return_exceptions=True)
         await _cancel_and_reap_activity_task(activity_task)
         await _cancel_and_reap_maintenance_task(maintenance_task)
         activity_worker.terminate()

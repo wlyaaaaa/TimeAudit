@@ -678,6 +678,25 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
 
 
 class HardwareForegroundRefreshTest(unittest.IsolatedAsyncioTestCase):
+    async def test_blocked_startup_identity_lookup_keeps_event_loop_responsive(self):
+        from unittest.mock import patch
+        from lifecycle_worker import ProcessLifecycleWorker
+        entered, release = threading.Event(), threading.Event()
+        def blocked_identity(_pid):
+            entered.set()
+            release.wait(2.0)
+            raise OSError("process disappeared")
+        worker = ProcessLifecycleWorker({})
+        with patch("lifecycle_worker.psutil.Process", side_effect=blocked_identity):
+            task = asyncio.create_task(worker.register_live_pid(None, 123))
+            try:
+                self.assertTrue(await asyncio.to_thread(entered.wait, 1.0))
+                self.assertFalse(task.done())
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            finally:
+                release.set()
+
     async def test_delayed_context_poll_does_not_freeze_hardware_on_old_pid(self):
         sample_identity = _extract_function(
             _module_tree(),
