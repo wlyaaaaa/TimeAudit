@@ -28,7 +28,7 @@ if exist "%DOCKER_DESKTOP%" (
 
 set /a DOCKER_WAIT_REMAINING=%DOCKER_WAIT_SECONDS%
 :WAIT_DOCKER
-docker info >nul 2>nul
+docker version --format "{{.Server.Version}}" >nul 2>nul
 if %errorlevel% neq 0 (
     if !DOCKER_WAIT_REMAINING! LEQ 0 (
         echo [-] Docker daemon 在 %DOCKER_WAIT_SECONDS% 秒内未就绪，放弃启动容器。

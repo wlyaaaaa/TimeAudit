@@ -66,6 +66,10 @@ Shared health includes Grafana, so collectors alone cannot make the service
 healthy. Public HTTPS reachability is a separate tunnel/publication check.
 Recovery does not reconstruct telemetry that was never collected.
 
+Docker readiness uses `version --format {{.Server.Version}}`. `docker info`
+enumerates every CLI plugin even with a server-only format; slow plugin metadata
+must not be reported as a Docker API timeout or block dependency recovery.
+
 The activity reader reports a Docker subprocess that exceeds its 25-second
 budget as `docker_unavailable` and does not retry smaller time windows. Only a
 PostgreSQL statement timeout (`query_timeout`) or oversized query output can
