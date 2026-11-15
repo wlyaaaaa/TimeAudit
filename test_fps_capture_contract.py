@@ -314,7 +314,7 @@ class FpsCaptureContractTest(unittest.TestCase):
             hardware_worker.HardwareTelemetryWorker._rtss_entry_is_desktop_renderer(other)
         )
 
-    def test_single_ddl_helper_is_called_for_initial_and_reconnect_pools(self):
+    def test_schema_bootstrap_runs_once_without_ddl_on_reconnect(self):
         source = (ROOT / "main.py").read_text(encoding="utf-8-sig")
         schema = (ROOT / "schema.sql").read_text(encoding="utf-8-sig")
         tree = ast.parse(source)
@@ -332,7 +332,7 @@ class FpsCaptureContractTest(unittest.TestCase):
         self.assertIn("ADD COLUMN IF NOT EXISTS fps_capture_status text", helper_source)
         self.assertIn("ADD COLUMN IF NOT EXISTS fps_capture_detail text", helper_source)
         self.assertEqual(1, source.count("ADD COLUMN IF NOT EXISTS fps_capture_status text"))
-        self.assertEqual(2, sum(
+        self.assertEqual(1, sum(
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "ensure_fps_capture_schema"

@@ -133,6 +133,8 @@ ACTIVITY_INTERVAL_SEC = 3.0
 # cannot make recovery look like a live-but-stuck collector for the default
 # connection timeout.
 DB_CONNECT_TIMEOUT_SEC = 5.0
+DB_CLOSE_TIMEOUT_SEC = 5.0
+DB_RETRY_INTERVAL_SEC = 1.0
 # Partition warmup/retention is maintenance work, not part of the 1 Hz fast
 # lane.  A transient DDL/DB failure must therefore retry on a bounded backoff
 # instead of re-entering both maintenance paths on every telemetry slot.
@@ -514,6 +516,19 @@ async def cleanup_orphan_context_sessions(pool):
     except Exception as e:
         print(f"[启动清理] 幽灵会话闭合跳过: {e}")
 
+async def _close_database_pool(pool):
+    # Failed schema bootstrap must not leave recovery waiting on borrowed connections.
+    if pool is None:
+        return
+    try:
+        await asyncio.wait_for(pool.close(), timeout=DB_CLOSE_TIMEOUT_SEC)
+    except Exception:
+        try:
+            pool.terminate()
+        except Exception:
+            pass
+
+
 async def _run_collector():
     # 写入自身真实 PID 到 time_audit.pid，供外部运维/状态检查脚本读取当前采集进程号(单例由内核互斥体
     # 保证唯一，此文件仅作信息记录)。此前该文件无人维护、内容长期是过期 PID；写失败不影响采集。
@@ -530,25 +545,23 @@ async def _run_collector():
     pool = None
     while pool is None:
         candidate_pool = None
+        connection_phase = "connect"
         try:
             candidate_pool = await asyncpg.create_pool(
                 dsn=DB_DSN,
-                min_size=2,
+                min_size=1,
                 max_size=12,
                 timeout=DB_CONNECT_TIMEOUT_SEC,
                 command_timeout=5.0,
             )
+            connection_phase = "fps_schema"
             await ensure_fps_capture_schema(candidate_pool)
             pool = candidate_pool
             print("[连接池] 成功创建数据库连接池！")
         except Exception as e:
-            if candidate_pool is not None:
-                try:
-                    await candidate_pool.close()
-                except Exception:
-                    pass
-            print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 等待数仓] {e}，5秒后重试...")
-            await asyncio.sleep(5)
+            await _close_database_pool(candidate_pool)
+            print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 等待数仓] phase={connection_phase} {e!r}，{DB_RETRY_INTERVAL_SEC:g}秒后重试...")
+            await asyncio.sleep(DB_RETRY_INTERVAL_SEC)
 
     warmup_last_success_wall = 0.0
     warmup_retry_deadline_wall = 0.0
@@ -730,32 +743,30 @@ async def _run_collector():
 
             if pool is None:
                 candidate_pool = None
+                connection_phase = "connect"
                 try:
                     candidate_pool = await asyncpg.create_pool(
                         dsn=DB_DSN,
-                        min_size=2,
+                        min_size=1,
                         max_size=12,
                         timeout=DB_CONNECT_TIMEOUT_SEC,
                         command_timeout=5.0,
                     )
-                    await ensure_fps_capture_schema(candidate_pool)
+                    # Startup already installed these columns. Repeating ALTER TABLE
+                    # here would gate recovery on an exclusive lock behind readers.
                     pool = candidate_pool
                     if hasattr(lifecycle_worker, 'update_pool'):
                         lifecycle_worker.update_pool(pool)
                     print("[连接池] 自愈引擎：重新构建并穿透数据库连接池成功！")
                 except Exception as reconnect_err:
-                    if candidate_pool is not None:
-                        try:
-                            await candidate_pool.close()
-                        except Exception:
-                            pass
-                    print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 自愈重试] 重建连接池失败: {reconnect_err}，等待下次循环...")
+                    await _close_database_pool(candidate_pool)
+                    print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 自愈重试] 重建连接池失败: phase={connection_phase} {reconnect_err!r}，等待下次循环...")
                     wall_anchor, detected_after_reconnect = _observe_sleep_resume(
                         wall_anchor,
                         _handle_sleep_resume,
                     )
                     resume_detected_this_slot |= detected_after_reconnect
-                    await asyncio.sleep(5)
+                    await asyncio.sleep(DB_RETRY_INTERVAL_SEC)
                     continue
 
             context_poll_timestamp = datetime.datetime.now(datetime.timezone.utc)
@@ -769,6 +780,7 @@ async def _run_collector():
             if context_poll_healthy:
                 context_last_success_at = loop.time()
 
+            database_phase = "hardware_collect"
             try:
                 (
                     activity_task,
@@ -829,6 +841,7 @@ async def _run_collector():
                     )
                 hardware_succeeded = False
                 try:
+                    database_phase = "hardware_write"
                     await hardware_write_task
                     hardware_succeeded = True
                     wall_anchor, detected_after_hardware = _observe_sleep_resume(
@@ -892,9 +905,10 @@ async def _run_collector():
                     write_telemetry_heartbeat()
 
                 if activity_error is not None:
+                    database_phase = "activity_write"
                     raise activity_error
             except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as db_err:
-                print(f"[{datetime.datetime.now().strftime('%X')} 🚨 连接断开] 检测到连接异常: {db_err}")
+                print(f"[{datetime.datetime.now().strftime('%X')} 🚨 连接断开] 检测到连接异常: phase={database_phase} {db_err!r}")
                 await _cancel_and_reap_activity_task(activity_task)
                 activity_task = None
                 await _cancel_and_reap_maintenance_task(maintenance_task)
@@ -903,16 +917,8 @@ async def _run_collector():
                 warmup_retry_deadline_wall = now_wall + WARMUP_RETRY_INITIAL_SEC
                 warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
                 if pool:
-                    # 【重连健壮性修复】PG 重启/掉线时连接已死，await pool.close() 会等待“未释放连接”
-                    # 长达 60s+(实测刷屏 "Pool.close() is taking over 60 seconds")，把整个采集主循环卡死、
-                    # 停止写库。改为 5s 超时优雅关闭，超时即 terminate() 强制拔线，确保秒级重连自愈。
-                    try:
-                        await asyncio.wait_for(pool.close(), timeout=5.0)
-                    except Exception:
-                        try:
-                            pool.terminate()
-                        except Exception:
-                            pass
+                    # Bound cleanup even when the old pool still has borrowed connections.
+                    await _close_database_pool(pool)
                     pool = None
                     if hasattr(lifecycle_worker, 'update_pool'):
                         lifecycle_worker.update_pool(None)
@@ -946,14 +952,7 @@ async def _run_collector():
         activity_worker.terminate()
         lifecycle_worker.terminate()
         hardware_worker.terminate()
-        if pool:
-            try:
-                await asyncio.wait_for(pool.close(), timeout=5.0)
-            except Exception:
-                try:
-                    pool.terminate()
-                except Exception:
-                    pass
+        await _close_database_pool(pool)
         print("[主控] 遥测管线释放，闭舱。")
 
 
