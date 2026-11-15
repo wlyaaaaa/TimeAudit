@@ -342,7 +342,7 @@ class ProcessLifecycleWorker:
                 "service_name": None, "is_elevated": -1, "signature_status": 0
             }
 
-    async def register_live_pid(self, conn, os_pid):
+    def _read_live_pid_identity_sync(self, os_pid):
         try:
             proc = psutil.Process(os_pid)
             name = proc.name()
@@ -355,6 +355,13 @@ class ProcessLifecycleWorker:
             create_time = proc.create_time()
         except Exception:
             create_time = None
+        return name, exe, create_time
+
+    async def register_live_pid(self, conn, os_pid):
+        identity = await asyncio.to_thread(self._read_live_pid_identity_sync, os_pid)
+        if identity is None:
+            return None
+        name, exe, create_time = identity
         instance_key = self._instance_key(os_pid, create_time)
         if instance_key in self.shared_pid_key_map:
             return self.shared_pid_key_map[instance_key]
