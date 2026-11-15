@@ -43,7 +43,7 @@ function Stop-Process {
 function Test-GrafanaEndpoint { $script:grafanaHealthy }
 function Invoke-DockerBounded([string]$Arguments, [int]$TimeoutSeconds=8) {
     $script:commands.Add($Arguments)
-    if ($Arguments.StartsWith('info')) { return @{Success=$script:engine; Output='version'; TimedOut=$script:engineTimeout} }
+    if ($Arguments -eq 'version --format {{.Server.Version}}') { return @{Success=$script:engine; Output='version'; TimedOut=$script:engineTimeout} }
     if ($Arguments -eq 'desktop status --format json') {
         return @{Success=$script:statusSuccess; Output=$script:desktopStatus; TimedOut=$script:statusTimeout}
     }

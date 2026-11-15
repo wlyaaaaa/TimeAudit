@@ -215,7 +215,7 @@ function Restore-StoppedDocker([string]$Status, [long]$NowSeconds = ([DateTimeOf
     Log 'Docker Desktop explicitly stopped for 10 minutes - one bounded official restart'
     $restart = Invoke-DockerBounded 'desktop restart --timeout 110' 120
     if ($restart.Success) { Log 'Docker Desktop restart completed - next cycle verifies dependencies'; return $true }
-    if ((Invoke-DockerBounded 'info --format {{.ServerVersion}}').Success) {
+    if ((Invoke-DockerBounded 'version --format {{.Server.Version}}').Success) {
         Log 'Docker API recovered after unconfirmed Desktop restart - no process termination'
         return $true
     }
@@ -252,7 +252,7 @@ function Restore-StoppedDocker([string]$Status, [long]$NowSeconds = ([DateTimeOf
 
 function Restore-TimeAuditDependencies {
     $probeTimer = [Diagnostics.Stopwatch]::StartNew()
-    $engine = Invoke-DockerBounded 'info --format {{.ServerVersion}}'
+    $engine = Invoke-DockerBounded 'version --format {{.Server.Version}}'
     $probeTimer.Stop()
     if (-not $engine.Success) {
         $desktop = Get-Process -Name 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue
