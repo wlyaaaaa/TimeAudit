@@ -20,7 +20,7 @@ git add .
 set commit_msg=Auto commit: %date% %time%
 
 echo [2/3] Committing with message: "%commit_msg%"
-git commit -m "%commit_msg%"
+git -c eagent.commitSource=automation commit -m "%commit_msg%"
 
 echo [3/3] Pushing to remote repository (Forced)...
 :: 核心改动：使用 -f (强推) 碾压一切非快进式冲突，无脑同步 Claude 分支历史

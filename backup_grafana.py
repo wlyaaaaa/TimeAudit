@@ -886,7 +886,7 @@ def git_commit_and_push(do_push, dashboard_paths):
                 "dashboard allowlist had no staged changes after export; refusing ambiguous commit"
             )
         msg = "chore(grafana): 自动备份仪表盘快照 " + datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
-        git(["commit", "-m", msg, "--", *paths], check=True)
+        git(["-c", "eagent.commitSource=automation", "commit", "-m", msg, "--", *paths], check=True)
         log("已本地提交仪表盘变更。")
 
     # This still runs for a clean worktree, repairing a prior unpushed commit.
