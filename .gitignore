@@ -39,3 +39,4 @@ time_audit_perfect_archive.sql
 *.sqlite3-wal
 *.sqlite3-shm
 clipboard_history/runtime/
+live.local.json

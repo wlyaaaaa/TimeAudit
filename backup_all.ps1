@@ -140,4 +140,6 @@ $runReceipt = [ordered]@{
     exit_code = $exitCode
 }
 Write-RunReceipt $runReceipt
+# Slow exact counts share the existing daily run, independently of backup success.
+& 'E:\Projects\Tools\TimeAudit\.venv\Scripts\python.exe' -B (Join-Path $PSScriptRoot 'timeaudit_diagnostic_summary.py') --live-static --live-output (Join-Path $PSScriptRoot 'docs\live.snapshot.json')
 exit $exitCode

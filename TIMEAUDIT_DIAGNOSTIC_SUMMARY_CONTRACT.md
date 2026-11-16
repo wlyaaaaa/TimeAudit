@@ -48,6 +48,18 @@ command lines, remote addresses, credentials, or machine identifiers. It does
 not call Grafana or PCConfig, write cursors/receipts, publish configuration,
 start or restart Docker/TimeAudit, or mutate the database.
 
+With `--live-output <JSON>` the same producer instead writes the project's small
+website snapshot through `live_project_snapshot.py`; it selects counts, date
+bounds and clipped interval unions, never clipboard payloads. `--live-static`
+refreshes slow exact counts and source size on the existing daily backup run.
+The existing watchdog refreshes live facts every two minutes with a 35-second
+process bound; a failed export retains the old file and its original times.
+Private paths and owner output locations come from ignored `live.local.json`
+(a link to the private companion), or explicit `--live-config <JSON>`.
+No new task or resident collector is installed. The regular diagnostic interface
+above remains read-only and does not write a snapshot without this option.
+Unchanged static values and source size retain the existing snapshot and times.
+
 Missing Docker/PostgreSQL, a timeout, invalid arguments, or invalid/oversized
 query output returns only a bounded `status=unavailable` JSON document and exit
 code 2.
