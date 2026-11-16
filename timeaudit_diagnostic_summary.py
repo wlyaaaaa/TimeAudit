@@ -586,6 +586,9 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--after-utc")
     parser.add_argument("--until-utc")
     parser.add_argument("--hours", type=float)
+    parser.add_argument("--live-output")
+    parser.add_argument("--live-config")
+    parser.add_argument("--live-static", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -593,6 +596,12 @@ def main(argv: list[str] | None = None) -> int:
     try:
         args = parse_args(argv)
         now = dt.datetime.now(UTC)
+        if args.live_static and not args.live_output:
+            raise RuntimeError("argument_invalid")
+        if args.live_static:
+            from live_project_snapshot import export_snapshot
+            export_snapshot(None, None, None, args.live_output, static=True, config_path=args.live_config)
+            return 0
         if args.hours is not None and (args.after_utc or args.until_utc):
             raise RuntimeError("window_argument_conflict")
         if args.hours is not None:
@@ -620,6 +629,11 @@ def main(argv: list[str] | None = None) -> int:
             until_utc=until_utc,
             generated_at_utc=now,
         )
+        if args.live_output:
+            from live_project_snapshot import export_snapshot
+            export_snapshot(dict(aggregate, max_gap_seconds=result["window"]["max_gap_seconds"]),
+                after_utc, until_utc, args.live_output, config_path=args.live_config)
+            return 0
         print(
             json.dumps(
                 result,
@@ -630,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         )
         return 0
-    except (RuntimeError, ValueError) as exc:
+    except (RuntimeError, ValueError, OSError) as exc:
         reason = str(exc)
         allowed = {
             "docker_unavailable",

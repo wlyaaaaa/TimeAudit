@@ -649,6 +649,15 @@ try {
         Invoke-TimeAuditWatchdog
         if(-not (Confirm-WatchdogHealth)){$watchdogExitCode=2}
         try { Write-PowerToday } catch { }  # display-only receipt; never affects recovery or exit code
+        # Reuse this bounded owner for the project's payload-free website result.
+        $liveOutput = Join-Path $PSScriptRoot 'log\live.snapshot.json'
+        if (-not (Test-HeartbeatFresh $liveOutput 120)) {
+            $liveProcess = $null
+            try {
+                $liveProcess = Start-Process -FilePath $pyConsole -ArgumentList @('-B', ('"'+(Join-Path $PSScriptRoot 'timeaudit_diagnostic_summary.py')+'"'), '--hours', '24', '--live-output', ('"'+$liveOutput+'"')) -WindowStyle Hidden -PassThru
+                if (-not $liveProcess.WaitForExit(35000)) { $liveProcess.Kill(); $liveProcess.WaitForExit() }
+            } catch { } finally { if ($liveProcess) { $liveProcess.Dispose() } }
+        }
     } else {
         Log 'watchdog invocation skipped because a live owner holds the recovery mutex'
         # The active owner alone publishes an outcome; do not overwrite it.
