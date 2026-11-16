@@ -100,6 +100,8 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             row = query("SELECT json_build_array((SELECT to_char(min(start_time) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.app_usage_logs),(SELECT to_char(min(timestamp) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.fact_process_context WHERE is_foreground=1));")[0]
             put(dict(earliest=f"活动 {row[0]}；窗口 {row[1]}" if all(row) else None))
         attempt("earliest", earliest)
+        write(config["retained_output"], snapshot)
+        snapshot.update(metrics={}, times={}, scopes={})
         snapshot["size"] = source_size()
         previous = read(output) if Path(output).exists() else {}
         if previous.get("metrics") == snapshot["metrics"] and previous.get("scopes") == snapshot["scopes"] and all(

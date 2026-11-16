@@ -51,7 +51,13 @@ start or restart Docker/TimeAudit, or mutate the database.
 With `--live-output <JSON>` the same producer instead writes the project's small
 website snapshot through `live_project_snapshot.py`; it selects counts, date
 bounds and clipped interval unions, never clipboard payloads. `--live-static`
-refreshes slow exact counts and source size on the existing daily backup run.
+refreshes source size on the existing daily backup run. Its tracked snapshot
+contains only source size; unchanged source retains its bytes and timestamps.
+The same run writes slow exact counts (`hardware`, `lifecycle`, `registry`) and
+the earliest activity/window dates to the configured runtime `retained_output`.
+Both audience contracts read these facts and their measurement times from
+`timeaudit.retained`, with the existing two-day freshness threshold. These exact
+queries stay outside the two-minute refresh's 35-second process bound.
 The existing watchdog refreshes live facts every two minutes with a 35-second
 process bound; a failed export retains the old file and its original times.
 Private paths and owner output locations come from ignored `live.local.json`
@@ -69,6 +75,12 @@ code 2.
 ```powershell
 & .\.venv\Scripts\python.exe -B -m unittest -v test_timeaudit_diagnostic_summary.py
 & .\.venv\Scripts\python.exe -B timeaudit_diagnostic_summary.py
+# After committing source changes, with the private live.local.json available:
+1..2 | ForEach-Object {
+    & .\.venv\Scripts\python.exe -B timeaudit_diagnostic_summary.py --live-static --live-output docs\live.snapshot.json
+    if ($LASTEXITCODE) { throw 'Static export failed' }
+    if (git status --porcelain) { throw 'Static export dirtied the repository' }
+}
 ```
 
 ## Additive quality and combined diagnosis
