@@ -66,7 +66,7 @@ def dashboard_records():
         count = sum(p.get("kind") in {"Panel", "LibraryPanel"} for p in value["elements"].values()) if "elements" in value else panels(value.get("panels", []))
         changed = subprocess.check_output([GIT, "-C", str(ROOT), "log", "-1", "--format=%cI", "--", str(path)], text=True).strip()
         records.append(dict(text=value["title"], uid=value["uid"], panels=count, changed=changed, state_text="已有看板定义"))
-        artifacts.append(dict(at=changed, kind="dashboard", title=value["title"], status="completed", public="same",
+        artifacts.append(dict(at=changed, kind="dashboard", title="看板定义 JSON · "+value["title"], status="completed", public="same",
             open=dict(source="timeaudit.dashboard."+value["uid"], href="https://github.com/wlyaaaaa/TimeAudit/blob/main/"+quote(path.relative_to(ROOT).as_posix()))))
     return records, artifacts
 

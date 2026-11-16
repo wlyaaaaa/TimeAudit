@@ -4,6 +4,17 @@ from live_project_snapshot import daily_records
 import live_project_snapshot as live
 
 
+def test_public_artifact_names_the_json_definition(tmp_path, monkeypatch):
+    folder = tmp_path / 'grafana_dashboards'
+    folder.mkdir()
+    live.write(folder / 'board.json', dict(uid='board', title='合成看板', panels=[]))
+    monkeypatch.setattr(live, 'ROOT', tmp_path)
+    monkeypatch.setattr(live.subprocess, 'check_output', lambda *a, **k: '2026-11-15T10:00:00+08:00')
+    _, artifacts = live.dashboard_records()
+    assert artifacts[0]['title'] == '看板定义 JSON · 合成看板'
+    assert artifacts[0]['open']['href'].endswith('/grafana_dashboards/board.json')
+
+
 def test_daily_records_clip_and_union_overlap_across_beijing_midnight():
     until = dt.datetime.fromisoformat("2026-11-16T02:00:00+08:00")
     rows = [
