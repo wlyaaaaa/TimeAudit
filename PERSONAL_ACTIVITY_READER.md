@@ -12,7 +12,9 @@ python personal_activity_reader.py --after 2026-09-01T00:00:00+08:00 --until 202
 
 示例区间的结束必须已发生。两个时间都必须含时区；区间为左闭右开。可按任意明确区间查询，包含整月，按最多 24 小时分块；单块遇到 PostgreSQL 语句超时（`query_timeout`）或输出过大时二分重试至 1 小时，仍失败则返回错误，不截断为 168 小时或交付伪完整结果。Docker 子进程 25 秒未返回时报告既有的 `docker_unavailable` 并立即停止，不再缩小查询区间重试；这一规则同时适用于摘要入口。每个数据库语句只读、20 秒超时、5 秒锁等待，单块原始输出限制 32 MiB。不要将私有结果写入代码仓库。
 
-查询失败保留原原因码，并附 `diagnostic`：`stage`（`docker_exec`、`connection`、`lock_wait`、`execute_sql`、`serialization`）、`exception_type`、`message`；psql 非零退出还含 SQLSTATE、退出码、查询窗口及查询类别。消息复用备份入口的凭据清理，最多 1200 字符；不回传成功 stdout、原始行或 SQL 上下文。锁等待超过 5 秒仍失败，不将未取得的数据当作空集，也不重启采集器。
+内部传输 `query(sql, after, until, *, timeout=25)` 接受调用方本次剩余秒数，上限 25 秒，预算耗尽时直接失败。数据库语句时限最多为预算的 80% 和原来的 20 秒，连接后按剩余时间重新收紧。锁等待上限保持在 5 秒和初始语句预算以内。容器另为整个 psql 调用计时，到期向 psql 发中断信号，1 秒后仍未结束则强制退出。Windows 端的超时收尾不读子进程管道。
+
+查询失败保留原原因码及 `diagnostic`。Docker 等待超时、执行失败和 psql 非零退出给出 `query_id`（PostgreSQL 的 `application_name`）、`statement_timeout_ms`；psql 非零退出还带 `sqlstate`、退出码、查询窗口及查询类别。语句超时返回的 SQLSTATE `57014` 可核实服务器取消。只有主机超时回执时，可按同一个 `query_id` 在 `pg_stat_activity.application_name` 查该查询的后台连接是否还存在。消息复用备份入口的凭据清理，不回传成功 stdout、原始行或 SQL 上下文。
 
 Python 消费方调用 `read_activity(after_datetime, until_datetime, automation=[])`。入口在各查询及返回前调用现役 `C:\ProgramData\PCConfig\AuthorityHost\tools\personal_data_access.py` 的 `check_access('factor')`，只消费共享资料期；不弹验证、不另签期限，不提供跳过检查开关。`factor` 是旧业务分类名，不创建第二次验证。失败时由所属业务处理原精确原因。`query` 是内部数据库传输函数，业务消费方应使用 `read_activity`。
 

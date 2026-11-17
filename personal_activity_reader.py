@@ -12,11 +12,15 @@ import datetime as dt
 import importlib.util
 import json
 from pathlib import Path
+from queue import Empty, Queue
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
+from threading import Thread
 import time
+import uuid
 
 from timeaudit_diagnostic_summary import parse_utc, format_utc
 from timeaudit_backup import error_summary
@@ -25,6 +29,7 @@ UTC = dt.timezone.utc
 SCHEMA = "timeaudit.personal-activity.v1"
 SUMMARY_SCHEMA = "timeaudit.personal-activity-summary.v1"
 BEIJING = dt.timezone(dt.timedelta(hours=8))
+MAX_QUERY_BYTES = 32 * 1024 * 1024
 STATE_NAMES = {
     "System_CollectionGap": "collection_gap", "System_Sleep": "sleep",
     "System_DisplayOff": "display_off", "System_LockScreen": "lock",
@@ -73,24 +78,83 @@ class ActivityQueryError(RuntimeError):
                            "message": error_summary(message if message is not None else exc), **details}
 
 
-def query(sql, after, until):
+def _query_process(command, sql, deadline, expired):
+    # Files avoid Windows communicate() waiting forever on inherited output pipes.
+    with tempfile.TemporaryFile() as source, tempfile.TemporaryFile() as out, tempfile.TemporaryFile() as err:
+        source.write(sql.encode("utf-8"))
+        source.seek(0)
+        if time.perf_counter() >= deadline:
+            raise expired
+        process = subprocess.Popen(command, stdin=source, stdout=out, stderr=err,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        try:
+            process.wait(timeout=max(0, deadline - time.perf_counter()))
+        except subprocess.TimeoutExpired:
+            process.kill()
+            try:
+                process.wait(timeout=0)
+            except subprocess.TimeoutExpired:
+                pass
+            raise expired from None
+        out.seek(0)
+        err.seek(0)
+        stdout = out.read(MAX_QUERY_BYTES + 1) if process.returncode == 0 else b""
+        if len(stdout) > MAX_QUERY_BYTES:
+            raise RuntimeError("query_output_too_large")
+        return subprocess.CompletedProcess(command, process.returncode,
+                                           stdout.decode("utf-8"), err.read(65536).decode("utf-8"))
+
+
+def _run_query(command, sql, timeout):
+    # Windows process creation can block before Popen returns a killable handle.
+    deadline = time.perf_counter() + timeout
+    outcome = Queue()
+
+    def run():
+        try:
+            outcome.put(_query_process(command, sql, deadline, subprocess.TimeoutExpired(command, timeout)))
+        except Exception as exc:
+            outcome.put(exc)
+
+    Thread(target=run, daemon=True).start()
+    try:
+        result = outcome.get(timeout=max(0, deadline - time.perf_counter()))
+    except Empty:
+        raise subprocess.TimeoutExpired(command, timeout) from None
+    if isinstance(result, Exception):
+        raise result
+    return result
+
+
+def query(sql, after, until, *, timeout=25):
+    timeout = min(25, timeout)
+    if timeout <= 0:
+        raise ActivityQueryError("docker_unavailable", "docker_exec", subprocess.TimeoutExpired("docker", timeout))
     docker = shutil.which("docker.exe") or shutil.which("docker")
     if not docker:
         raise ActivityQueryError("docker_unavailable", "docker_exec", FileNotFoundError("Docker executable not found"))
-    # Allow short schema-lock contention inside the unchanged 20-second SQL budget.
+    statement_ms = max(1, min(20000, int(timeout * 800)))
+    query_id = "timeaudit-reader-" + uuid.uuid4().hex
     command = [docker, "exec", "-i", "-e",
-               "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=20000 -c lock_timeout=5000",
-               "audit-postgres", "psql", "-X", "-U", "leyang", "-d", "time_audit",
+               f"PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout={statement_ms} -c lock_timeout={min(5000, statement_ms)}",
+               "-e", f"PGAPPNAME={query_id}", "audit-postgres",
+               "timeout", "-s", "INT", "-k", "1", str(timeout), "psql", "-X", "-U", "leyang", "-d", "time_audit",
                "-At", "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=verbose", "-v", "SHOW_CONTEXT=never",
                "-v", f"after_utc={format_utc(after)}",
                "-v", f"until_utc={format_utc(until)}"]
     try:
-        result = subprocess.run(command, input=sql, capture_output=True, text=True,
-                                encoding="utf-8", timeout=25,
-                                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        # Recompute after Docker attachment, reserving time for psql to return the error.
+        deadline = time.time() + timeout
+        setup = (
+            "SELECT set_config('statement_timeout', greatest(1, least("
+            f"{statement_ms}, floor(({deadline:.6f} - extract(epoch FROM clock_timestamp())) * 1000)"
+            f" - {min(1000, int(timeout * 100))}))::text, false) AS ta_timeout \\gset\n"
+        )
+        result = _run_query(command, setup + sql, timeout)
     except (subprocess.TimeoutExpired, OSError) as exc:
         message = f"Docker exec exceeded {exc.timeout}s" if isinstance(exc, subprocess.TimeoutExpired) else str(exc)
-        raise ActivityQueryError("docker_unavailable", "docker_exec", exc, message=message) from None
+        raise ActivityQueryError("docker_unavailable", "docker_exec", exc, message=message,
+                                 query_id=query_id, statement_timeout_ms=statement_ms) from None
     except UnicodeError as exc:
         raise ActivityQueryError("query_failed", "serialization", exc) from None
     if result.returncode:
@@ -107,10 +171,9 @@ def query(sql, after, until):
         raise ActivityQueryError("query_timeout" if timeout else "query_failed", stage,
             subprocess.CalledProcessError(result.returncode, command), message=message,
             sqlstate=code.group(1) if code else None, exit_code=result.returncode,
+            query_id=query_id, statement_timeout_ms=statement_ms,
             after_utc=format_utc(after), until_utc=format_utc(until),
             query_kind="retention_bounds" if sql == RANGE_SQL else "activity") from None
-    if len(result.stdout.encode("utf-8")) > 32 * 1024 * 1024:
-        raise RuntimeError("query_output_too_large")
     try:
         return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
     except ValueError as exc:

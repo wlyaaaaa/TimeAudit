@@ -2,6 +2,7 @@ import datetime as dt
 import contextlib
 import io
 import json
+from threading import Event
 import unittest
 from unittest.mock import patch
 
@@ -24,7 +25,7 @@ class ActivityTests(unittest.TestCase):
                  (0, '', 'private-row-not-json', 'serialization')]
         for code, stderr, stdout, stage in cases:
             with self.subTest(stage=stage), patch.object(reader.shutil, 'which', return_value='docker'), \
-                 patch.object(reader.subprocess, 'run', return_value=reader.subprocess.CompletedProcess(
+                 patch.object(reader, '_run_query', return_value=reader.subprocess.CompletedProcess(
                      [], code, stdout, stderr + (' password=secret-value' if stderr else ''))):
                 with self.assertRaises(reader.ActivityQueryError) as caught:
                     reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
@@ -48,7 +49,7 @@ class ActivityTests(unittest.TestCase):
 
     def test_query_distinguishes_docker_exec_timeout_from_sql_timeout(self):
         with patch.object(reader.shutil, "which", return_value="docker"), \
-             patch.object(reader.subprocess, "run") as run:
+             patch.object(reader, "_run_query") as run:
             run.side_effect = reader.subprocess.TimeoutExpired("docker", 25)
             with self.assertRaisesRegex(RuntimeError, "^docker_unavailable$") as timed_out:
                 reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
@@ -58,6 +59,53 @@ class ActivityTests(unittest.TestCase):
                 [], 1, "", "ERROR: canceling statement due to statement timeout")
             with self.assertRaisesRegex(RuntimeError, "^query_timeout$"):
                 reader.query(reader.SQL, BASE, BASE+dt.timedelta(hours=1))
+
+    def test_query_budget_caps_client_server_and_skips_exhausted_budget(self):
+        with patch.object(reader.shutil, 'which', return_value='docker'), \
+             patch.object(reader, '_run_query', return_value=reader.subprocess.CompletedProcess([], 0, '{}', '')) as run:
+            for budget, expected, statement_ms in ((25, 25, 20000), (100, 25, 20000), (0.125, 0.125, 100)):
+                reader.query('SELECT 1', BASE, BASE, timeout=budget)
+                command, sql, actual = run.call_args.args
+                self.assertEqual(actual, expected)
+                self.assertTrue(any(f'statement_timeout={statement_ms}' in x for x in command))
+                self.assertIn('timeout', command)
+                self.assertTrue(any(x.startswith('PGAPPNAME=timeaudit-reader-') for x in command))
+            run.reset_mock()
+            for budget in (0, -1):
+                with self.assertRaises(reader.ActivityQueryError):
+                    reader.query('SELECT 1', BASE, BASE, timeout=budget)
+            run.assert_not_called()
+
+    def test_process_timeout_has_bounded_cleanup_without_output_pipes(self):
+        with patch.object(reader.subprocess, 'Popen') as popen:
+            process = popen.return_value
+            process.wait.side_effect = reader.subprocess.TimeoutExpired('docker', 0.01)
+            with self.assertRaises(reader.subprocess.TimeoutExpired):
+                reader._query_process(['docker'], 'SELECT 1', reader.time.perf_counter() + 1,
+                                      reader.subprocess.TimeoutExpired('docker', 1))
+            process.kill.assert_called_once_with()
+            self.assertEqual(process.wait.call_count, 2)
+            self.assertLessEqual(process.wait.call_args_list[0].kwargs['timeout'], 1)
+            self.assertEqual(process.wait.call_args_list[1].kwargs['timeout'], 0)
+            process.communicate.assert_not_called()
+            for name in ('stdin', 'stdout', 'stderr'):
+                self.assertNotEqual(popen.call_args.kwargs[name], reader.subprocess.PIPE)
+
+    def test_caller_deadline_covers_blocked_process_creation(self):
+        released, finished = Event(), Event()
+
+        def delayed(*args):
+            released.wait(2)
+            finished.set()
+
+        with patch.object(reader, '_query_process', side_effect=delayed):
+            try:
+                with self.assertRaises(reader.subprocess.TimeoutExpired):
+                    reader._run_query(['docker'], 'SELECT 1', 0.1)
+                self.assertFalse(finished.is_set())
+            finally:
+                released.set()
+            self.assertTrue(finished.wait(2))
 
     @patch.object(reader, "check_personal_access")
     def test_docker_exec_timeout_does_not_split_either_reader(self, access):
