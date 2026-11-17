@@ -3,8 +3,12 @@
 ## Owner boundaries and ordinary use
 
 TimeAudit owns collection, time-state semantics, historical aggregates, shared
-health and its database backups. PCConfig owns native memory evidence, current
-machine counters, bounded Windows events and the combined diagnosis. The
+health and its database backups, and also the native memory evidence (memory
+blackbox), freeze capture, current machine counters, bounded Windows events and
+the combined diagnosis. The code for the latter group stays in PCConfig (the
+`E:\PCConfig\tools` entries below and `freeze_capture.py`, `wait_chain.py`,
+`live_kernel_dump.py` in `E:\PCConfig\tools\remote-computer-mcp`); see
+`AGENTS.md` for the full boundary. PCConfig installs the tasks. The
 `timeaudit-diagnostics` skill routes requests and explains evidence; it does not
 become another collector. Network publication, ports and firewall policies are
 outside this change and remain unchanged.

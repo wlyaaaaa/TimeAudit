@@ -1,5 +1,9 @@
 # TimeAudit 项目约定
 
+- **是什么：** 记录和解读这台电脑用过的情况：硬件、进程、窗口使用、游戏帧率、卡顿、用电和剪贴板历史的采集、算法、守护采集器的脚本、备份和算好的结果。
+- **不做什么、归谁：** 机器接线归 PCConfig：路径、端口、计划任务的安装、登记和重建，恢复顺序，实况网站后端，以及按这些记录去动机器（内存守护、桌面急救）。一句话判断：在记录或解读这台电脑过去发生了什么的，归本仓；让电脑和各项目接得上、装得上、恢复得了的，归 PCConfig。
+- **交界处：** 本仓的计划任务由 PCConfig 的安装器装（`Install-TimeAuditRuntimeWatchdog.ps1`、`Install-TimeAuditClipboardHistory.ps1`），任务里跑的脚本放本仓。本仓的数只由本仓算，实况网站要的数由本仓算好交出（如 `log/power-today.json`、`personal_activity_reader.py`），PCConfig 后端只读，缺数在本仓补出口。归本仓管、代码暂在 PCConfig 的：① `E:\PCConfig\tools\remote-computer-mcp` 的 `computer_panels_a.py`、`computer_panels_b.py`、`public_computer_panels.py` 自己查本仓库重算使用时间、应用、卡顿、用电，本仓出口上线后收回本仓，届时删掉后端里的重算；② 卡顿留现场和内存黑匣子不搬：同目录 `freeze_capture.py`、`wait_chain.py`、`live_kernel_dump.py`（跑在实况后端服务里），`E:\PCConfig\tools` 的 `Get-MemoryFreezeEvidence.ps1`、`Invoke-MemoryFreezeDiagnostics.ps1`、`Get-DesktopFreezeSnapshot.ps1`、`Get-ComputerStutterDiagnostic.ps1` 和任务 `PCConfig Memory Diagnostics`；③ 剪贴板守护脚本 `E:\PCConfig\tools\Start-TimeAuditClipboardCollector.ps1`。
+
 - Windows 启动批处理保留 CRLF；计划任务不可靠继承交互用户 PATH，启动脚本使用绝对路径并保留 Docker/Git PATH 引导。改路径或启动脚本后运行 `python test_start_all_docker_bootstrap.py`，再核对任务指向当前项目。
 - `telemetry_watchdog.ps1` 负责有界恢复 main.py、TimeAudit.ahk 及其既有依赖；不要把一次性自启任务改成并行常驻采集器。采集器保持单一 owner，失败时保留缺口。
 - 休眠/唤醒和落库时间用墙上时间；CPU、网络、I/O 速率的差分分母用单调时钟。前台会话时长不得为负，闭合 `fact_process_context` 必须带 `timestamp` 分区键。
