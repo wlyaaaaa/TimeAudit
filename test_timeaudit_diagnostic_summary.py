@@ -1,9 +1,10 @@
 import datetime as dt
 import io
 import json
+import sqlite3
 import subprocess
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import closing, redirect_stderr, redirect_stdout
 from unittest import mock
 
 import timeaudit_diagnostic_summary as summary
@@ -62,11 +63,13 @@ def aggregate_fixture():
         "storage_latency_samples": 1,
         "telemetry_out_of_bounds_samples": 0,
         "state_event_count": 25,
-        "active_seconds": 1800,
+        "active_seconds": 1740,
         "idle_seconds": 600,
         "display_off_seconds": 300,
         "lock_seconds": 60,
         "sleep_seconds": 600,
+        "foreground_hung_seconds": 18,
+        "capture_unknown_seconds": 42,
         "summed_state_seconds": 3360,
         "recorded_coverage_seconds": 3300,
         "requested_window_seconds": 3600,
@@ -94,6 +97,8 @@ class TimeAuditDiagnosticSummaryTests(unittest.TestCase):
         )
         self.assertEqual(result["game_performance"]["rejected_positive_samples"], 10)
         self.assertEqual(result["activity_state"]["quality"], "overlap_detected")
+        self.assertEqual(result["activity_state"]["durations_seconds"]["foreground_hung"], 18)
+        self.assertEqual(result["activity_state"]["durations_seconds"]["capture_unknown"], 42)
         self.assertEqual(
             {item["signal_id"] for item in result["signals"]},
             {
@@ -174,6 +179,14 @@ class TimeAuditDiagnosticSummaryTests(unittest.TestCase):
         self.assertNotIn("password", " ".join(command).lower())
         self.assertFalse(run.call_args.kwargs["shell"] if "shell" in run.call_args.kwargs else False)
 
+    def test_activity_sql_classifies_recorded_states(self):
+        case = summary.build_aggregate_sql().split("state_clip AS MATERIALIZED (", 1)[1].split(" AS state,", 1)[0]
+        sql = case + " FROM (SELECT ? AS process_name) a"
+        with closing(sqlite3.connect(":memory:")) as conn:
+            for name, expected in (("Example.exe", "active"), ("System_Hung", "foreground_hung"),
+                                   ("Unknown", "capture_unknown"), ("System_Idle", "idle"), ("Idle", "idle")):
+                self.assertEqual(conn.execute(sql, (name,)).fetchone()[0], expected)
+
     def test_query_timeout_and_invalid_output_fail_closed(self):
         with mock.patch("subprocess.run", side_effect=subprocess.TimeoutExpired([], 10)):
             with self.assertRaisesRegex(RuntimeError, "query_timeout"):
@@ -239,6 +252,15 @@ class TimeAuditDiagnosticSummaryTests(unittest.TestCase):
             )
         self.assertEqual(exit_code, 2)
         self.assertEqual(json.loads(output.getvalue())["reason"], "window_argument_conflict")
+
+    def test_live_output_rejects_non_24_hour_windows_before_query(self):
+        for bounds in (["--hours", "1"], ["--after-utc", "2026-08-28T00:00:00.000001Z",
+                                         "--until-utc", "2026-08-29T00:00:00Z"]):
+            output = io.StringIO()
+            with mock.patch.object(summary, "query_aggregate") as query, redirect_stdout(output):
+                self.assertEqual(summary.main([*bounds, "--live-output", "unused.json"]), 2)
+            self.assertEqual(json.loads(output.getvalue())["reason"], "live_window_must_be_24_hours")
+            query.assert_not_called()
 
     def test_invalid_cli_value_returns_only_contract_json(self):
         output = io.StringIO()

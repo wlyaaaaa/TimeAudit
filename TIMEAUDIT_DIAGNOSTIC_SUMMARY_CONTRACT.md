@@ -31,8 +31,8 @@ Successful output is `timeaudit.diagnostic-summary.v1` and includes:
   new-source samples whose FPS and frame time agree within a 35%/3ms tolerance. Legacy RTSS rows lacking measurement provenance use their explicitly separate window-FPS compatibility, including
   internally consistent severe low-FPS stalls; rejected positive samples are
   counted separately instead of being treated as gameplay;
-- unioned active, idle, display-off, lock, sleep and collection-gap durations, plus uncovered
-  and cross-state-overlap seconds;
+- unioned active, idle, display-off, lock, sleep, foreground-hung, capture-unknown
+  and collection-gap durations, plus uncovered and cross-state-overlap seconds;
 - bounded threshold-occurrence signals and explicit interpretation limits;
 - negative privacy flags proving that raw/private payload classes are absent.
 
@@ -50,7 +50,9 @@ start or restart Docker/TimeAudit, or mutate the database.
 
 With `--live-output <JSON>` the same producer instead writes the project's small
 website snapshot through `live_project_snapshot.py`; it selects counts, date
-bounds and clipped interval unions, never clipboard payloads. `--live-static`
+bounds and clipped interval unions, never clipboard payloads. The live snapshot
+requires an exact 24-hour window and exports the peak working set in decimal MB.
+The diagnostic JSON reports the peak in MiB. `--live-static`
 refreshes source size on the existing daily backup run. Its tracked snapshot
 contains only source size; unchanged source retains its bytes and timestamps.
 The same run writes slow exact counts (`hardware`, `lifecycle`, `registry`) and

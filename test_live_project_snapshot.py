@@ -1,7 +1,10 @@
 import datetime as dt
+from subprocess import CompletedProcess
 
 from live_project_snapshot import daily_records
 import live_project_snapshot as live
+import timeaudit_diagnostic_summary as summary
+from test_timeaudit_diagnostic_summary import aggregate_fixture
 
 
 def test_public_artifact_names_the_json_definition(tmp_path, monkeypatch):
@@ -46,3 +49,36 @@ def test_static_keeps_bytes_and_mtime_while_retained_facts_refresh(tmp_path, mon
     assert live.read(output)["metrics"] == live.read(output)["times"] == live.read(output)["scopes"] == {}
     assert live.read(retained)["metrics"] == dict(hardware=456, lifecycle=456, registry=456, earliest="活动 2026-06-08；窗口 2026-06-17")
     assert all(live.read(retained)["times"].values())
+
+
+def test_live_snapshot_preserves_other_values_when_sources_are_missing(tmp_path, monkeypatch):
+    config, output, mirror, owner = (tmp_path / name for name in ("config.json", "output.json", "live.json", "owner.json"))
+    live.write(config, dict(live_output=str(mirror), owner_output=str(owner),
+                           clipboard_db=str(tmp_path / "missing.sqlite"), grafana_url="http://localhost"))
+    raw = aggregate_fixture()
+    raw.update(main_working_set_mib_max=100.0, hardware_sample_count=3,
+               distinct_sample_seconds=3, requested_window_seconds=86400)
+    monkeypatch.setattr(summary, "query_aggregate", lambda *args: raw)
+    monkeypatch.setattr(live, "dashboard_records", lambda: ([], []))
+    monkeypatch.setattr(live.subprocess, "run", lambda *args, **kwargs: CompletedProcess(
+        args=[], returncode=3, stdout="", stderr="psql:<stdin>:1: ERROR:  57014\n"))
+    query_database = live.query
+
+    def query(sql):
+        if "pg_database_size" in sql:
+            return query_database(sql)
+        if "fact_process_context" in sql:
+            return [[12, 34, None]]
+        return []
+
+    monkeypatch.setattr(live, "query", query)
+    assert summary.main(["--hours", "24", "--live-output", str(output), "--live-config", str(config)]) == 0
+    assert live.read(output) == live.read(mirror)
+    for path in (mirror, owner):
+        snapshot = live.read(path)
+        assert snapshot["metrics"]["raw_since"] is snapshot["times"]["raw_since"] is None
+        assert snapshot["metrics"]["db_bytes"] is None
+        assert snapshot["scopes"]["db_bytes"] == "本次读取超时"
+        assert snapshot["metrics"]["activity"] == 34
+        assert (snapshot["metrics"]["samples24"], snapshot["metrics"]["empty24"]) == (3, 86397)
+        assert snapshot["metrics"]["memory"] == 104.8576

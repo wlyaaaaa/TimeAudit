@@ -22,7 +22,7 @@ from threading import Thread
 import time
 import uuid
 
-from timeaudit_diagnostic_summary import parse_utc, format_utc
+from timeaudit_diagnostic_summary import STATE_NAMES, parse_utc, format_utc
 from timeaudit_backup import error_summary
 
 UTC = dt.timezone.utc
@@ -30,13 +30,6 @@ SCHEMA = "timeaudit.personal-activity.v1"
 SUMMARY_SCHEMA = "timeaudit.personal-activity-summary.v1"
 BEIJING = dt.timezone(dt.timedelta(hours=8))
 MAX_QUERY_BYTES = 32 * 1024 * 1024
-STATE_NAMES = {
-    "System_CollectionGap": "collection_gap", "System_Sleep": "sleep",
-    "System_DisplayOff": "display_off", "System_LockScreen": "lock",
-    "LockApp.exe": "lock", "LogonUI.exe": "lock",
-    "System_Idle": "physical_idle", "Idle": "no_foreground_response",
-    "System_Hung": "foreground_hung", "Unknown": "capture_unknown",
-}
 
 SQL = r"""
 WITH b AS (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e)

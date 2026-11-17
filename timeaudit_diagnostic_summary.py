@@ -23,13 +23,27 @@ UTC = dt.timezone.utc
 SCHEMA = "timeaudit.diagnostic-summary.v1"
 OWNER_REF = "timeaudit:diagnostic-history"
 DEFAULT_LOOKBACK_HOURS = 24
+LIVE_WINDOW = dt.timedelta(hours=24)
 MAX_WINDOW_HOURS = 168
 MAX_CLOCK_SKEW_SECONDS = 300
 FRESHNESS_SECONDS = 60
 QUERY_TIMEOUT_SECONDS = 14
 MAX_OUTPUT_BYTES = 1_048_576
 CONTAINER_NAME = "audit-postgres"
-AGGREGATE_FIELDS = frozenset("""main_cpu_core_pct_avg main_cpu_core_pct_max main_working_set_mib_max hardware_sample_count distinct_sample_seconds rapid_sample_count collector_instance_count cpu_temp_missing_samples cpu_power_missing_samples gpu_hotspot_missing_samples disk_missing_samples legacy_quality_samples fps_state_counts first_sample_utc last_sample_utc max_internal_gap_seconds cpu_usage_avg_pct cpu_usage_max_pct cpu_temp_avg_c cpu_temp_max_c cpu_power_avg_w cpu_power_max_w gpu_usage_avg_pct gpu_usage_max_pct gpu_temp_avg_c gpu_temp_max_c gpu_hotspot_max_c gpu_power_avg_w gpu_power_max_w ram_usage_avg_pct ram_usage_max_pct disk_latency_avg_ms disk_latency_p95_ms disk_latency_max_ms network_ping_avg_ms network_ping_max_ms packet_loss_samples fps_positive_sample_count fps_sample_count fps_avg fps_min fps_one_percent_low_avg frametime_p95_ms frametime_max_ms frametime_spike_samples cpu_thermal_samples gpu_thermal_samples memory_pressure_samples storage_latency_samples telemetry_out_of_bounds_samples state_event_count collection_gap_seconds active_seconds idle_seconds display_off_seconds lock_seconds sleep_seconds summed_state_seconds recorded_coverage_seconds requested_window_seconds uncovered_seconds cross_state_overlap_seconds""".split())
+AGGREGATE_FIELDS = frozenset("""main_cpu_core_pct_avg main_cpu_core_pct_max main_working_set_mib_max hardware_sample_count distinct_sample_seconds rapid_sample_count collector_instance_count cpu_temp_missing_samples cpu_power_missing_samples gpu_hotspot_missing_samples disk_missing_samples legacy_quality_samples fps_state_counts first_sample_utc last_sample_utc max_internal_gap_seconds cpu_usage_avg_pct cpu_usage_max_pct cpu_temp_avg_c cpu_temp_max_c cpu_power_avg_w cpu_power_max_w gpu_usage_avg_pct gpu_usage_max_pct gpu_temp_avg_c gpu_temp_max_c gpu_hotspot_max_c gpu_power_avg_w gpu_power_max_w ram_usage_avg_pct ram_usage_max_pct disk_latency_avg_ms disk_latency_p95_ms disk_latency_max_ms network_ping_avg_ms network_ping_max_ms packet_loss_samples fps_positive_sample_count fps_sample_count fps_avg fps_min fps_one_percent_low_avg frametime_p95_ms frametime_max_ms frametime_spike_samples cpu_thermal_samples gpu_thermal_samples memory_pressure_samples storage_latency_samples telemetry_out_of_bounds_samples state_event_count collection_gap_seconds active_seconds idle_seconds display_off_seconds lock_seconds sleep_seconds foreground_hung_seconds capture_unknown_seconds summed_state_seconds recorded_coverage_seconds requested_window_seconds uncovered_seconds cross_state_overlap_seconds""".split())
+
+STATE_NAMES = {
+    "System_CollectionGap": "collection_gap", "System_Sleep": "sleep",
+    "System_DisplayOff": "display_off", "System_LockScreen": "lock",
+    "LockApp.exe": "lock", "LogonUI.exe": "lock",
+    "System_Idle": "physical_idle", "Idle": "no_foreground_response",
+    "System_Hung": "foreground_hung", "Unknown": "capture_unknown",
+}
+DIAGNOSTIC_STATE_ALIASES = {"physical_idle": "idle", "no_foreground_response": "idle"}
+ACTIVITY_STATE_SQL = "\n      ".join(
+    f"WHEN '{name}' THEN '{DIAGNOSTIC_STATE_ALIASES.get(state, state)}'"
+    for name, state in STATE_NAMES.items()
+)
 
 
 def parse_utc(value: str) -> dt.datetime:
@@ -182,13 +196,8 @@ hardware_summary AS (
 ),
 state_clip AS MATERIALIZED (
   SELECT
-    CASE
-      WHEN a.process_name = 'System_CollectionGap' THEN 'collection_gap'
-      WHEN a.process_name = 'System_Sleep' THEN 'sleep'
-      WHEN a.process_name = 'System_DisplayOff' THEN 'display_off'
-      WHEN a.process_name IN ('System_LockScreen', 'LockApp.exe', 'LogonUI.exe')
-        THEN 'lock'
-      WHEN a.process_name IN ('System_Idle', 'Idle') THEN 'idle'
+    CASE a.process_name
+      {activity_states}
       ELSE 'active'
     END AS state,
     GREATEST(a.start_time, b.t_from) AS s,
@@ -269,6 +278,10 @@ state_summary AS (
       AS lock_seconds,
     COALESCE(ROUND(MAX(seconds) FILTER (WHERE state = 'sleep')), 0)::bigint
       AS sleep_seconds,
+    COALESCE(ROUND(MAX(seconds) FILTER (WHERE state = 'foreground_hung')), 0)::bigint
+      AS foreground_hung_seconds,
+    COALESCE(ROUND(MAX(seconds) FILTER (WHERE state = 'capture_unknown')), 0)::bigint
+      AS capture_unknown_seconds,
     COALESCE(ROUND(SUM(seconds)), 0)::bigint AS summed_state_seconds
   FROM state_durations
 ),
@@ -298,7 +311,7 @@ FROM (
   CROSS JOIN coverage_summary c
   CROSS JOIN bounds b
 ) summary_row;
-""".replace("{valid_frame}", VALID_FRAME_SQL).strip()
+""".replace("{valid_frame}", VALID_FRAME_SQL).replace("{activity_states}", ACTIVITY_STATE_SQL).strip()
 
 
 def query_aggregate(
@@ -533,6 +546,8 @@ def build_summary(
                 "display_off": _int(aggregate.get("display_off_seconds")),
                 "lock": _int(aggregate.get("lock_seconds")),
                 "sleep": _int(aggregate.get("sleep_seconds")),
+                "foreground_hung": _int(aggregate.get("foreground_hung_seconds")),
+                "capture_unknown": _int(aggregate.get("capture_unknown_seconds")),
                 "collection_gap": _int(aggregate.get("collection_gap_seconds")),
             },
             "recorded_coverage_seconds": recorded,
@@ -625,6 +640,8 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError("window_future_invalid")
         if until_utc - after_utc > dt.timedelta(hours=MAX_WINDOW_HOURS):
             raise RuntimeError("window_too_large")
+        if args.live_output and until_utc - after_utc != LIVE_WINDOW:
+            raise RuntimeError("live_window_must_be_24_hours")
         aggregate = query_aggregate(after_utc, until_utc)
         result = build_summary(
             aggregate,
@@ -652,6 +669,7 @@ def main(argv: list[str] | None = None) -> int:
         allowed = {
             "docker_unavailable",
             "argument_invalid",
+            "live_window_must_be_24_hours",
             "query_failed",
             "query_output_invalid",
             "query_timeout",

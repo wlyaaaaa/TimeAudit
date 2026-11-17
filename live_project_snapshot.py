@@ -33,9 +33,13 @@ def query(sql, timeout=12):
     docker = shutil.which("docker.exe") or r"C:\Program Files\Docker\Docker\resources\bin\docker.exe"
     result = subprocess.run([docker, "exec", "-i", "-e",
         f"PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout={timeout*1000} -c lock_timeout=500 -c timezone=Asia/Shanghai",
-        "audit-postgres", "psql", "-XqAt", "-U", "leyang", "-d", "time_audit", "-v", "ON_ERROR_STOP=1"],
+        "audit-postgres", "psql", "-XqAt", "-U", "leyang", "-d", "time_audit",
+        "-v", "ON_ERROR_STOP=1", "-v", "VERBOSITY=sqlstate"],
         input=sql, capture_output=True, text=True, encoding="utf-8", timeout=timeout+5,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=True)
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), check=False)
+    if result.returncode and {"57014", "55P03"}.intersection(result.stderr.split()):
+        raise TimeoutError
+    result.check_returncode()
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -91,8 +95,10 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
     def attempt(keys, action):
         try:
             action()
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, sqlite3.Error) as exc:
-            put(dict.fromkeys(keys.split()), "取数失败："+type(exc).__name__+"；未填零")
+        except (TimeoutError, subprocess.TimeoutExpired):
+            put(dict.fromkeys(keys.split()), "本次读取超时")
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, sqlite3.Error):
+            put(dict.fromkeys(keys.split()), "取数失败；未填零")
     if static:
         for key, table in (("hardware", "fact_system_hardware"), ("lifecycle", "fact_process_lifecycle_events"), ("registry", "dim_process_registry")):
             attempt(key, lambda key=key, table=table: put({key: query(f"SELECT count(*) FROM public.{table};", 120)[0]}))
@@ -110,8 +116,10 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
     else:
         window = f"{after.astimezone(ZONE).isoformat()} 至 {until.astimezone(ZONE).isoformat()}；采样空段可能含睡眠、关机或缺口"
         missed = aggregate["collection_gap_seconds"]+aggregate["uncovered_seconds"]
+        memory_mib = aggregate.get("main_working_set_mib_max")
+        memory_mb = memory_mib * 1_048_576 / 1_000_000 if memory_mib is not None else None
         put(dict(missed=dict(text=f"{missed/60:.1f} 分钟（明确缺口 {aggregate['collection_gap_seconds']} 秒＋完全没记录 {aggregate['uncovered_seconds']} 秒）", seconds=missed),
-            memory=aggregate.get("main_working_set_mib_max"), samples24=aggregate["hardware_sample_count"],
+            memory=memory_mb, samples24=aggregate["hardware_sample_count"],
             covered24=aggregate["distinct_sample_seconds"], empty24=aggregate["requested_window_seconds"]-aggregate["distinct_sample_seconds"],
             max_gap=aggregate.get("max_gap_seconds")), window, until.isoformat())
         def activity():
@@ -119,7 +127,11 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             put(dict(context=row[0], activity=row[1], latest=parse_utc(row[2]).astimezone(ZONE).isoformat() if row[2] else None))
         attempt("context activity latest", activity)
         attempt("db_bytes detail_bytes summary_bytes", lambda: put(dict(zip(("db_bytes", "detail_bytes", "summary_bytes"), query("SELECT json_build_array(pg_database_size(current_database()),(SELECT sum(pg_total_relation_size(relid)) FROM pg_partition_tree('public.fact_process_activity')),pg_total_relation_size('public.activity_app_hour')+pg_total_relation_size('public.activity_app_day')+pg_total_relation_size('public.activity_system_hour')+pg_total_relation_size('public.activity_system_day'));")[0]))))
-        attempt("raw_since", lambda: put(dict(raw_since=query("SELECT to_json(to_char(raw_since AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD')) FROM public.activity_retention_state WHERE singleton;")[0]), "此日起保留原始明细，更早仍有小时／日统计"))
+        def retention_start():
+            rows = query("SELECT to_json(to_char(raw_since AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD')) FROM public.activity_retention_state WHERE singleton;")
+            date = next(iter(rows), None)
+            put(dict(raw_since=date), "此日起保留原始明细，更早仍有小时／日统计" if date else None)
+        attempt("raw_since", retention_start)
         def days():
             start = until.astimezone(ZONE).replace(hour=0, minute=0, second=0, microsecond=0)-dt.timedelta(days=6)
             rows = query(f"SELECT json_build_array(start_time,start_time+duration_seconds*interval '1 second',process_name='System_CollectionGap') FROM public.app_usage_logs WHERE duration_seconds>0 AND start_time<'{until.isoformat()}'::timestamptz AND start_time+duration_seconds*interval '1 second'>'{start.isoformat()}'::timestamptz;")
