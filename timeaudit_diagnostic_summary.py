@@ -48,6 +48,16 @@ def format_utc(value: dt.datetime) -> str:
     )
 
 
+VALID_FRAME_SQL = """CASE WHEN h.current_fps BETWEEN 0.5 AND 1000 THEN
+      (h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
+      AND (h.fps_capture_status = 'active' OR h.fps_capture_status IS NULL)
+      AND h.frametime_ms BETWEEN 0.5 AND 2000
+      AND ((h.fps_capture_detail = 'rtss_shared_memory_frame' AND h.measurement_quality IS NULL)
+           OR ABS(h.frametime_ms - 1000.0 / h.current_fps)
+              <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35))
+    ELSE false END"""
+
+
 def build_aggregate_sql() -> str:
     """Return the single aggregate-only SQL statement used by the provider."""
     return r"""
@@ -64,14 +74,7 @@ hardware AS (
     h.gpu_hotspot_temp, h.gpu_board_power, h.system_ram_usage_pct,
     h.disk_max_latency_ms, h.network_ping_ms, h.is_packet_loss,
     h.fps_capture_status, h.measurement_quality, h.collector_instance_id,
-    CASE WHEN h.current_fps BETWEEN 0.5 AND 1000 THEN
-      (h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
-      AND (h.fps_capture_status = 'active' OR h.fps_capture_status IS NULL)
-      AND h.frametime_ms BETWEEN 0.5 AND 2000
-      AND ((h.fps_capture_detail = 'rtss_shared_memory_frame' AND h.measurement_quality IS NULL)
-           OR ABS(h.frametime_ms - 1000.0 / h.current_fps)
-              <= GREATEST(3.0, (1000.0 / h.current_fps) * 0.35))
-    ELSE false END AS valid_frame
+    {valid_frame} AS valid_frame
   FROM public.fact_system_hardware h, bounds b
   WHERE h."timestamp" > b.t_from AND h."timestamp" <= b.t_to
 ),
@@ -295,7 +298,7 @@ FROM (
   CROSS JOIN coverage_summary c
   CROSS JOIN bounds b
 ) summary_row;
-""".strip()
+""".replace("{valid_frame}", VALID_FRAME_SQL).strip()
 
 
 def query_aggregate(
