@@ -1553,7 +1553,7 @@
                     "kind": "DataQuery",
                     "spec": {
                       "format": "time_series",
-                      "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('$aging_step', timestamp) AS period,\n    gpu_board_power,\n    gpu_core_temp,\n    gpu_hotspot_temp,\n    gpu_core_clock,\n    gpu_core_voltage,\n    MAX(gpu_board_power) OVER(PARTITION BY date_trunc('$aging_step', timestamp)) AS max_gpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  period AS \"time\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_core_temp ELSE NULL END) AS \"GPU 核心负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_hotspot_temp ELSE NULL END) AS \"GPU 热点负载温度\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_board_power ELSE NULL END) AS \"GPU 负载功率\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_core_clock ELSE NULL END) AS \"GPU 负载时钟\",\n  AVG(CASE WHEN max_gpu_pwr > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * max_gpu_pwr THEN gpu_core_voltage ELSE NULL END) AS \"GPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;"
+                      "rawSql": "WITH observations AS (\n  SELECT timestamp, date_trunc('$aging_step', timestamp) AS period, gpu_core_temp, gpu_hotspot_temp, gpu_board_power, gpu_core_clock, gpu_core_voltage\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window' AND timestamp < now()\n    AND gpu_board_power BETWEEN 0 AND 2000\n), continuity_breaks AS (\n  SELECT *, CASE WHEN timestamp - lag(timestamp) OVER (PARTITION BY period ORDER BY timestamp) <= interval '3 seconds'\n                 THEN 0 ELSE 1 END AS new_recording\n  FROM observations\n), recording AS (\n  SELECT *, SUM(new_recording) OVER (PARTITION BY period ORDER BY timestamp) AS segment\n  FROM continuity_breaks\n), candidates AS (\n  SELECT *, MIN(timestamp) OVER measured_minute AS anchor, MIN(gpu_board_power) OVER measured_minute AS steady\n  FROM recording\n  WINDOW measured_minute AS (PARTITION BY period, segment ORDER BY timestamp\n                           RANGE BETWEEN interval '62 seconds' PRECEDING AND CURRENT ROW)\n), reference AS (\n  SELECT *, MAX(steady) FILTER (WHERE timestamp - anchor >= interval '60 seconds') OVER (PARTITION BY period) AS stable_peak\n  FROM candidates\n), boundaries AS (\n  SELECT *, CASE WHEN timestamp - lag(timestamp) OVER (PARTITION BY period ORDER BY timestamp) <= interval '3 seconds'\n                 THEN 0 ELSE 1 END AS boundary\n  FROM reference WHERE stable_peak > ${gpu_min_watt} AND gpu_board_power >= ${aging_load_ratio} * stable_peak\n), runs AS (\n  SELECT *, SUM(boundary) OVER (PARTITION BY period ORDER BY timestamp) AS run\n  FROM boundaries\n), measured AS (\n  SELECT *, MIN(timestamp) OVER segment AS began, MAX(timestamp) OVER segment AS ended\n  FROM runs WINDOW segment AS (PARTITION BY period, run)\n)\nSELECT period AS \"time\",\n  AVG(gpu_core_temp) FILTER (WHERE gpu_board_power <= stable_peak) AS \"GPU 核心负载温度\",\n  AVG(gpu_hotspot_temp) FILTER (WHERE gpu_board_power <= stable_peak) AS \"GPU 热点负载温度\",\n  AVG(gpu_board_power) FILTER (WHERE gpu_board_power <= stable_peak) AS \"GPU 负载功率\",\n  AVG(gpu_core_clock) FILTER (WHERE gpu_board_power <= stable_peak) AS \"GPU 负载时钟\",\n  AVG(gpu_core_voltage) FILTER (WHERE gpu_board_power <= stable_peak) AS \"GPU 负载电压\",\n  COUNT(*) FILTER (WHERE gpu_board_power <= stable_peak) AS \"高负载样本数\",\n  SUM(EXTRACT(EPOCH FROM ended - began)) FILTER (WHERE timestamp = began) AS \"高负载持续秒数\"\nFROM measured\nWHERE ended - began >= interval '60 seconds'\nGROUP BY 1 ORDER BY 1;"
                     },
                     "version": "v0"
                   },
@@ -1570,7 +1570,7 @@
         "description": "",
         "id": 19,
         "links": [],
-        "title": "GPU 散热老化与能效衰减趋势 (负载均值)",
+        "title": "GPU 温度、功耗与时钟：各天高负载样本",
         "vizConfig": {
           "group": "timeseries",
           "kind": "VizConfig",
@@ -1630,6 +1630,12 @@
                 "unit": "celsius"
               },
               "overrides": [
+                {
+                  "matcher": { "id": "byRegexp", "options": "/^高负载(样本数|持续秒数)$/" },
+                  "properties": [
+                    { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": false, "viz": true } }
+                  ]
+                },
                 {
                   "matcher": {
                     "id": "byName",
@@ -2006,7 +2012,7 @@
                     "kind": "DataQuery",
                     "spec": {
                       "format": "time_series",
-                      "rawSql": "WITH daily_metrics AS (\n  SELECT \n    timestamp,\n    date_trunc('$aging_step', timestamp) AS period,\n    cpu_package_power,\n    cpu_package_temp,\n    cpu_clock_mhz,\n    cpu_vcore_voltage,\n    MAX(cpu_package_power) OVER(PARTITION BY date_trunc('$aging_step', timestamp)) AS max_cpu_pwr\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window'\n    AND timestamp <= now()\n)\nSELECT \n  period AS \"time\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_temp ELSE NULL END) AS \"CPU 负载温度\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_package_power ELSE NULL END) AS \"CPU 负载功率\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_clock_mhz ELSE NULL END) AS \"CPU 负载主频\",\n  AVG(CASE WHEN max_cpu_pwr > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * max_cpu_pwr THEN cpu_vcore_voltage ELSE NULL END) AS \"CPU 负载电压\"\nFROM daily_metrics\nGROUP BY 1\nORDER BY 1;"
+                      "rawSql": "WITH observations AS (\n  SELECT timestamp, date_trunc('$aging_step', timestamp) AS period, cpu_package_temp, cpu_package_power, cpu_clock_mhz, cpu_vcore_voltage\n  FROM public.fact_system_hardware\n  WHERE timestamp >= now() - interval '$aging_window' AND timestamp < now()\n    AND cpu_package_power BETWEEN 0 AND 2000\n), continuity_breaks AS (\n  SELECT *, CASE WHEN timestamp - lag(timestamp) OVER (PARTITION BY period ORDER BY timestamp) <= interval '3 seconds'\n                 THEN 0 ELSE 1 END AS new_recording\n  FROM observations\n), recording AS (\n  SELECT *, SUM(new_recording) OVER (PARTITION BY period ORDER BY timestamp) AS segment\n  FROM continuity_breaks\n), candidates AS (\n  SELECT *, MIN(timestamp) OVER measured_minute AS anchor, MIN(cpu_package_power) OVER measured_minute AS steady\n  FROM recording\n  WINDOW measured_minute AS (PARTITION BY period, segment ORDER BY timestamp\n                           RANGE BETWEEN interval '62 seconds' PRECEDING AND CURRENT ROW)\n), reference AS (\n  SELECT *, MAX(steady) FILTER (WHERE timestamp - anchor >= interval '60 seconds') OVER (PARTITION BY period) AS stable_peak\n  FROM candidates\n), boundaries AS (\n  SELECT *, CASE WHEN timestamp - lag(timestamp) OVER (PARTITION BY period ORDER BY timestamp) <= interval '3 seconds'\n                 THEN 0 ELSE 1 END AS boundary\n  FROM reference WHERE stable_peak > ${cpu_min_watt} AND cpu_package_power >= ${aging_load_ratio} * stable_peak\n), runs AS (\n  SELECT *, SUM(boundary) OVER (PARTITION BY period ORDER BY timestamp) AS run\n  FROM boundaries\n), measured AS (\n  SELECT *, MIN(timestamp) OVER segment AS began, MAX(timestamp) OVER segment AS ended\n  FROM runs WINDOW segment AS (PARTITION BY period, run)\n)\nSELECT period AS \"time\",\n  AVG(cpu_package_temp) FILTER (WHERE cpu_package_power <= stable_peak) AS \"CPU 负载温度\",\n  AVG(cpu_package_power) FILTER (WHERE cpu_package_power <= stable_peak) AS \"CPU 负载功率\",\n  AVG(cpu_clock_mhz) FILTER (WHERE cpu_package_power <= stable_peak) AS \"CPU 负载主频\",\n  AVG(cpu_vcore_voltage) FILTER (WHERE cpu_package_power <= stable_peak) AS \"CPU 负载电压\",\n  COUNT(*) FILTER (WHERE cpu_package_power <= stable_peak) AS \"高负载样本数\",\n  SUM(EXTRACT(EPOCH FROM ended - began)) FILTER (WHERE timestamp = began) AS \"高负载持续秒数\"\nFROM measured\nWHERE ended - began >= interval '60 seconds'\nGROUP BY 1 ORDER BY 1;"
                     },
                     "version": "v0"
                   },
@@ -2023,7 +2029,7 @@
         "description": "",
         "id": 20,
         "links": [],
-        "title": "CPU 散热老化与能效衰减趋势 (负载均值)",
+        "title": "CPU 温度、功耗与时钟：各天高负载样本",
         "vizConfig": {
           "group": "timeseries",
           "kind": "VizConfig",
@@ -2083,6 +2089,12 @@
                 "unit": "celsius"
               },
               "overrides": [
+                {
+                  "matcher": { "id": "byRegexp", "options": "/^高负载(样本数|持续秒数)$/" },
+                  "properties": [
+                    { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": false, "viz": true } }
+                  ]
+                },
                 {
                   "matcher": {
                     "id": "byName",

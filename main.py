@@ -410,7 +410,7 @@ def get_month_bounds(delta_months=0):
     return year, month, f"{start_date} 00:00:00+08", f"{end_date} 00:00:00+08"
 
 async def ensure_fps_capture_schema(pool):
-    """Add the public FPS lifecycle fields before a new writer can use them.
+    """Add new hardware fact columns before a new writer can use them.
 
     Existing TimeAudit databases predate these columns.  PostgreSQL propagates
     a parent-table column addition to its partitions, so this single idempotent
@@ -423,7 +423,10 @@ async def ensure_fps_capture_schema(pool):
                 ADD COLUMN IF NOT EXISTS fps_capture_detail text,
                 ADD COLUMN IF NOT EXISTS measurement_quality jsonb,
                 ADD COLUMN IF NOT EXISTS collector_instance_id text,
-                ADD COLUMN IF NOT EXISTS collector_sample_seq bigint;
+                ADD COLUMN IF NOT EXISTS collector_sample_seq bigint,
+                ADD COLUMN IF NOT EXISTS disk_busy_pct real,
+                ADD COLUMN IF NOT EXISTS disk_temperature_c real,
+                ADD COLUMN IF NOT EXISTS pagefile_usage_pct real;
         """)
 
 async def auto_warmup_partitions(pool):

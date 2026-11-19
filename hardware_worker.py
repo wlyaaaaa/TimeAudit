@@ -41,6 +41,31 @@ NVML_CLOCK_MEM = getattr(pynvml, 'NVML_CLOCK_MEM', 2)
 # ==========================================
 NVML_LOCK = threading.Lock()
 
+
+class PdhValue(ctypes.Structure):
+    _fields_ = [("status", wintypes.DWORD), ("value", ctypes.c_double)]
+
+
+class PdhCounterItem(ctypes.Structure):
+    _fields_ = [("name", wintypes.LPWSTR), ("counter", PdhValue)]
+
+
+def physical_disk_busy(pdh, counter):
+    """Highest active-time share of the physical disks in the PDH sample."""
+    if not counter:
+        return None
+    size, count = wintypes.DWORD(), wintypes.DWORD()
+    read = pdh.PdhGetFormattedCounterArrayW
+    if (read(counter, 0x200, ctypes.byref(size), ctypes.byref(count), None) & 0xffffffff) != 0x800007d2:
+        return None
+    buf = ctypes.create_string_buffer(size.value)
+    if read(counter, 0x200, ctypes.byref(size), ctypes.byref(count), buf) != 0:
+        return None
+    return max((100.0 - item.counter.value for item in (PdhCounterItem * count.value).from_buffer(buf)
+                if item.name and item.name.casefold() != "_total" and item.counter.status in (0, 1)
+                and 0 <= item.counter.value <= 100), default=None)
+
+
 class DpcLatencyChecker:
     def __init__(self):
         self.max_jitter_us = 0.0
@@ -157,6 +182,7 @@ class HardwareTelemetryWorker:
         self.cached_gpu_voltage = None      # NVIDIA GPU 核心电压 (LHM/NVAPI; NVML 在 GeForce 上无法提供)
         self.cached_gpu_hotspot = None      # NVIDIA GPU 核心热点实测温度 (LHM)
         self.cached_gpu_hotspot_supported = None  # None=endpoint unknown, False=sensor absent
+        self.cached_disk_temperature = None
         self.cached_lhm_gpu_usage = None    # LHM: Load/GPU Core，NVML 失效时的门控回退
         self.cached_lhm_gpu_core_temp = None
         self.cached_lhm_gpu_board_power = None
@@ -170,6 +196,8 @@ class HardwareTelemetryWorker:
             "system_hard_page_faults": None,
             "system_context_switches_rate": None,
             "disk_max_latency_ms": None,
+            "disk_busy_pct": None,
+            "pagefile_usage_pct": None,
             
             "cpu_percents": [],
             "cpu_total_usage": None,
@@ -227,10 +255,11 @@ class HardwareTelemetryWorker:
             self.pdh_query = ctypes.c_void_p()
             if ctypes.windll.pdh.PdhOpenQueryW(None, 0, ctypes.byref(self.pdh_query)) == 0:
                 
-                def add_first_working_counter(paths):
+                def add_first_working_counter(paths, english=False):
+                    add = ctypes.windll.pdh.PdhAddEnglishCounterW if english else ctypes.windll.pdh.PdhAddCounterW
                     for path in paths:
                         h = ctypes.c_void_p()
-                        res = ctypes.windll.pdh.PdhAddCounterW(self.pdh_query, path, 0, ctypes.byref(h))
+                        res = add(self.pdh_query, path, 0, ctypes.byref(h))
                         if res == 0:
                             return h
                     return None
@@ -264,6 +293,8 @@ class HardwareTelemetryWorker:
                     "\\PhysicalDisk(*)\\Avg. Disk sec/Transfer",
                     "\\PhysicalDisk(_Total)\\Avg. Disk sec/Transfer"
                 ])
+                self.h_disk_idle = add_first_working_counter([r"\PhysicalDisk(*)\% Idle Time"], english=True)
+                self.h_pagefile = add_first_working_counter([r"\Paging File(_Total)\% Usage"], english=True)
                 
                 ctypes.windll.pdh.PdhCollectQueryData(self.pdh_query)
                 time.sleep(0.05)
@@ -1326,6 +1357,20 @@ class HardwareTelemetryWorker:
         return next((value for value in readings if value is not None), None), bool(readings)
 
     @classmethod
+    def disk_temperature(cls, sensors):
+        """Use each observed disk's main temperature, not warning thresholds."""
+        primary = {"composite": 0, "composite temperature": 0, "temperature": 1, "temperature #1": 2}
+        disks = {}
+        for sensor_id, (label, raw) in sensors.items():
+            disk = re.match(r"^/(?:nvme|ssd|hdd)/\d+(?=/temperature/)", sensor_id)
+            rank, value = primary.get(label.casefold()), cls._lhm_num(raw)
+            if disk and rank is not None and value is not None and -20 <= value <= 150:
+                key = disk[0]
+                if key not in disks or rank < disks[key][0]:
+                    disks[key] = rank, value
+        return max((value for _, value in disks.values()), default=None)
+
+    @classmethod
     def _merge_gpu_metrics(cls, nvml_metrics, lhm_metrics):
         nvml_metrics = nvml_metrics or {}
         lhm_metrics = lhm_metrics or {}
@@ -1358,19 +1403,21 @@ class HardwareTelemetryWorker:
         url = "http://127.0.0.1:%d/data.json" % self._read_lhm_port()
         endpoint_down = False
 
-        def flatten(node, path, out):
+        def flatten(node, path, out, sensors):
             text = node.get("Text", "")
             cur = (path + "/" + text) if text else path
             val = node.get("Value", "")
             children = node.get("Children", [])
             if val and not children:
                 out[cur.lower()] = val
+                if sensor_id := node.get("SensorId"):
+                    sensors[sensor_id] = text, val
             for c in children:
-                flatten(c, cur, out)
+                flatten(c, cur, out, sensors)
 
         try:
             while not self.stop_event.is_set():
-                cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = None
+                cpu_temp = cpu_power = cpu_vcore = gpu_voltage = gpu_hotspot = disk_temperature = None
                 gpu_hotspot_supported = None
                 lhm_gpu_metrics = {
                     "gpu_usage": None,
@@ -1380,9 +1427,10 @@ class HardwareTelemetryWorker:
                 json_ok = False
                 try:
                     with urllib.request.urlopen(url, timeout=1.5) as resp:
-                        flat = {}
-                        flatten(_json.loads(resp.read().decode("utf-8", "ignore")), "", flat)
+                        flat, sensors = {}, {}
+                        flatten(_json.loads(resp.read().decode("utf-8", "ignore")), "", flat, sensors)
                     json_ok = True
+                    disk_temperature = self.disk_temperature(sensors)
 
                     # Memory Junction is a different sensor and cannot be
                     # substituted for a core hot-spot reading.
@@ -1415,6 +1463,7 @@ class HardwareTelemetryWorker:
                     self.cached_gpu_voltage = gpu_voltage
                     self.cached_gpu_hotspot = gpu_hotspot
                     self.cached_gpu_hotspot_supported = gpu_hotspot_supported
+                    self.cached_disk_temperature = disk_temperature
                     self.cached_lhm_gpu_usage = lhm_gpu_metrics["gpu_usage"]
                     self.cached_lhm_gpu_core_temp = lhm_gpu_metrics["gpu_core_temp"]
                     self.cached_lhm_gpu_board_power = lhm_gpu_metrics["gpu_board_power"]
@@ -1523,21 +1572,18 @@ class HardwareTelemetryWorker:
             cpu_package_power = None
             system_hard_page_faults = None
             system_context_switches_rate = None
-            disk_max_latency_ms = None
+            disk_max_latency_ms = disk_busy_pct = pagefile_usage_pct = None
 
             if self.pdh_query:
                 try:
                     if ctypes.windll.pdh.PdhCollectQueryData(self.pdh_query) == 0:
                         pdh_fail_count = 0
                         type_val = ctypes.c_ulong()
-                        class PDH_FMT_COUNTERVALUE_DOUBLE_L(ctypes.Structure):
-                            _fields_ = [("CStatus", ctypes.c_ulong), ("doubleValue", ctypes.c_double)]
-                        
                         def get_val(h):
                             if not h: return None
-                            v = PDH_FMT_COUNTERVALUE_DOUBLE_L()
+                            v = PdhValue()
                             res = ctypes.windll.pdh.PdhGetFormattedCounterValue(h, 0x00000200, ctypes.byref(type_val), ctypes.byref(v))
-                            return v.doubleValue if res == 0 and v.CStatus in (0, 1) and math.isfinite(v.doubleValue) else None
+                            return v.value if res == 0 and v.status in (0, 1) and math.isfinite(v.value) else None
 
                         base_freq = get_val(self.h_base_freq)
                         perf_ratio = get_val(self.h_perf_pct)
@@ -1560,6 +1606,9 @@ class HardwareTelemetryWorker:
                         d_val = get_val(self.h_disk_latency)
                         if d_val is not None and d_val >= 0:
                             disk_max_latency_ms = d_val * 1000.0
+                        disk_busy_pct = physical_disk_busy(ctypes.windll.pdh, self.h_disk_idle)
+                        paging = get_val(self.h_pagefile)
+                        pagefile_usage_pct = paging if paging is not None and 0 <= paging <= 100 else None
                     else:
                         pdh_fail_count += 1
                 except Exception:
@@ -1620,6 +1669,8 @@ class HardwareTelemetryWorker:
                 self.cached_pdh_data["system_hard_page_faults"] = system_hard_page_faults
                 self.cached_pdh_data["system_context_switches_rate"] = system_context_switches_rate
                 self.cached_pdh_data["disk_max_latency_ms"] = disk_max_latency_ms
+                self.cached_pdh_data["disk_busy_pct"] = disk_busy_pct
+                self.cached_pdh_data["pagefile_usage_pct"] = pagefile_usage_pct
                 
                 self.cached_pdh_data["cpu_percents"] = cpu_percents
                 self.cached_pdh_data["cpu_total_usage"] = cpu_total
@@ -1673,12 +1724,15 @@ class HardwareTelemetryWorker:
         self.last_ts = now_ts
         
         with self.pdh_lock:
+            pdh_at = getattr(self, "_pdh_sample_monotonic", None)
             cpu_mhz = self.cached_pdh_data["cpu_mhz"]
             cpu_package_temp = self.cached_pdh_data["cpu_package_temp"]
             cpu_package_power = self.cached_pdh_data["cpu_package_power"]
             system_hard_page_faults = self.cached_pdh_data["system_hard_page_faults"]
             system_context_switches_rate = self.cached_pdh_data["system_context_switches_rate"]
             disk_max_latency_ms = self.cached_pdh_data["disk_max_latency_ms"]
+            disk_busy_pct = self.cached_pdh_data.get("disk_busy_pct")
+            pagefile_usage_pct = self.cached_pdh_data.get("pagefile_usage_pct")
             
             cpu_percents = self.cached_pdh_data["cpu_percents"]
             cpu_total = self.cached_pdh_data["cpu_total_usage"]
@@ -1695,17 +1749,17 @@ class HardwareTelemetryWorker:
             pcie_bus_utilization = self.cached_pdh_data["pcie_bus_utilization"]
 
         with self.wmi_lock:
+            lhm_at = getattr(self, "_lhm_sample_monotonic", None)
             lhm_temp = self.cached_wmi_temp
             lhm_power = self.cached_wmi_power
             cpu_vcore = self.cached_cpu_vcore
             lhm_gpu_voltage = self.cached_gpu_voltage
             lhm_gpu_hotspot = self.cached_gpu_hotspot
             lhm_hotspot_supported = getattr(self, "cached_gpu_hotspot_supported", None)
+            disk_temperature = getattr(self, "cached_disk_temperature", None)
 
         # Only real package / hotspot sensors can populate these fields.
         # ACPI thermal zones and whole-machine power are not CPU package data.
-        lhm_at = getattr(self, "_lhm_sample_monotonic", None)
-        pdh_at = getattr(self, "_pdh_sample_monotonic", None)
         lhm_age = None if lhm_at is None else max(0.0, now_ts - lhm_at)
         pdh_age = None if pdh_at is None else max(0.0, now_ts - pdh_at)
         lhm_fresh = lhm_age is not None and lhm_age <= 5.0
@@ -1717,6 +1771,7 @@ class HardwareTelemetryWorker:
             cpu_vcore = None
         if pdh_age is None or pdh_age > 5.0:
             disk_max_latency_ms = None
+            disk_busy_pct = pagefile_usage_pct = None
             cpu_mhz = cpu_total = None
             cpu_percents = []
             system_hard_page_faults = system_context_switches_rate = None
@@ -1860,6 +1915,9 @@ class HardwareTelemetryWorker:
             "fps_capture_status": fps_capture_status,
             "fps_capture_detail": fps_capture_detail,
             "disk_max_latency_ms": disk_max_latency_ms,
+            "disk_busy_pct": disk_busy_pct,
+            "disk_temperature_c": disk_temperature if lhm_fresh else None,
+            "pagefile_usage_pct": pagefile_usage_pct,
             "measurement_quality": measurement_quality,
             "network_ping_ms": self.network_metrics["ping_ms"], 
             "is_packet_loss": self.network_metrics["packet_loss"], 
@@ -1888,8 +1946,9 @@ class HardwareTelemetryWorker:
              gpu_core_temp, gpu_hotspot_temp, gpu_board_power, gpu_throttling_reasons, pcie_bus_utilization,
              system_ram_usage_pct, system_commit_size_gb, system_hard_page_faults, disk_max_latency_ms,
              network_ping_ms, is_packet_loss, network_jitter, cpu_ccd0_usage, cpu_ccd1_usage,
-             measurement_quality, collector_instance_id, collector_sample_seq)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36);
+             measurement_quality, collector_instance_id, collector_sample_seq,
+             disk_busy_pct, disk_temperature_c, pagefile_usage_pct)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39);
         """
         async with pool.acquire() as conn:
             await conn.execute(
@@ -1904,7 +1963,8 @@ class HardwareTelemetryWorker:
                 data["system_hard_page_faults"], data["disk_max_latency_ms"], data["network_ping_ms"],
                 1 if data["is_packet_loss"] else 0, data["network_jitter"], ccd0_load, ccd1_load,
                 json.dumps(data.get("measurement_quality", {}), allow_nan=False),
-                instance_id, self._collector_sample_seq
+                instance_id, self._collector_sample_seq,
+                data.get("disk_busy_pct"), data.get("disk_temperature_c"), data.get("pagefile_usage_pct")
             )
 
     def terminate(self):

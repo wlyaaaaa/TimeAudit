@@ -361,6 +361,7 @@ class FpsCaptureContractTest(unittest.TestCase):
             "gpu_throttling_reasons": None, "pcie_bus_utilization": None,
             "system_ram_usage_pct": 1.0, "system_commit_size_gb": 1.0,
             "system_hard_page_faults": 0, "disk_max_latency_ms": 0.0,
+            "disk_busy_pct": 0.0, "disk_temperature_c": 49.0, "pagefile_usage_pct": 4.5,
             "network_ping_ms": None, "is_packet_loss": False,
             "network_jitter": 0.0, "cpu_ccd0_usage": 0.0,
             "cpu_ccd1_usage": 0.0,
@@ -372,9 +373,22 @@ class FpsCaptureContractTest(unittest.TestCase):
         call = conn.calls[0]
         self.assertIn("fps_capture_status, fps_capture_detail", call[0])
         self.assertIn("$33", call[0])
-        self.assertEqual(37, len(call))  # SQL plus 36 fact values, including provenance.
+        self.assertEqual(40, len(call))  # SQL plus 39 fact values, including provenance.
         self.assertEqual("waiting_frames", call[7])
         self.assertEqual("no_fresh_foreground_frame", call[8])
+        self.assertEqual((0.0, 49.0, 4.5), call[-3:])
+
+    def test_storage_temperature_uses_actual_disk_sensor_and_its_main_reading(self):
+        read = hardware_worker.HardwareTelemetryWorker.disk_temperature
+        self.assertEqual(read({
+            "/nvme/0/temperature/0": ("Composite Temperature", "49.0 °C"),
+            "/nvme/0/temperature/1": ("Temperature #1", "62.1 °C"),
+            "/nvme/1/temperature/0": ("Temperature", "35.0 °C"),
+            "/nvme/1/temperature/10": ("Warning Temperature", "89.0 °C"),
+            "/ssd/0/temperature/1": ("Temperature #1", "-239.2 °C"),
+            "/gpu-nvidia/0/temperature/0": ("Temperature", "70.0 °C"),
+        }), 49.0)
+        self.assertIsNone(read({"/nvme/1/temperature/10": ("Critical Temperature", "99.0 °C")}))
 
 
 if __name__ == "__main__":
