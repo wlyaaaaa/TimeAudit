@@ -29,11 +29,11 @@ class LiveUsageTest(TestCase):
         grafana = panel['data']['spec']['queries'][0]['spec']['query']['spec']['rawSql']
         def query(sql, start, stop):
             self.assertNotIn('$__time', sql)
-            self.assertIn("SELECT 25 * 60 AS min_seconds", sql)
+            self.assertIn("SELECT 15 * 60 AS min_seconds", sql)
             self.assertIn('FROM focus_rows', sql)
             self.assertNotIn('sample_title', sql.partition('SELECT jsonb_build_object')[2])
-            return [dict(min_seconds=1500, rows=[], recorded_to=None)]
-        self.assertEqual(read_focus(query, None, None, grafana), dict(min_seconds=1500, rows=[], recorded_to=None))
+            return [dict(min_seconds=900, rows=[], recorded_to=None)]
+        self.assertEqual(read_focus(query, None, None, grafana), dict(min_seconds=900, rows=[], recorded_to=None))
 
 
 if __name__ == '__main__':
