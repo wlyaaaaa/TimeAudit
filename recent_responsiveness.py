@@ -8,7 +8,7 @@ from timeaudit_diagnostic_summary import VALID_FRAME_SQL
 SQL = r"""
 WITH b AS NOT MATERIALIZED (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e),
 hardware AS (
-  SELECT h.timestamp, h.frametime_ms, {valid_frame} AS valid_frame
+  SELECT h.timestamp, h.frametime_ms, h.fps_capture_status, {valid_frame} AS valid_frame
   FROM public.fact_system_hardware h, b WHERE h.timestamp >= b.s AND h.timestamp < b.e
 ), latest AS (
   SELECT count(DISTINCT a.timestamp) AS snapshot_count, max(a.timestamp) AS sampled_at
@@ -26,6 +26,8 @@ SELECT jsonb_build_object(
   'hardware_sample_count',(SELECT count(*) FROM hardware),
   'hardware_last_sample_at',(SELECT max(timestamp) FROM hardware),
   'valid_frame_samples',(SELECT count(*) FROM hardware WHERE valid_frame),
+  'frame_capture_status',(SELECT CASE WHEN count(fps_capture_status) = count(*)
+    AND min(fps_capture_status) = max(fps_capture_status) THEN min(fps_capture_status) END FROM hardware),
   'frametime_spike_samples',(SELECT count(*) FROM hardware WHERE valid_frame AND frametime_ms >= 50),
   'last_spike_at',(SELECT max(timestamp) FROM hardware WHERE valid_frame AND frametime_ms >= 50),
   'activity_snapshot_count',latest.snapshot_count,
