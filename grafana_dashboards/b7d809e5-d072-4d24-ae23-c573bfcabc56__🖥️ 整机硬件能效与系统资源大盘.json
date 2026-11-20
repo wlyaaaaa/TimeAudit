@@ -1631,9 +1631,19 @@
               },
               "overrides": [
                 {
-                  "matcher": { "id": "byRegexp", "options": "/^高负载(样本数|持续秒数)$/" },
+                  "matcher": {
+                    "id": "byRegexp",
+                    "options": "/^高负载(样本数|持续秒数)$/"
+                  },
                   "properties": [
-                    { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": false, "viz": true } }
+                    {
+                      "id": "custom.hideFrom",
+                      "value": {
+                        "legend": true,
+                        "tooltip": false,
+                        "viz": true
+                      }
+                    }
                   ]
                 },
                 {
@@ -2090,9 +2100,19 @@
               },
               "overrides": [
                 {
-                  "matcher": { "id": "byRegexp", "options": "/^高负载(样本数|持续秒数)$/" },
+                  "matcher": {
+                    "id": "byRegexp",
+                    "options": "/^高负载(样本数|持续秒数)$/"
+                  },
                   "properties": [
-                    { "id": "custom.hideFrom", "value": { "legend": true, "tooltip": false, "viz": true } }
+                    {
+                      "id": "custom.hideFrom",
+                      "value": {
+                        "legend": true,
+                        "tooltip": false,
+                        "viz": true
+                      }
+                    }
                   ]
                 },
                 {
@@ -3965,5 +3985,5 @@
       }
     }
   ],
-  "version": 41
+  "version": 43
 }
