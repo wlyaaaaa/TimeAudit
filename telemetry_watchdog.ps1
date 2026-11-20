@@ -597,7 +597,8 @@ function Confirm-WatchdogHealth {
     try {
         if(-not $process.Start()){throw 'health_start_failed'}
         $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
-        if(-not $process.WaitForExit(10000)){$process.Kill();$process.WaitForExit();throw 'health_timeout'}
+        # Include Windows Python startup in addition to the bounded component probes.
+        if(-not $process.WaitForExit(20000)){$process.Kill();$process.WaitForExit();throw 'health_timeout'}
         $text=$out.GetAwaiter().GetResult();$null=$err.GetAwaiter().GetResult()
         if($text.Length -gt 65536 -or $process.ExitCode -notin @(0,2)){throw 'health_output_invalid'}
         $health=$text|ConvertFrom-Json
