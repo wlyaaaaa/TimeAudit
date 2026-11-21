@@ -9,6 +9,7 @@
 # stale, the watchdog waits through a resume/startup grace period and checks again before relaunching.
 # This catches a live-but-stuck collector without false-restarting immediately after system sleep.
 $ErrorActionPreference = 'SilentlyContinue'
+$watchdogStartedAt = [DateTimeOffset]::Now
 $log       = 'E:\Projects\Tools\TimeAudit\telemetry_watchdog.log'
 $py        = Join-Path $PSScriptRoot '.venv\Scripts\pythonw.exe'
 $pyConsole = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
@@ -574,6 +575,10 @@ return
 
 function Write-WatchdogOutcome {
     param([string]$State,[object]$Components,[string]$Reason='')
+    if ($State -ne 'healthy') {
+        $names = @($Components | Where-Object { $_ -cmatch '^[a-z][a-z_]{0,40}$' }) -join ','
+        Log ('watchdog health: started={0:o} status={1} reason={2} components={3}' -f $watchdogStartedAt, $State, $Reason, $names)
+    }
     $payload=[ordered]@{
         schema='timeaudit.watchdog-outcome.v1'
         checked_at_utc=[DateTimeOffset]::UtcNow.ToString('o')
@@ -594,19 +599,24 @@ function Confirm-WatchdogHealth {
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     $process=New-Object Diagnostics.Process;$process.StartInfo=$start
+    $failureReason = 'health_start_failed'
     try {
         if(-not $process.Start()){throw 'health_start_failed'}
         $out=$process.StandardOutput.ReadToEndAsync();$err=$process.StandardError.ReadToEndAsync()
         # Include Windows Python startup in addition to the bounded component probes.
+        $failureReason = 'health_timeout'
         if(-not $process.WaitForExit(20000)){$process.Kill();$process.WaitForExit();throw 'health_timeout'}
+        $failureReason = 'health_output_invalid'
         $text=$out.GetAwaiter().GetResult();$null=$err.GetAwaiter().GetResult()
         if($text.Length -gt 65536 -or $process.ExitCode -notin @(0,2)){throw 'health_output_invalid'}
+        $failureReason = 'health_contract_invalid'
         $health=$text|ConvertFrom-Json
         if($health.schema -ne 'timeaudit.runtime-health.v1' -or $health.status -notin @('healthy','degraded')){throw 'health_contract_invalid'}
+        $failureReason = 'health_receipt_write_failed'
         Write-WatchdogOutcome $health.status $health.degraded_components
         return $health.status -eq 'healthy'
     }catch{
-        Write-WatchdogOutcome 'unavailable' @() 'post_recovery_evidence_unavailable'
+        Write-WatchdogOutcome 'unavailable' @() $failureReason
         return $false
     }finally{$process.Dispose()}
 }
