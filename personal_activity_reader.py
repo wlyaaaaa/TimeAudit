@@ -30,6 +30,7 @@ SCHEMA = "timeaudit.personal-activity.v1"
 SUMMARY_SCHEMA = "timeaudit.personal-activity-summary.v1"
 BEIJING = dt.timezone(dt.timedelta(hours=8))
 MAX_QUERY_BYTES = 32 * 1024 * 1024
+STATEMENT_LIMIT = re.compile(r"(?im)^SET statement_timeout\s*=\s*([1-9]\d*);")
 
 SQL = r"""
 WITH b AS (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e)
@@ -127,6 +128,9 @@ def query(sql, after, until, *, timeout=25):
     if not docker:
         raise ActivityQueryError("docker_unavailable", "docker_exec", FileNotFoundError("Docker executable not found"))
     statement_ms = max(1, min(20000, int(timeout * 800)))
+    # Keep a caller's shorter prelude limit inside the source deadline.
+    statement_ms = min([statement_ms, *(int(cap) for cap in STATEMENT_LIMIT.findall(sql))])
+    sql = STATEMENT_LIMIT.sub("", sql)
     query_id = "timeaudit-reader-" + uuid.uuid4().hex
     command = [docker, "exec", "-i", "-e",
                f"PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout={statement_ms} -c lock_timeout={min(5000, statement_ms)}",
