@@ -177,12 +177,69 @@ def query(sql, after, until, *, timeout=25):
         raise ActivityQueryError("query_failed", "serialization", exc) from None
 
 
+def rank_history_sql(sql, *, disk=False):
+    """Fold only the statistics used by a 24-hour ranking before joining identities."""
+    source = re.search(r"(?m)^FROM public\.activity_process_stats\([^\n]+\)$", sql)
+    if not source:
+        return sql
+    from process_activity_retention import DISK_ACTIVE, IDENTITY_SQL
+
+    columns = list(dict.fromkeys(re.findall(r"\b(?:sum|max)\((\w+)\)", sql)))
+    aggregates = []
+    for column in columns:
+        if column in ('sample_count', 'disk_sample_count'):
+            expression = 'count(*)'
+        else:
+            field, operation = column.rsplit('_', 1)
+            field = field.removeprefix('active_')
+            expression = f'{operation}({field}{"::double precision" if operation != "count" else ""})'
+        aggregates.append(f'{expression} AS {column}')
+    projected = ', '.join(columns)
+    disk_filter = f' AND {DISK_ACTIVE}' if disk else ''
+    # Same full hours and half-open raw intervals as activity_process_stats.
+    ranked = f"""FROM (
+WITH state AS (
+    SELECT :'after_utc'::timestamptz AS first, :'until_utc'::timestamptz AS last,
+           raw_since AS cutoff, CASE WHEN summaries_ready THEN summarized_until ELSE raw_since END AS covered
+    FROM public.activity_retention_state WHERE singleton
+), bounds AS (
+    SELECT *, date_trunc('hour', greatest(first, cutoff)) +
+           CASE WHEN greatest(first, cutoff) > date_trunc('hour', greatest(first, cutoff))
+           THEN interval '1 hour' ELSE interval '0' END AS full_from,
+           least(date_trunc('hour', last), covered) AS full_to
+    FROM state
+), raw AS (
+    SELECT process_key, {', '.join(aggregates)}
+    FROM (
+        SELECT a.* FROM public.fact_process_activity a CROSS JOIN bounds b
+        WHERE timestamp >= :'after_utc'::timestamptz AND timestamp < :'until_utc'::timestamptz AND timestamp >= cutoff
+          AND timestamp < least(last, full_from) AND full_to > full_from{disk_filter}
+        UNION ALL
+        SELECT a.* FROM public.fact_process_activity a CROSS JOIN bounds b
+        WHERE timestamp >= :'after_utc'::timestamptz AND timestamp < :'until_utc'::timestamptz
+          AND timestamp >= CASE WHEN full_to > full_from THEN greatest(cutoff, full_to) ELSE cutoff END{disk_filter}
+    ) samples GROUP BY process_key
+)
+SELECT {IDENTITY_SQL}, {projected} FROM raw a
+LEFT JOIN LATERAL (SELECT process_name, executable_path FROM public.dim_process_registry r
+    WHERE r.process_key=a.process_key OFFSET 0) r ON true
+UNION ALL
+SELECT process_name, executable_path, {projected}
+FROM public.activity_app_hour CROSS JOIN bounds
+WHERE bucket_start < covered AND bucket_start < last
+  AND (bucket_start < cutoff OR (bucket_start >= first AND bucket_start + interval '1 hour' <= last))
+  AND bucket_start >= date_trunc('hour', first)
+) process_history"""
+    return sql[:source.start()] + ranked + sql[source.end():]
+
+
 def read_thread_history(sql, read, after, until):
     """Rank the original window once, then read exact affinity for those rows."""
     totals, separator, _ = sql.partition('SELECT totals.*, (')
     if not separator:
         return read(sql, after, until)
-    rows = read(totals+'SELECT * FROM totals ORDER BY "平均线程数" DESC NULLS LAST', after, until)
+    ranking = totals+'SELECT * FROM totals ORDER BY "平均线程数" DESC NULLS LAST'
+    rows = read(rank_history_sql(ranking) if until-after == dt.timedelta(days=1) else ranking, after, until)
     if not rows:
         return rows
     selected = json.dumps([[r['进程'], r['程序路径']] for r in rows], ensure_ascii=False).replace("'", "''")
@@ -194,9 +251,13 @@ WITH keys AS MATERIALIZED (
     WHERE r.process_name=q.name AND md5(r.executable_path)=md5(q.path)
       AND r.executable_path=q.path OFFSET 0) r
 )
-SELECT k.name, k.path, max(a.proc_cpu_affinity) AS mask
-FROM public.fact_process_activity a JOIN keys k USING(process_key)
-WHERE a.timestamp >= :'after_utc'::timestamptz AND a.timestamp < :'until_utc'::timestamptz
+SELECT k.name, k.path, max(a.mask) AS mask
+FROM keys k CROSS JOIN LATERAL (
+    SELECT max(proc_cpu_affinity) AS mask FROM public.fact_process_activity
+    WHERE process_key=k.process_key
+      AND timestamp >= :'after_utc'::timestamptz AND timestamp < :'until_utc'::timestamptz
+    OFFSET 0
+) a
 GROUP BY 1,2"""
     middle = after+(until-after)//2
     masks = {}
@@ -218,17 +279,32 @@ def optimize_process_history(sql, panel_id):
         if not actual:
             return sql
         sql = sql[:actual.start()] + sql[actual.end():]
-        sql = re.sub(r"stuck_candidates AS \(\n.*?\n\),", lambda _: actual[0] + """
+        actual_minutes = actual[0].replace('SELECT\n', 'SELECT DISTINCT\n', 1)
+        sql = re.sub(r"stuck_candidates AS \(\n.*?\n\),", lambda _: actual_minutes + """
 stuck_candidates AS (SELECT DISTINCT process_key FROM actual_stuck_events),""", sql, count=1, flags=re.S)
-        sql = re.sub(r"FROM public.fact_process_activity a\s+CROSS JOIN time_bounds b\s+WHERE a\.\"timestamp\" BETWEEN [^\n]+\n"
-                     r"\s+AND a\.process_key = ANY\(ARRAY\(SELECT process_key FROM stuck_candidates\)\)\n"
-                     r"\s+AND \(EXTRACT\(second FROM a\.\"timestamp\"\)::int % 60\) < 4", """FROM stuck_candidates k
-  CROSS JOIN time_bounds b CROSS JOIN LATERAL (
-    SELECT timestamp, process_key FROM public.fact_process_activity
-    WHERE process_key=k.process_key AND timestamp BETWEEN b.t_from AND b.t_to
+        sql = re.sub(r"baseline_events AS \(\n.*?\n\),", """baseline_events AS (
+  SELECT sampled.time_min, k.process_key, 0 AS is_stuck
+  FROM stuck_candidates k CROSS JOIN LATERAL (
+    SELECT DISTINCT date_trunc('minute', timestamp) AS time_min
+    FROM public.fact_process_activity
+    WHERE process_key=k.process_key AND timestamp BETWEEN :'after_utc'::timestamptz AND :'until_utc'::timestamptz
       AND (EXTRACT(second FROM timestamp)::int % 60) < 4
-    OFFSET 0
-  ) a""", sql)
+  ) sampled
+),""", sql, count=1, flags=re.S)
+        # One union of the existing inclusive away intervals, rather than
+        # testing every usage row against every process minute.
+        away = re.search(r"WHERE NOT EXISTS \(\n    SELECT 1 FROM public.app_usage_logs l\n"
+                         r"    WHERE (?P<states>[^\n]+)\n"
+                         r"      AND ce.time_min >= l.start_time - interval '1 minute'\n"
+                         r"      AND ce.time_min <= (?P<end>[^\n]+) \+ interval '1 minute'\n"
+                         r"      AND (?P<bounds>[^\n]+)\n  \)", sql)
+        if away:
+            low, high = "l.start_time - interval '1 minute'", away['end']+" + interval '1 minute'"
+            filtered = f"""WHERE NOT COALESCE((
+    SELECT range_agg(tstzrange({low}, {high}, '[]')) FROM public.app_usage_logs l
+    WHERE {away['states']} AND {away['bounds']} AND {high} >= {low}
+  ) @> ce.time_min, false)"""
+            sql = sql[:away.start()] + filtered + sql[away.end():]
         return sql.replace("JOIN public.dim_process_registry r ON fe.process_key = r.process_key",
                            "JOIN LATERAL (SELECT process_name FROM public.dim_process_registry "
                            "WHERE process_key=fe.process_key OFFSET 0) r ON true")
