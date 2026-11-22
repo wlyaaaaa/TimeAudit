@@ -51,6 +51,34 @@ def test_static_keeps_bytes_and_mtime_while_retained_facts_refresh(tmp_path, mon
     assert all(live.read(retained)["times"].values())
 
 
+def test_static_retains_each_old_measurement_only_when_its_read_fails(tmp_path, monkeypatch):
+    config, output, retained = (tmp_path/name for name in ("config.json", "source.json", "retained.json"))
+    live.write(config, dict(retained_output=str(retained), static_output=str(output)))
+    prior = dict(metrics=dict(hardware=123, lifecycle=77, registry=0),
+                 times=dict(hardware="2026-11-16T01:00:00+08:00", registry="2026-11-15T02:00:00+08:00"))
+    live.write(retained, prior)
+    monkeypatch.setattr(live, "source_size", lambda: dict(docs_chars=12, code_lines=34))
+
+    def get_rows(sql, *args):
+        if "fact_system_hardware" in sql or "fact_process_lifecycle_events" in sql:
+            raise TimeoutError
+        if "dim_process_registry" in sql:
+            raise OSError
+        return [["2026-06-07", "2026-06-16"]]
+
+    monkeypatch.setattr(live, "query", get_rows)
+    live.export_snapshot(None, None, None, output, static=True, config_path=config)
+    result = live.read(retained)
+    assert result["metrics"] == dict(hardware=123, lifecycle=None, registry=0, earliest="活动 2026-06-07；窗口 2026-06-16")
+    assert {key: result["times"][key] for key in prior["times"]} == prior["times"]
+    assert result["times"]["lifecycle"] is None
+    assert result["scopes"]["hardware"] == "本次读取超时；沿用上次读数"
+    assert result["scopes"]["lifecycle"] == "本次读取超时"
+    assert result["scopes"]["registry"] == "取数失败；沿用上次读数"
+    assert result["times"]["earliest"]
+    assert not live.read(output)["metrics"]
+
+
 def test_live_snapshot_preserves_other_values_when_sources_are_missing(tmp_path, monkeypatch):
     config, output, mirror, owner = (tmp_path / name for name in ("config.json", "output.json", "live.json", "owner.json"))
     live.write(config, dict(live_output=str(mirror), owner_output=str(owner),

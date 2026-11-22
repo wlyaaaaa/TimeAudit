@@ -418,7 +418,7 @@ class HealthLeaseTest(unittest.TestCase):
         )
 
         self.assertFalse(activity_healthy)
-        self.assertFalse(self.should_refresh(True, True, activity_healthy))
+        self.assertFalse(self.should_refresh(True, True, activity_healthy, True))
 
     def test_single_context_failure_remains_inside_lease(self):
         max_age = _constant_value(self.tree, "CONTEXT_HEALTH_MAX_AGE_SEC")
@@ -432,17 +432,18 @@ class HealthLeaseTest(unittest.TestCase):
             max_age,
         )
         self.assertTrue(context_healthy)
-        self.assertTrue(self.should_refresh(True, context_healthy, True))
+        self.assertTrue(self.should_refresh(True, context_healthy, True, True))
         self.assertFalse(
             self.lease_is_current(0.0, 20.0, 35.001, 15.0, max_age)
         )
 
-    def test_heartbeat_requires_hardware_context_and_activity_health(self):
-        self.assertTrue(self.should_refresh(True, True, True))
+    def test_heartbeat_requires_hardware_context_activity_and_lifecycle_health(self):
+        self.assertTrue(self.should_refresh(True, True, True, True))
         for health in (
-            (False, True, True),
-            (True, False, True),
-            (True, True, False),
+            (False, True, True, True),
+            (True, False, True, True),
+            (True, True, False, True),
+            (True, True, True, False),
         ):
             with self.subTest(health=health):
                 self.assertFalse(self.should_refresh(*health))

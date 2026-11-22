@@ -121,7 +121,7 @@ from hardware_worker import HardwareTelemetryWorker
 from context_worker import WindowStateTracker
 from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
-from runtime_health import write_telemetry_heartbeat
+from runtime_health import write_lifecycle_health, write_telemetry_heartbeat
 from process_activity_retention import maintain as maintain_activity_retention
 
 DB_DSN = local_dsn()
@@ -261,12 +261,14 @@ def _should_refresh_telemetry_heartbeat(
     hardware_succeeded,
     context_lease_healthy,
     activity_lease_healthy,
+    lifecycle_lease_healthy,
 ):
     """Only advertise whole-pipeline health when every required lane is healthy."""
     return bool(
         hardware_succeeded
         and context_lease_healthy
         and activity_lease_healthy
+        and lifecycle_lease_healthy
     )
 
 
@@ -617,6 +619,8 @@ async def _run_collector():
     context_last_success_at = None
     activity_health_warning_active = False
     context_health_warning_active = False
+    lifecycle_report_due_at = 0.0
+    lifecycle_last_reported_issue = None
 
     def _handle_sleep_resume(pre_sleep_wall, observed_wall):
         nonlocal activity_task
@@ -904,6 +908,11 @@ async def _run_collector():
                     ACTIVITY_HEALTH_INITIAL_GRACE_SEC,
                     ACTIVITY_HEALTH_MAX_AGE_SEC,
                 )
+                lifecycle_issue = lifecycle_worker.health_issue(health_now)
+                if health_now >= lifecycle_report_due_at or lifecycle_issue != lifecycle_last_reported_issue:
+                    if write_lifecycle_health(lifecycle_issue):
+                        lifecycle_last_reported_issue = lifecycle_issue
+                    lifecycle_report_due_at = health_now + 10.0
                 context_health_warning_active = _update_health_warning(
                     "上下文车道",
                     context_lease_healthy,
@@ -920,6 +929,7 @@ async def _run_collector():
                         hardware_succeeded,
                         context_lease_healthy,
                         activity_lease_healthy,
+                        lifecycle_issue is None,
                     )
                 ):
                     write_telemetry_heartbeat()

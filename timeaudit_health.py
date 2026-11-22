@@ -14,6 +14,8 @@ import subprocess
 import time
 import urllib.request
 
+from runtime_health import LIFECYCLE_HEALTH_SCHEMA
+
 ROOT = Path(__file__).resolve().parent
 SCHEMA = "timeaudit.runtime-health.v1"
 PRIVACY = dict.fromkeys(("raw_samples_included", "process_names_included", "process_paths_included", "window_titles_included", "command_lines_included", "credentials_included", "machine_identifiers_included"), False)
@@ -33,6 +35,12 @@ def heartbeat(path: Path, max_age: float, schema: str | None = None) -> dict:
             result["reported_state"] = value["state"]
             if value["state"] != "healthy":
                 result["status"] = "degraded"
+            if schema == LIFECYCLE_HEALTH_SCHEMA:
+                reason = value.get("reason")
+                if value["state"] == "degraded":
+                    if reason not in ("scanner_not_running", "writer_not_running", "scan_not_progressing", "write_not_progressing"):
+                        return {"status": "degraded", "reason": "invalid_heartbeat"}
+                    result["reason"] = reason
             for key in ("pending_files", "pending_bytes", "last_batch_rows", "pending_events", "pending_chars", "write_failures", "overflow_events", "capture_errors", "clock_adjustments", "published_segments"):
                 if key in value:
                     if type(value[key]) is not int or value[key] < 0:
@@ -284,6 +292,7 @@ def build_health(*, core_only: bool = False) -> dict:
     started = time.monotonic()
     jobs = {
         "telemetry": lambda: heartbeat(ROOT/"log"/"telemetry_heartbeat", 90),
+        "process_lifecycle": lambda: heartbeat(ROOT/"log"/"lifecycle_health.json", 30, LIFECYCLE_HEALTH_SCHEMA),
         "activity_heartbeat": lambda: heartbeat(ROOT/"log"/"ahk_heartbeat", 20),
         "activity_persistence": lambda: heartbeat(ROOT/"log"/"ahk_health.json", 20, "timeaudit.ahk-health.v1"),
         "ingester": lambda: heartbeat(ROOT/"log"/"ingester_heartbeat.json", 45, "timeaudit.ingester-heartbeat.v1"),

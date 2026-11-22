@@ -92,6 +92,13 @@ wintrust_dll.CryptCATAdminReleaseContext.restype = wintypes.BOOL
 SIGNATURE_LOCK = threading.Lock()
 SIGNATURE_CACHE = {}
 MAX_SIGNATURE_CACHE_SIZE = 5000
+LIFECYCLE_PROGRESS_TIMEOUT_SEC = 60.0
+INSERT_LIFECYCLE_EVENT = """
+    INSERT INTO public.fact_process_lifecycle_events
+    (event_timestamp, process_key, os_pid, event_type, process_lifetime, exit_code)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    ON CONFLICT (event_timestamp, process_key, event_type, os_pid) DO NOTHING;
+"""
 
 def check_process_elevation(pid):
     h_process, h_token = None, None
@@ -247,6 +254,23 @@ class ProcessLifecycleWorker:
         self.is_running = False
         self.pool = None  
         self.pid_handles = {}
+        self.last_scan_at = None
+        self.scan_started_at = 0.0
+        self.write_started_at = None
+
+    def health_issue(self, now):
+        if not self.thread or not self.thread.is_alive():
+            return "scanner_not_running"
+        if not self.writer_task or self.writer_task.done():
+            return "writer_not_running"
+        scan_at = self.scan_started_at if self.last_scan_at is None else self.last_scan_at
+        if now - scan_at > LIFECYCLE_PROGRESS_TIMEOUT_SEC:
+            return "scan_not_progressing"
+        # An idle writer has no event to commit. Each pending event must make
+        # actual database progress even when hardware writes are still healthy.
+        if self.write_started_at is not None and now - self.write_started_at > LIFECYCLE_PROGRESS_TIMEOUT_SEC:
+            return "write_not_progressing"
+        return None
 
     @staticmethod
     def _instance_key(os_pid, create_time):
@@ -413,6 +437,7 @@ class ProcessLifecycleWorker:
         if not self.writer_task or self.writer_task.done():
             self.writer_task = loop.create_task(self._database_writer_loop())
             
+        self.scan_started_at = time.monotonic()
         self.thread = threading.Thread(target=self._differential_scanner_loop, args=(loop,), daemon=True)
         self.thread.start()
         print("[🛸 离散事件舱] 内存级时空指纹扫描与句柄生命监视就绪。")
@@ -441,17 +466,15 @@ class ProcessLifecycleWorker:
                     continue
             return snapshot
 
-        try:
-            last_snapshot = get_process_snapshot()
-        except Exception:
-            last_snapshot = {}
-
+        last_snapshot = None
+        scan_failed = False
         while self.is_running:
             try:
-                time.sleep(1.0)
-                if not self.is_running: break
-                
                 current_snapshot = get_process_snapshot()
+                if not current_snapshot:
+                    raise RuntimeError("empty_process_snapshot")
+                if last_snapshot is None:
+                    last_snapshot = current_snapshot
 
                 started_keys = set(current_snapshot.keys()) - set(last_snapshot.keys())
                 # Also reap handles registered after the previous EXIT diff.
@@ -523,31 +546,33 @@ class ProcessLifecycleWorker:
                         )
                 finally:
                     last_snapshot = current_snapshot
-            except Exception:
-                pass
+                self.last_scan_at = time.monotonic()
+                scan_failed = False
+            except Exception as err:
+                if not scan_failed:
+                    print(f"⚠️ [离散事件舱] 进程快照扫描失败: {type(err).__name__}")
+                scan_failed = True
+            if self.is_running:
+                time.sleep(1.0)
 
     async def _database_writer_loop(self):
         while True:
-            try:
-                event = await self.event_queue.get()
-                retry = True
-                while retry:
-                    try:
-                        while self.pool is None:
-                            await asyncio.sleep(1.0)
-                            
-                        await self._process_queued_event(self.pool, event)
-                        self.event_queue.task_done()
-                        retry = False
-                    except asyncio.CancelledError:
-                        raise
-                    except Exception as err:
-                        print(f"⚠️ [离散事件舱] 写入数据库暂时阻断: {err}，2 秒后重试...")
-                        await asyncio.sleep(2.0)
-            except asyncio.CancelledError: 
-                break
-            except Exception:
-                await asyncio.sleep(1.0)
+            event = await self.event_queue.get()
+            self.write_started_at = time.monotonic()
+            write_failed = False
+            while True:
+                try:
+                    while self.pool is None:
+                        await asyncio.sleep(1.0)
+                    await self._process_queued_event(self.pool, event)
+                    break
+                except Exception as err:
+                    if not write_failed:
+                        print(f"⚠️ [离散事件舱] 写入数据库暂时阻断: {type(err).__name__}，2 秒后重试...")
+                    write_failed = True
+                    await asyncio.sleep(2.0)
+            self.event_queue.task_done()
+            self.write_started_at = None
 
     async def _process_queued_event(self, pool, event):
         async with pool.acquire() as conn:
@@ -561,30 +586,24 @@ class ProcessLifecycleWorker:
                     name = event.get("name", "Unknown")
                     exe = event.get("exe") or unknown_executable_path(name)
                     metadata = await asyncio.to_thread(self.harvest_live_pid_metadata_sync, os_pid, name, exe)
+                    event["metadata"] = metadata
                 
-                if not metadata: return
+                if not metadata:
+                    raise RuntimeError("lifecycle_metadata_unavailable")
                 
                 p_key = await self._resolve_metadata_to_db(conn, os_pid, metadata)
-                if p_key:
-                    self.shared_pid_key_map[instance_key] = p_key
-                    self.harvest_cache[instance_key] = metadata
-                    query_start = """
-                        INSERT INTO public.fact_process_lifecycle_events 
-                        (event_timestamp, process_key, os_pid, event_type, process_lifetime, exit_code)
-                        VALUES ($1, $2, $3, $4, NULL, NULL);
-                    """
-                    try:
-                        await conn.execute(query_start, event["timestamp"], p_key, os_pid, "START")
-                        print(f"[{datetime.datetime.now().strftime('%X')} 👶 迎接新生] 捕获进程创建 -> PID: {os_pid} | {metadata['name']}")
-                    except Exception:
-                        pass
+                if not p_key:
+                    raise RuntimeError("lifecycle_process_key_unavailable")
+                await conn.execute(INSERT_LIFECYCLE_EVENT, event["timestamp"], p_key, os_pid, "START", None, None)
+                self.shared_pid_key_map[instance_key] = p_key
+                self.harvest_cache[instance_key] = metadata
+                print(f"[{datetime.datetime.now().strftime('%X')} 👶 迎接新生] 捕获进程创建 -> PID: {os_pid} | {metadata['name']}")
             
             elif event["type"] == "EXIT":
                 os_pid = event["os_pid"]
                 instance_key = self._resolve_event_instance_key(event)
-                p_key = self.shared_pid_key_map.get(instance_key)
-                metadata = self.harvest_cache.pop(instance_key, None)
-                self.shared_pid_key_map.pop(instance_key, None)
+                p_key = event.get("_resolved_process_key") or self.shared_pid_key_map.get(instance_key)
+                metadata = self.harvest_cache.get(instance_key)
                 
                 if not metadata:
                     metadata = {
@@ -599,21 +618,19 @@ class ProcessLifecycleWorker:
                 
                 if not p_key:
                     p_key = await self._resolve_metadata_to_db(conn, os_pid, metadata)
-                if not p_key: return
+                if not p_key:
+                    raise RuntimeError("lifecycle_process_key_unavailable")
+                # Keep the same key if the write committed but the pool could
+                # not confirm it on release, after the instance was removed.
+                event["_resolved_process_key"] = p_key
                 
                 lifetime_sec = event["lifetime_sec"]
                 exit_code_str = event["exit_code"]
                 
-                query_exit = """
-                    INSERT INTO public.fact_process_lifecycle_events 
-                    (event_timestamp, process_key, os_pid, event_type, process_lifetime, exit_code)
-                    VALUES ($1, $2, $3, $4, $5, $6);
-                """
-                try:
-                    await conn.execute(query_exit, event["timestamp"], p_key, os_pid, "EXIT", lifetime_sec, exit_code_str)
-                    print(f"[{datetime.datetime.now().strftime('%X')} 💀 临终尸检] 捕获进程消亡 -> PID: {os_pid} | 寿命: {f'{lifetime_sec}秒' if lifetime_sec else '未知'} | 真实状态码: {exit_code_str}")
-                except Exception:
-                    pass
+                await conn.execute(INSERT_LIFECYCLE_EVENT, event["timestamp"], p_key, os_pid, "EXIT", lifetime_sec, exit_code_str)
+                self.harvest_cache.pop(instance_key, None)
+                self.shared_pid_key_map.pop(instance_key, None)
+                print(f"[{datetime.datetime.now().strftime('%X')} 💀 临终尸检] 捕获进程消亡 -> PID: {os_pid} | 寿命: {f'{lifetime_sec}秒' if lifetime_sec else '未知'} | 真实状态码: {exit_code_str}")
 
     def terminate(self):
         self.is_running = False

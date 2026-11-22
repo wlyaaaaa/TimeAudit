@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 from pathlib import Path
 from typing import Iterable
@@ -10,6 +11,8 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parent
 HEARTBEAT_FILE = ROOT / "log" / "telemetry_heartbeat"
+LIFECYCLE_HEALTH_FILE = ROOT / "log" / "lifecycle_health.json"
+LIFECYCLE_HEALTH_SCHEMA = "timeaudit.lifecycle-health.v1"
 
 
 def bounded_backoff_seconds(
@@ -43,12 +46,24 @@ def write_telemetry_heartbeat(
     path: os.PathLike[str] | str = HEARTBEAT_FILE,
 ) -> bool:
     """Atomically record the last successful telemetry database batch."""
+    timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    return _write_health_file(path, timestamp + "\n")
+
+
+def write_lifecycle_health(reason, path=LIFECYCLE_HEALTH_FILE):
+    return _write_health_file(path, json.dumps({
+        "schema": LIFECYCLE_HEALTH_SCHEMA,
+        "state": "degraded" if reason else "healthy",
+        "reason": reason,
+    }))
+
+
+def _write_health_file(path, content):
     target = Path(path)
     temporary = target.with_name(f"{target.name}.{os.getpid()}.tmp")
     try:
         target.parent.mkdir(parents=True, exist_ok=True)
-        timestamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        temporary.write_text(timestamp + "\n", encoding="ascii")
+        temporary.write_text(content, encoding="ascii")
         os.replace(temporary, target)
         return True
     except OSError:

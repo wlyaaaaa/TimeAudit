@@ -1,4 +1,5 @@
 # -*- coding: utf-8 -*-
+import asyncio
 import datetime
 import unittest
 from types import SimpleNamespace
@@ -80,7 +81,7 @@ class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
                     CloseHandle=Mock(side_effect=closed.append),
                     GetExitCodeProcess=Mock(side_effect=exit_code),
                 )
-                snapshots = Mock(return_value=[])
+                snapshots = Mock(return_value=[dict(pid=4343, create_time=101.0, threads=1)])
                 loop = SimpleNamespace(call_soon_threadsafe=lambda callback, event: callback(event))
                 with (
                     patch("lifecycle_worker.kernel32", native),
@@ -100,6 +101,7 @@ class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
                     self.assertEqual({}, worker.pid_handles)
                     self.assertEqual({}, worker.pid_start_time)
                     self.assertEqual(3, snapshots.call_count)
+                    self.assertIsNotNone(worker.last_scan_at)
                     fallback.assert_not_called()
                     if not query_fails:
                         event = worker.event_queue.get_nowait()
@@ -162,6 +164,57 @@ class LifecyclePidReuseTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(11, exit_calls[0][1])
         self.assertEqual(22, shared_map[(4242, 200.0)])
         self.assertNotIn((4242, 100.0), shared_map)
+
+    async def test_idle_scans_renew_health_but_dead_or_stalled_workers_do_not(self):
+        worker = ProcessLifecycleWorker({})
+        worker.thread = Mock()
+        worker.thread.is_alive.return_value = True
+        worker.writer_task = Mock()
+        worker.writer_task.done.return_value = False
+        worker.last_scan_at = 600.0
+        self.assertIsNone(worker.health_issue(601.0))
+        self.assertEqual("scan_not_progressing", worker.health_issue(661.0))
+        worker.writer_task.done.return_value = True
+        self.assertEqual("writer_not_running", worker.health_issue(601.0))
+        worker.thread.is_alive.return_value = False
+        self.assertEqual("scanner_not_running", worker.health_issue(601.0))
+
+    async def test_fact_insert_failure_stays_unacknowledged_and_retries_same_event(self):
+        for event_type in ("START", "EXIT"):
+            with self.subTest(event_type=event_type):
+                key = (4242, 100.0)
+                worker = ProcessLifecycleWorker({key: 11})
+                connection = _Connection()
+                failed = asyncio.Event()
+
+                async def execute(query, *args):
+                    self.assertIn("ON CONFLICT", query)
+                    connection.executions.append(args)
+                    if not failed.is_set():
+                        failed.set()
+                        raise OSError("synthetic insert failure")
+
+                connection.execute = execute
+                worker.pool = _Pool(connection)
+                worker.thread = Mock()
+                worker.event_queue.put_nowait(dict(
+                    type=event_type, os_pid=key[0], instance_key=key,
+                    timestamp=datetime.datetime.now(datetime.timezone.utc),
+                    metadata=_metadata("old.exe"), lifetime_sec=10, exit_code="0x00000000",
+                ))
+                worker.writer_task = asyncio.create_task(worker._database_writer_loop())
+                try:
+                    await asyncio.wait_for(failed.wait(), 1)
+                    stalled_at = worker.write_started_at + 61
+                    worker.last_scan_at = stalled_at
+                    self.assertEqual("write_not_progressing", worker.health_issue(stalled_at))
+                    self.assertEqual(11, worker.shared_pid_key_map[key])
+                    await asyncio.wait_for(worker.event_queue.join(), 5)
+                    self.assertIsNone(worker.health_issue(stalled_at))
+                    self.assertEqual([connection.executions[0]] * 2, connection.executions)
+                finally:
+                    worker.writer_task.cancel()
+                    await asyncio.gather(worker.writer_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

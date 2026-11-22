@@ -68,6 +68,20 @@ def test_grafana_failure_is_in_watchdog_core_health():
     assert report["degraded_components"] == ["grafana"]
 
 
+def test_lifecycle_health_receipt_reports_faults_expires_and_clears(tmp_path):
+    from runtime_health import LIFECYCLE_HEALTH_SCHEMA, write_lifecycle_health
+
+    path = tmp_path / "lifecycle_health.json"
+    assert health.heartbeat(path, 30, LIFECYCLE_HEALTH_SCHEMA)["status"] == "unavailable"
+    assert write_lifecycle_health("scan_not_progressing", path)
+    result = health.heartbeat(path, 30, LIFECYCLE_HEALTH_SCHEMA)
+    assert (result["status"], result["reason"]) == ("degraded", "scan_not_progressing")
+    assert write_lifecycle_health(None, path)
+    assert health.heartbeat(path, 30, LIFECYCLE_HEALTH_SCHEMA)["status"] == "healthy"
+    with patch.object(health.time, "time", return_value=path.stat().st_mtime + 31):
+        assert health.heartbeat(path, 30, LIFECYCLE_HEALTH_SCHEMA)["status"] == "stale"
+
+
 def test_bad_backup_manifest_cannot_crash_other_health_probes(tmp_path):
     archive = tmp_path / "time_audit_20260917_120000.dump"
     archive.write_bytes(b"PGDMP" + bytes(1024))

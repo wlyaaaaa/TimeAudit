@@ -38,6 +38,15 @@ watchdog outcome; it cannot recursively validate itself. Exit 2 denotes a valid
 unavailable/degraded diagnostic result. A recent heartbeat does not establish
 successful activity persistence. The last watchdog outcome is separate evidence.
 
+`process_lifecycle` checks the scanner thread, writer task, completed Windows
+process scans and the time spent trying to commit a pending START or EXIT. A
+quiet scan with no changes still makes progress. After 60 seconds without scan
+progress or with an uncommitted event, the lifecycle check degrades and the main
+heartbeat stops renewing. The existing watchdog can then recover the exact
+collector after its normal grace and PostgreSQL readiness checks. The separate
+`log/lifecycle_health.json` receipt expires if the collector stops reporting.
+Missing lifecycle events cannot be reconstructed by recovery.
+
 The existing watchdog also restores the Docker dependencies before checking
 collectors. If Docker Desktop has exited, it invokes the existing registered
 `TimeAudit_AutoStart` task unless that task is already running, and checks
