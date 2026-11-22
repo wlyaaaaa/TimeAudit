@@ -45,11 +45,13 @@ def stat_definitions():
     )
 
 
-def aggregate_columns(prefix="", merge=False):
+def aggregate_columns(prefix="", merge=False, app_totals=True):
     if merge:
         return ", ".join(
             [f"sum({prefix}{c})::bigint" for c in STAT_COLUMNS[:4]]
-            + [f"{op}({prefix}{m}_{s})" + ("::bigint" if s == "count" else "")
+            + [(f"{op}({prefix}{m}_{s})" + ("::bigint" if s == "count" else ""))
+               if app_totals or not m.startswith("app_total_")
+               else ("0::bigint" if s == "count" else "NULL::double precision")
                for m in METRICS for s, op in (("sum", "sum"), ("count", "sum"), ("max", "max"))]
         )
     expressions = ["count(*)", "count(*) FILTER (WHERE is_not_responding = 1)",
@@ -64,7 +66,7 @@ IDENTITY_SQL = """COALESCE(r.process_name, '[unregistered:' || a.process_key::te
 COALESCE(r.executable_path, '') AS executable_path"""
 
 
-def raw_source(system=False, *, bounded_identities=False):
+def raw_source(system=False, *, bounded_identities=False, app_totals=True):
     active = ", ".join(f"CASE WHEN {condition} THEN a.{m} END AS active_{m}" for m, condition in FILTERS.items())
     raw = f"""SELECT a.*, 1 AS proc_process_count, {IDENTITY_SQL}, {active}
           FROM public.fact_process_activity a
@@ -87,6 +89,11 @@ def raw_source(system=False, *, bounded_identities=False):
         raw = f"WITH identities AS MATERIALIZED ({identities}) " + raw.replace(
             "LEFT JOIN public.dim_process_registry r", "LEFT JOIN identities r"
         )
+    if not system and not app_totals:
+        # Per-process readers skip the per-instant application window; its
+        # sort over every raw sample dominates a 24-hour ranking read.
+        totals = ", ".join(f"NULL::double precision AS app_total_{m}" for m in BASE_METRICS)
+        return f"SELECT samples.*, {totals} FROM ({raw}) samples"
     # One contribution per application and sampling instant. Multiple PIDs
     # sum before the time aggregation; independent metric NULLs stay unknown.
     totals = ", ".join(
@@ -110,10 +117,13 @@ def schema_sql():
         backfill_until timestamptz NOT NULL DEFAULT '-infinity',
         raw_since timestamptz NOT NULL DEFAULT '-infinity'
     ); INSERT INTO public.activity_retention_state(singleton) VALUES(true) ON CONFLICT DO NOTHING;"""]
-    for kind in ("app", "system"):
+    # activity_process_stats is activity_app_stats with the same signature and
+    # rows, minus the app_total_* columns (always NULL/0): per-process rankings
+    # do not read them and their raw-tail window sort is most of the cost.
+    for name, kind, app_totals in (("app", "app", True), ("system", "system", True), ("process", "app", False)):
         identity = "process_name text NOT NULL, executable_path text NOT NULL, " if kind == "app" else ""
         keys = ", process_name, executable_path" if kind == "app" else ""
-        for grain in ("hour", "day"):
+        for grain in ("hour", "day") if name == kind else ():
             statements.append(f"""CREATE TABLE IF NOT EXISTS public.activity_{kind}_{grain} (
               bucket_start timestamptz NOT NULL, {identity}{stat_definitions()},
               PRIMARY KEY(bucket_start{keys}));""")
@@ -122,11 +132,12 @@ def schema_sql():
         returns = f"bucket_start timestamptz, {identity.replace(' NOT NULL', '')}{stat_definitions()}"
         group_identity = ", process_name, executable_path" if kind == "app" else ""
         result_identity = ", process_name, executable_path" if kind == "app" else ""
-        source_head = raw_source(kind == "system", bounded_identities=kind == "app").replace("$1", "GREATEST(p_from, cutoff)").replace(
+        source_raw = raw_source(kind == "system", bounded_identities=kind == "app", app_totals=app_totals)
+        source_head = source_raw.replace("$1", "GREATEST(p_from, cutoff)").replace(
             "$2", "LEAST(p_to, full_from) AND full_to > full_from")
-        source_tail = raw_source(kind == "system", bounded_identities=kind == "app").replace("$1", "CASE WHEN full_to > full_from THEN GREATEST(p_from, cutoff, full_to) ELSE GREATEST(p_from, cutoff) END").replace("$2", "p_to")
+        source_tail = source_raw.replace("$1", "CASE WHEN full_to > full_from THEN GREATEST(p_from, cutoff, full_to) ELSE GREATEST(p_from, cutoff) END").replace("$2", "p_to")
         source = f"({source_head}) UNION ALL ({source_tail})"
-        statements.append(f"""CREATE OR REPLACE FUNCTION public.activity_{kind}_stats(
+        statements.append(f"""CREATE OR REPLACE FUNCTION public.activity_{name}_stats(
             p_from timestamptz, p_to timestamptz, p_step integer DEFAULT 3600)
           RETURNS TABLE({returns}) LANGUAGE sql STABLE AS $function$
           WITH state AS (SELECT raw_since AS cutoff,
@@ -161,7 +172,7 @@ def schema_sql():
           SELECT * FROM recent
           UNION ALL
           SELECT date_bin(make_interval(secs => greatest(p_step, 3600)), bucket_start, '2000-01-01 00:00:00+08'::timestamptz)
-            {result_identity}, {aggregate_columns(merge=True)}
+            {result_identity}, {aggregate_columns(merge=True, app_totals=app_totals)}
           FROM history GROUP BY 1{group_identity}
           $function$;""".replace("FROM public.fact_process_activity a\n", "FROM public.fact_process_activity a CROSS JOIN bounds\n"))
     return "\n".join(statements)

@@ -372,6 +372,16 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
             actual = await self.conn.fetch(f"""SELECT bucket_start,process_name,executable_path,{retention.aggregate_columns(merge=True)}
                 FROM activity_app_stats($1,$2,$3) GROUP BY 1,process_name,executable_path ORDER BY 1,2,3""", start, end, step)
             self.assertEqual([tuple(row) for row in expected], [tuple(row) for row in actual], step)
+            # The per-process reader returns the same rows and statistics,
+            # without application totals (always NULL sum/max and zero count).
+            per_process = [c for c in retention.STAT_COLUMNS if not c.startswith("app_total_")]
+            app_totals = [c for c in retention.STAT_COLUMNS if c.startswith("app_total_")]
+            order = "ORDER BY bucket_start, process_name, executable_path, sample_count"
+            app = await self.conn.fetch(f"SELECT bucket_start,process_name,executable_path,{','.join(per_process)} FROM activity_app_stats($1,$2,$3) {order}", start, end, step)
+            process = await self.conn.fetch(f"SELECT bucket_start,process_name,executable_path,{','.join(per_process)} FROM activity_process_stats($1,$2,$3) {order}", start, end, step)
+            self.assertEqual([tuple(row) for row in app], [tuple(row) for row in process], step)
+            totals = await self.conn.fetch(f"SELECT DISTINCT {','.join(app_totals)} FROM activity_process_stats($1,$2,$3)", start, end, step)
+            self.assertEqual([tuple(0 if c.endswith("_count") else None for c in app_totals)], [tuple(row) for row in totals], step)
 
     async def test_empty_retired_partial_hour_and_inverted_windows_are_empty(self):
         await self.partition('old', '2026-06-01+08', '2026-06-02+08')
@@ -438,6 +448,23 @@ class RetentionPostgresTests(unittest.IsolatedAsyncioTestCase):
                     await self.conn.fetch(sql)
                     checked += 1
         self.assertEqual(13, checked)
+
+
+class ProcessStatsSchemaTests(unittest.TestCase):
+    def function_sql(self, name):
+        sql = retention.schema_sql()
+        start = sql.index(f"CREATE OR REPLACE FUNCTION public.activity_{name}_stats(")
+        return sql[start:sql.index("$function$;", start)]
+
+    def test_process_reader_keeps_app_signature_without_application_window(self):
+        app, process = self.function_sql("app"), self.function_sql("process")
+        self.assertEqual(app.split("LANGUAGE sql")[0].replace("activity_app_stats", "activity_process_stats"),
+                         process.split("LANGUAGE sql")[0])
+        self.assertIn("OVER app_sample", app)
+        self.assertNotIn("app_sample", process)
+        self.assertIn("FROM public.activity_app_hour", process)
+        self.assertIn("FROM public.activity_app_day", process)
+        self.assertNotIn("activity_process_hour", retention.schema_sql())
 
 
 if __name__ == "__main__":
