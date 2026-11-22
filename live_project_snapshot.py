@@ -106,6 +106,17 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             row = query("SELECT json_build_array((SELECT to_char(min(start_time) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.app_usage_logs),(SELECT to_char(min(timestamp) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.fact_process_context WHERE is_foreground=1));")[0]
             put(dict(earliest=f"活动 {row[0]}；窗口 {row[1]}" if all(row) else None))
         attempt("earliest", earliest)
+        try:
+            previous_retained = read(config["retained_output"])
+        except (OSError, ValueError):
+            previous_retained = {}
+        failure_reasons = {"本次读取超时": "本次读取超时", "取数失败；未填零": "取数失败"}
+        for key, scope in snapshot["scopes"].items():
+            if reason := failure_reasons.get(scope):
+                value = previous_retained.get("metrics", {}).get(key)
+                observed_at = previous_retained.get("times", {}).get(key)
+                if value is not None and observed_at:
+                    put({key: value}, f"{reason}；沿用上次读数", observed_at)
         write(config["retained_output"], snapshot)
         snapshot.update(metrics={}, times={}, scopes={})
         snapshot["size"] = source_size()
