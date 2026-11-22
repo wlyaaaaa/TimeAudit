@@ -177,6 +177,42 @@ def query(sql, after, until, *, timeout=25):
         raise ActivityQueryError("query_failed", "serialization", exc) from None
 
 
+def optimize_process_history(sql, panel_id):
+    """Keep the dashboard's window and sampling rule while using the time indexes."""
+    if panel_id == 6:
+        actual = re.search(r"actual_stuck_events AS \(\n.*?\n\),", sql, re.S)
+        if not actual:
+            return sql
+        sql = sql[:actual.start()] + sql[actual.end():]
+        sql = re.sub(r"stuck_candidates AS \(\n.*?\n\),", lambda _: actual[0] + """
+stuck_candidates AS (SELECT DISTINCT process_key FROM actual_stuck_events),""", sql, count=1, flags=re.S)
+        sql = re.sub(r"FROM public.fact_process_activity a\s+CROSS JOIN time_bounds b\s+WHERE a\.\"timestamp\" BETWEEN [^\n]+\n"
+                     r"\s+AND a\.process_key = ANY\(ARRAY\(SELECT process_key FROM stuck_candidates\)\)\n"
+                     r"\s+AND \(EXTRACT\(second FROM a\.\"timestamp\"\)::int % 60\) < 4", """FROM stuck_candidates k
+  CROSS JOIN time_bounds b CROSS JOIN LATERAL (
+    SELECT timestamp, process_key FROM public.fact_process_activity
+    WHERE process_key=k.process_key AND timestamp BETWEEN b.t_from AND b.t_to
+      AND (EXTRACT(second FROM timestamp)::int % 60) < 4
+    OFFSET 0
+  ) a""", sql)
+        return sql.replace("JOIN public.dim_process_registry r ON fe.process_key = r.process_key",
+                           "JOIN LATERAL (SELECT process_name FROM public.dim_process_registry "
+                           "WHERE process_key=fe.process_key OFFSET 0) r ON true")
+    return re.sub(r"FROM public.fact_process_activity a\s+CROSS JOIN time_bounds b\s+WHERE a\.\"timestamp\" BETWEEN [^\n]+\n"
+                  r"\s+AND \(EXTRACT\(second FROM a\.\"timestamp\"\)::int % 60\) < 4", """FROM time_bounds b
+  CROSS JOIN LATERAL generate_series(date_trunc('minute', b.t_from),
+    date_trunc('minute', b.t_to), interval '1 minute') g(minute)
+  CROSS JOIN (VALUES (interval '0 seconds', interval '3.5 seconds'),
+                     (interval '59.5 seconds', interval '1 minute')) sample(lo, hi)
+  CROSS JOIN LATERAL (
+    SELECT timestamp, process_key, proc_ram_mb, proc_vram_used_gb
+    FROM public.fact_process_activity
+    WHERE timestamp >= GREATEST(b.t_from, g.minute + sample.lo)
+      AND timestamp < g.minute + sample.hi AND timestamp <= b.t_to
+    OFFSET 0
+  ) a""", sql)
+
+
 def merge(intervals):
     result = []
     for start, end in sorted(intervals):
