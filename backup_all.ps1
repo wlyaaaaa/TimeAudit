@@ -44,7 +44,7 @@ function Write-RunReceipt {
     $receiptPath = Join-Path (Split-Path $log) 'backup-last-run.json'
     $tempReceiptPath = "$receiptPath.$PID.tmp"
     try {
-        [IO.File]::WriteAllText($tempReceiptPath, ($runReceipt | ConvertTo-Json -Depth 2), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($tempReceiptPath, ($runReceipt | ConvertTo-Json -Depth 4), [Text.UTF8Encoding]::new($false))
         if ([IO.File]::Exists($receiptPath)) { [IO.File]::Replace($tempReceiptPath, $receiptPath, [NullString]::Value) }
         else { [IO.File]::Move($tempReceiptPath, $receiptPath) }
     } catch {
@@ -127,6 +127,8 @@ $summary = switch ($localStatus) {
     default { '本地快照失败' }
 }
 $summary += if ($cloudStatus -eq 'complete') { '、云端同步已完成' } elseif ($cloudStatus -eq 'failed') { '、云端推送失败' } else { '、云端同步未尝试或无结果' }
+$spaceSkipped = @($receipt.file_warnings | Where-Object reason -eq 'insufficient_destination_space')
+if ($spaceSkipped.Count) { $summary += '。备份盘空间不足，已跳过：' + ($spaceSkipped.relative_path -join '、') }
 $runReceipt = [ordered]@{
     schema = 'timeaudit.backup-run.v1'
     status = $receipt.overall_status
@@ -137,6 +139,7 @@ $runReceipt = [ordered]@{
     cloud_sync_status = $cloudStatus
     reason = $reason
     summary = $summary
+    file_warnings = $receipt.file_warnings
     exit_code = $exitCode
 }
 Write-RunReceipt $runReceipt

@@ -283,15 +283,15 @@ def test_success_publishes_archive_and_manifest_without_deleting_unverified_orig
         old.with_suffix(".dump.json").write_text("[]")
     with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
          patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
-        result=backup.backup(tmp_path,retention_days=1)
-    assert result["status"] == "pass" and result["removed_expired_verified_pairs"] == 0
+        result=backup.backup(tmp_path)
+    assert result["status"] == "pass" and result["removed_verified_pairs"] == 0
     assert len(list(tmp_path.glob("*.dump"))) == 5
     assert not list(tmp_path.glob("*.partial"))
     assert not list(tmp_path.glob("*.transaction-*"))
     assert (tmp_path/(result["archive"]+".json")).exists()
 
 
-def test_unmarked_archives_do_not_consume_three_completed_retention_slots(tmp_path):
+def test_unmarked_archives_do_not_consume_completed_retention_slots(tmp_path):
     valid = []
     with patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
         for day in range(1,4):
@@ -305,16 +305,16 @@ def test_unmarked_archives_do_not_consume_three_completed_retention_slots(tmp_pa
     ]
     with patch.object(backup,"docker_path",return_value="docker"),patch.object(backup,"command",side_effect=fake_export), \
          patch.object(backup,"image_for",return_value="image"),patch.object(backup,"archive_list",return_value=7):
-        result = backup.backup(tmp_path, retention_days=1)
-    assert result["removed_expired_verified_pairs"] == 1
-    assert not valid[0].exists()
-    assert all(path.exists() for path in valid[1:] + unmarked)
+        result = backup.backup(tmp_path)
+    assert result["removed_verified_pairs"] == 2
+    assert not any(path.exists() for path in valid[:2])
+    assert all(path.exists() for path in valid[2:] + unmarked)
     assert (tmp_path/result["archive"]).exists()
-    assert len([p for p in tmp_path.glob("*.dump") if backup._completed_manifest_matches(p)]) == 3
+    assert len([p for p in tmp_path.glob("*.dump") if backup._completed_manifest_matches(p)]) == 2
 
 
 def test_bad_parameters_are_rejected_before_export(tmp_path):
-    for args in ({"retention_days":0},{"retention_days":-1},{"container":"--help"},{"db_user":"x; rm"}):
+    for args in ({"keep_archives":0},{"keep_archives":-1},{"container":"--help"},{"db_user":"x; rm"}):
         with pytest.raises(ValueError):backup.backup(tmp_path,**args)
     assert not list(tmp_path.iterdir())
 

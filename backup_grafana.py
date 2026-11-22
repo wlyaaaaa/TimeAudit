@@ -46,7 +46,7 @@ from grafana_auth import authorization_header
 from grafana_dashboard_contract import (
     is_v2_dashboard, provisioned_dashboard_uids, validate_dashboard_document,
 )
-from backup_file_warnings import file_warning, sqlite_warning
+from backup_file_warnings import disk_space_warning, file_warning, sqlite_warning
 
 # 非交互/计划任务环境里 stdout 默认 GBK，打印 ✓/❌ 等字符会 UnicodeEncodeError 崩溃。强制切 UTF-8。
 for _s in (sys.stdout, sys.stderr):
@@ -378,8 +378,16 @@ def backup_grafana_db(keep):
     candidates = [(GRAFANA_DB, "grafana.db")]
     try:
         return _backup_grafana_db(keep, candidates)
-    except (sqlite3.OperationalError, FileNotFoundError) as exc:
-        exc.antivirus_warning = sqlite_warning(exc, candidates, started, "database_copy")
+    except (sqlite3.OperationalError, OSError) as exc:
+        warning = disk_space_warning(exc, "grafana.db", "database_copy")
+        if warning:
+            for path, _ in candidates[1:]:
+                for suffix in ('', '-journal'):
+                    try:
+                        os.unlink(os.fspath(path) + suffix)
+                    except FileNotFoundError:
+                        pass
+        exc.backup_warning = warning or sqlite_warning(exc, candidates, started, "database_copy")
         raise
 
 
@@ -956,12 +964,12 @@ def main():
             except Exception as e:
                 warning = file_warning(e, "grafana.db", "database_copy")
                 if warning is None:
-                    warning = getattr(e, "antivirus_warning", None)
+                    warning = getattr(e, "backup_warning", None)
                 if warning is None:
                     log(f"❌ grafana.db 复制失败: {e}")
                     return 1
                 file_warnings.append(warning)
-                log("⚠️ grafana.db 被杀毒拦截，保留此前备份，下轮重试。")
+                log(f"⚠️ grafana.db 已跳过（{warning['reason']}），保留此前备份，下轮重试。")
 
             if not args.no_git:
                 try:

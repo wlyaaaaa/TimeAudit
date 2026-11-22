@@ -1,10 +1,21 @@
 """Classify narrowly scoped file exceptions without hiding ordinary I/O failures."""
 from pathlib import Path
+import errno
 import json
 import os
 import sqlite3
 import subprocess
 import time
+
+
+def disk_space_warning(exc, relative_path, stage):
+    if isinstance(exc, sqlite3.Error) and getattr(exc, 'sqlite_errorcode', None) == sqlite3.SQLITE_FULL:
+        code = sqlite3.SQLITE_FULL
+    elif isinstance(exc, OSError) and (exc.errno == errno.ENOSPC or getattr(exc, 'winerror', None) in (39, 112)):
+        code = getattr(exc, 'winerror', None) or exc.errno
+    else:
+        return None
+    return {'relative_path': str(relative_path), 'reason': 'insufficient_destination_space', 'error_code': code, 'stage': stage}
 
 
 def file_warning(exc, relative_path, stage, *, enumerated=False):

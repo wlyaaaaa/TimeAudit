@@ -13,7 +13,7 @@ import stat
 import subprocess
 import time
 import uuid
-from backup_file_warnings import file_warning
+from backup_file_warnings import disk_space_warning, file_warning
 
 DEFAULT_BACKUP_DIR = Path(r"G:\80_Backup\TimeAudit\postgresql")
 NAME = re.compile(r"^time_audit_\d{8}_\d{6}(?:_[a-f0-9]{6})?\.dump$")
@@ -271,16 +271,16 @@ def _completed_manifest_matches(path: Path):
         return False
 
 
-def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", retention_days=7):
-    if not all(IDENTIFIER.fullmatch(v) for v in (container, db_user, db_name)) or not 1 <= retention_days <= 3650:
+def backup(directory: Path, *, container="audit-postgres", db_user="leyang", db_name="time_audit", keep_archives=2):
+    if not all(IDENTIFIER.fullmatch(v) for v in (container, db_user, db_name)) or not 1 <= keep_archives <= 3650:
         raise ValueError("invalid_backup_parameters")
     with failure_stage("backup_directory"):
         directory.mkdir(parents=True, exist_ok=True)
     with failure_stage("backup_lock"), _directory_lock(directory):
-        return _backup_locked(directory, container=container, db_user=db_user, db_name=db_name, retention_days=retention_days)
+        return _backup_locked(directory, container=container, db_user=db_user, db_name=db_name, keep_archives=keep_archives)
 
 
-def _backup_locked(directory: Path, *, container, db_user, db_name, retention_days):
+def _backup_locked(directory: Path, *, container, db_user, db_name, keep_archives):
     with failure_stage("export_overlap_check"):
         processes = command([docker_path(), "top", container, "-eo", "pid,comm"], timeout=10).decode("utf-8").splitlines()
         if any(row.split()[-1] == "pg_dump" for row in processes[1:] if row.split()):
@@ -314,24 +314,29 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, retention_da
         except (RuntimeError, ValueError, OSError) as cleanup_error:
             cleanup_error.original_error = original_error
             raise
+        stage = getattr(original_error, 'stage', 'archive_export')
+        warning = disk_space_warning(original_error, filename, stage)
+        if (warning is None and isinstance(original_error, BackupCommandError) and stage == 'pg_dump'
+                and re.search(r'(?:stdout|standard output).*(?:not enough space|no space left|disk is full)', original_error.detail, re.I)):
+            warning = {'relative_path': filename, 'reason': 'insufficient_destination_space', 'error_code': None, 'stage': stage}
+        if warning:
+            return {'mode': 'backup', 'status': 'complete', 'file_warnings': [warning],
+                    'current_data_copied': False, 'completed_archives_preserved': True}
         raise
     with failure_stage("transaction_marker_cleanup"):
         marker.unlink()
-    cutoff = time.time() - retention_days * 86400
     removed = 0
-    # Preserve at least three completed archives. Only this tool's old, verified
-    # pairs are eligible; historical unverified originals are not silently deleted.
+    # Only this tool's old, verified pairs are eligible for retention.
     with failure_stage("retention"):
         completed = sorted(
             (p for p in directory.glob("time_audit_*.dump") if NAME.fullmatch(p.name) and _completed_manifest_matches(p)),
             key=lambda p: p.stat().st_mtime, reverse=True,
         )
-        for path in completed[3:]:
-            if path.stat().st_mtime < cutoff:
-                path.unlink()
-                path.with_suffix(path.suffix + ".json").unlink()
-                removed += 1
-    return {"status": "pass", "archive": final.name, "bytes": result["bytes"], "archive_list_verified": True, "sha256_recorded": True, "removed_expired_verified_pairs": removed}
+        for path in completed[keep_archives:]:
+            path.unlink()
+            path.with_suffix(path.suffix + ".json").unlink()
+            removed += 1
+    return {"mode": "backup", "status": "pass", "archive": final.name, "bytes": result["bytes"], "archive_list_verified": True, "sha256_recorded": True, "removed_verified_pairs": removed}
 
 
 def restore_check(path: Path, *, container="audit-postgres"):
@@ -347,12 +352,12 @@ def main(argv=None):
     parser.add_argument("--container", default="audit-postgres")
     parser.add_argument("--db-user", default="leyang")
     parser.add_argument("--db-name", default="time_audit")
-    parser.add_argument("--retention-days", type=int, default=7)
+    parser.add_argument("--keep-archives", type=int, default=2)
     parser.add_argument("--record", action="store_true")
     args = parser.parse_args(argv)
     try:
         if args.mode == "backup":
-            value = backup(args.backup_dir, container=args.container, db_user=args.db_user, db_name=args.db_name, retention_days=args.retention_days)
+            value = backup(args.backup_dir, container=args.container, db_user=args.db_user, db_name=args.db_name, keep_archives=args.keep_archives)
         elif args.mode in {"restore-status", "finish-restore"}:
             from timeaudit_restore_check import status, finish
             value = status() if args.mode == "restore-status" else finish()
