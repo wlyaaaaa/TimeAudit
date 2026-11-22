@@ -177,6 +177,40 @@ def query(sql, after, until, *, timeout=25):
         raise ActivityQueryError("query_failed", "serialization", exc) from None
 
 
+def read_thread_history(sql, read, after, until):
+    """Rank the original window once, then read exact affinity for those rows."""
+    totals, separator, _ = sql.partition('SELECT totals.*, (')
+    if not separator:
+        return read(sql, after, until)
+    rows = read(totals+'SELECT * FROM totals ORDER BY "平均线程数" DESC NULLS LAST', after, until)
+    if not rows:
+        return rows
+    selected = json.dumps([[r['进程'], r['程序路径']] for r in rows], ensure_ascii=False).replace("'", "''")
+    affinity = f"""
+WITH keys AS MATERIALIZED (
+  SELECT q.name, q.path, r.process_key
+  FROM (SELECT value->>0 AS name, value->>1 AS path FROM json_array_elements('{selected}'::json)) q
+  CROSS JOIN LATERAL (SELECT process_key FROM public.dim_process_registry r
+    WHERE r.process_name=q.name AND md5(r.executable_path)=md5(q.path)
+      AND r.executable_path=q.path OFFSET 0) r
+)
+SELECT k.name, k.path, max(a.proc_cpu_affinity) AS mask
+FROM public.fact_process_activity a JOIN keys k USING(process_key)
+WHERE a.timestamp >= :'after_utc'::timestamptz AND a.timestamp < :'until_utc'::timestamptz
+GROUP BY 1,2"""
+    middle = after+(until-after)//2
+    masks = {}
+    for start, end in ((middle,until), (after,middle)):
+        for sample in read(affinity, start, end):
+            key, mask = (sample['name'], sample['path']), sample['mask']
+            if mask is not None:
+                masks[key] = max(mask, masks.get(key, mask))
+    for row in rows:
+        mask = masks.get((row['进程'], row['程序路径']))
+        row['CPU 亲和性'] = '无可用明细（仅近60天）' if mask is None else '全核 (所有 CPU)' if mask == -1 else f'mask={mask}'
+    return rows
+
+
 def optimize_process_history(sql, panel_id):
     """Keep the dashboard's window and sampling rule while using the time indexes."""
     if panel_id == 6:
