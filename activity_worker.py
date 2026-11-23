@@ -13,9 +13,11 @@ import pynvml
 import re
 import threading
 import time
+import asyncpg
 
 from lifecycle_worker import check_process_elevation, check_file_signature
 from hardware_worker import NVML_LOCK
+from process_activity_retention import advance_minutes, minute_floor
 from psutil_native_guard import IsolatedConnectionSampler
 
 class UNICODE_STRING(ctypes.Structure):
@@ -207,6 +209,7 @@ class ProcessActivityWorker:
         self.key_cache = {}      
         self.io_delta_cache = {} 
         self.path_elevation_cache = {} 
+        self.minute_rollup_at = None
         self.nvml_initialized = False
         self.gpu_handle = None
         self.gpu_total_vram_gb = 0.0   # NVIDIA 独显整卡显存容量(GB)，每进程专用显存的物理上限
@@ -939,3 +942,11 @@ class ProcessActivityWorker:
                     ))
                 if batch_args: 
                     await conn.executemany(query, batch_args)
+
+            minute = minute_floor(now)
+            if batch_args and minute != self.minute_rollup_at:
+                self.minute_rollup_at = minute
+                try:
+                    await advance_minutes(conn, now)
+                except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as error:
+                    print(f"⚠️ 进程分钟汇总暂缓: {type(error).__name__}")

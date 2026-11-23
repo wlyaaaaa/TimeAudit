@@ -1,4 +1,4 @@
-"""60-day process samples and durable application/system hour/day statistics.
+"""60-day process samples and durable system minute and application/system hour/day statistics.
 
 All SQL windows are half-open. Rate totals keep the established 3.1-second
 estimate; absent samples never become elapsed-time integration.
@@ -18,6 +18,24 @@ BASE_METRICS = (
     "proc_disk_iops", "proc_network_send_kb", "proc_network_recv_kb",
     "proc_active_connections", "proc_thread_count", "proc_process_count",
 )
+MINUTE_SERIES = (
+    ("proc_network_send_kb", "upload_bps", 6, 1024),
+    ("proc_network_recv_kb", "download_bps", 6, 1024),
+    ("proc_active_connections", "tcp_connections", 2, 1),
+    ("proc_disk_read_rate_mb", "disk_read_bps", 6, 1048576),
+    ("proc_disk_write_rate_mb", "disk_write_bps", 6, 1048576),
+    ("proc_disk_iops", "disk_iops", 2, 1),
+    ("proc_process_count", "process_count", None, 1),
+    ("proc_thread_count", "thread_count", 2, 1),
+)
+MINUTE_METRICS = tuple(name for name, *_ in MINUTE_SERIES)
+MINUTE = dt.timedelta(minutes=1)
+MINUTE_RETENTION = dt.timedelta(days=7)
+MINUTE_BATCH = dt.timedelta(minutes=30)
+MINUTE_CATCHUP = dt.timedelta(minutes=5)
+MINUTE_BACKFILL_SETTLE = 2 * MINUTE
+MINUTE_ONLINE_LIMIT = 2.0
+MINUTE_BACKFILL_LIMIT = 30.0
 MAINTENANCE_QUERY_TIMEOUT_SEC = 900.0
 DETAIL_DAYS = 60
 LOCK_ID = 607202609
@@ -38,7 +56,9 @@ def quote_ident(name):
     return '"' + name.replace('"', '""') + '"'
 
 
-def stat_definitions():
+def stat_definitions(metrics=None):
+    if metrics is not None:
+        return "sample_count bigint, " + ", ".join(f"{m}_sum double precision, {m}_count bigint" for m in metrics)
     return "sample_count bigint, not_responding_count bigint, disk_sample_count bigint, network_sample_count bigint, " + ", ".join(
         f"{m}_sum double precision, {m}_count bigint, {m}_max double precision"
         for m in METRICS
@@ -66,7 +86,15 @@ IDENTITY_SQL = """COALESCE(r.process_name, '[unregistered:' || a.process_key::te
 COALESCE(r.executable_path, '') AS executable_path"""
 
 
-def raw_source(system=False, *, bounded_identities=False, app_totals=True):
+def raw_source(system=False, *, bounded_identities=False, app_totals=True, metrics=None):
+    if metrics is not None:
+        fields = ", ".join(
+            f"count(*)::double precision AS {m}" if m == "proc_process_count" else
+            f"sum(a.{m}::double precision) AS {m}"
+            for m in metrics
+        )
+        return f"""SELECT a.timestamp, {fields} FROM public.fact_process_activity a
+                   WHERE a.timestamp >= $1 AND a.timestamp < $2 GROUP BY a.timestamp"""
     active = ", ".join(f"CASE WHEN {condition} THEN a.{m} END AS active_{m}" for m, condition in FILTERS.items())
     raw = f"""SELECT a.*, 1 AS proc_process_count, {IDENTITY_SQL}, {active}
           FROM public.fact_process_activity a
@@ -106,6 +134,34 @@ def raw_source(system=False, *, bounded_identities=False, app_totals=True):
     system_fields = [f"sum({m}::double precision) AS {m}" for m in PROCESS_METRICS]
     system_fields += [f"sum({m}::double precision) AS app_total_{m}" for m in BASE_METRICS]
     return "SELECT timestamp, max(is_not_responding) AS is_not_responding, " + ", ".join(system_fields) + f" FROM ({raw}) per_process GROUP BY timestamp"
+
+
+def minute_schema_sql():
+    columns = stat_definitions(MINUTE_METRICS)
+    means = []
+    for name, label, digits, scale in MINUTE_SERIES:
+        value = f"m.{name}_sum / NULLIF(m.{name}_count, 0)"
+        if digits is not None:
+            value = f"round(({value})::numeric, {digits}) * {scale}"
+        means.append(f"({value})::double precision AS {label}")
+    final_columns = ", ".join(label + " double precision" for _, label, _, _ in MINUTE_SERIES)
+    return f"""ALTER TABLE public.activity_retention_state
+          ADD COLUMN IF NOT EXISTS minute_covered_from timestamptz,
+          ADD COLUMN IF NOT EXISTS minute_covered_until timestamptz;
+      CREATE TABLE IF NOT EXISTS public.activity_system_minute (
+          bucket_start timestamptz PRIMARY KEY, {columns});
+      CREATE OR REPLACE FUNCTION public.activity_system_minute_coverage()
+      RETURNS TABLE(covered_from timestamptz, covered_until timestamptz) LANGUAGE sql STABLE AS $function$
+          SELECT minute_covered_from, minute_covered_until FROM public.activity_retention_state WHERE singleton
+      $function$;
+      CREATE OR REPLACE FUNCTION public.activity_system_minute_stats(p_from timestamptz, p_to timestamptz)
+      RETURNS TABLE(bucket_start timestamptz, {columns}, {final_columns}) LANGUAGE sql STABLE AS $function$
+          SELECT m.*, {", ".join(means)}
+          FROM public.activity_system_minute m CROSS JOIN public.activity_retention_state s
+          WHERE s.singleton AND m.bucket_start >= greatest(p_from, s.minute_covered_from)
+            AND m.bucket_start < least(p_to, s.minute_covered_until)
+            AND s.minute_covered_from IS NOT NULL AND s.minute_covered_until IS NOT NULL
+      $function$;"""
 
 
 def schema_sql():
@@ -175,12 +231,108 @@ def schema_sql():
             {result_identity}, {aggregate_columns(merge=True, app_totals=app_totals)}
           FROM history GROUP BY 1{group_identity}
           $function$;""".replace("FROM public.fact_process_activity a\n", "FROM public.fact_process_activity a CROSS JOIN bounds\n"))
-    return "\n".join(statements)
+    return "\n".join((*statements, minute_schema_sql()))
 
 
 async def install(conn):
     await conn.execute(schema_sql(), timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
     await conn.execute("ANALYZE public.activity_retention_state", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
+
+
+def minute_floor(at):
+    return at.replace(second=0, microsecond=0)
+
+
+async def minute_state(conn, earliest, timeout, *, wait=True):
+    lock = "FOR UPDATE" if wait else "FOR UPDATE NOWAIT"
+    return await conn.fetchrow(f"""SELECT minute_covered_from, minute_covered_until,
+        greatest(raw_since, $1::timestamptz) AS earliest
+        FROM public.activity_retention_state WHERE singleton {lock}""", earliest, timeout=timeout)
+
+
+def minute_rows_sql():
+    stats = ", ".join(f"sum({m}) AS {m}_sum, count({m}) AS {m}_count" for m in MINUTE_METRICS)
+    return f"""SELECT date_bin('1 minute', timestamp, '2000-01-01 00:00:00+08'::timestamptz) AS bucket_start,
+        count(*) AS sample_count, {stats} FROM ({raw_source(metrics=MINUTE_METRICS)}) AS samples GROUP BY 1"""
+
+
+async def refresh_minutes(conn, start, end, timeout):
+    await conn.execute("DELETE FROM public.activity_system_minute WHERE bucket_start >= $1 AND bucket_start < $2",
+                       start, end, timeout=timeout)
+    await conn.execute("INSERT INTO public.activity_system_minute " + minute_rows_sql(), start, end, timeout=timeout)
+
+
+async def cover_minutes(conn, start, end, timeout):
+    # Only touching ranges can share one coverage receipt.
+    return await conn.fetchrow("""UPDATE public.activity_retention_state SET
+        minute_covered_from = CASE WHEN minute_covered_until >= $1 AND minute_covered_from <= $2
+            THEN least(minute_covered_from, $1) ELSE $1 END,
+        minute_covered_until = CASE WHEN minute_covered_until >= $1 AND minute_covered_from <= $2
+            THEN greatest(minute_covered_until, $2) ELSE $2 END
+        WHERE singleton RETURNING minute_covered_from, minute_covered_until""", start, end, timeout=timeout)
+
+
+async def advance_minutes(conn, sample_at):
+    """Close past minutes after a sample from the next minute has committed."""
+    end, timeout = minute_floor(sample_at), MINUTE_ONLINE_LIMIT
+    async with conn.transaction():
+        state = await minute_state(conn, end-MINUTE_RETENTION, timeout, wait=False)
+        covered = state["minute_covered_until"]
+        start = max(state["earliest"], covered if covered and covered < end else end-MINUTE)
+        if start >= end:
+            return
+        scan_from, stop = start, end
+        if end-start > MINUTE_CATCHUP:
+            # Skip a long power-off gap only after a bounded source lookup finds its next fact.
+            first = await conn.fetchval("""SELECT timestamp FROM public.fact_process_activity
+                WHERE timestamp >= $1 AND timestamp < $2 ORDER BY timestamp LIMIT 1""", start, end, timeout=timeout)
+            if first is None:
+                return await cover_minutes(conn, start, end, timeout)
+            scan_from = minute_floor(first)
+            stop = min(end, scan_from+MINUTE_CATCHUP)
+        await refresh_minutes(conn, scan_from, stop, timeout)
+        return await cover_minutes(conn, start, stop, timeout)
+
+
+async def backfill_minutes(conn, now=None, hours=72, max_batches=None):
+    # Leave recent in-flight samples to the single collector's post-commit rollup.
+    end = minute_floor(now or dt.datetime.now(UTC))-MINUTE_BACKFILL_SETTLE
+    requested_from = end-dt.timedelta(hours=hours)
+    timeout, batches = MINUTE_BACKFILL_LIMIT, 0
+    while max_batches is None or batches < max_batches:
+        started = time.monotonic()
+        async with conn.transaction():
+            state = await minute_state(conn, requested_from, timeout)
+            earliest = state["earliest"]
+            limited = {"raw_available_from": earliest.isoformat()} if earliest > requested_from else {}
+            if earliest >= end:
+                return {"complete": False, "batches": batches, **limited}
+            lower, upper = state["minute_covered_from"], state["minute_covered_until"]
+            if lower and lower <= earliest and upper >= end:
+                return {"complete": not limited, "batches": batches, **limited}
+            if upper and earliest <= upper < end:
+                start, stop = upper, min(end, upper+MINUTE_BATCH)
+            else:
+                stop = lower if lower and upper >= end else end
+                start = max(earliest, stop-MINUTE_BATCH)
+            await refresh_minutes(conn, start, stop, timeout)
+            covered = await cover_minutes(conn, start, stop, timeout)
+        batches += 1
+        print(json.dumps(dict(minute_from=start.isoformat(), minute_until=stop.isoformat(),
+                              elapsed_seconds=round(time.monotonic()-started, 3))), flush=True)
+        if covered["minute_covered_from"] <= earliest and covered["minute_covered_until"] >= end:
+            return {"complete": not limited, "batches": batches, **limited}
+    return {"complete": False, "batches": batches}
+
+
+async def prune_minutes(conn, now):
+    cutoff, timeout = minute_floor(now)-MINUTE_RETENTION, MINUTE_BACKFILL_LIMIT
+    async with conn.transaction():
+        await conn.execute("""UPDATE public.activity_retention_state SET
+            minute_covered_from = CASE WHEN minute_covered_until > $1 THEN $1 END,
+            minute_covered_until = CASE WHEN minute_covered_until > $1 THEN minute_covered_until END
+            WHERE singleton AND minute_covered_from < $1""", cutoff, timeout=timeout)
+        await conn.execute("DELETE FROM public.activity_system_minute WHERE bucket_start < $1", cutoff, timeout=timeout)
 
 
 async def refresh_hours(conn, start, end):
@@ -279,6 +431,7 @@ async def maintain(conn, now=None):
         return {"busy": True, "dropped": []}
     try:
         await install(conn)
+        await prune_minutes(conn, now)
         end = now.replace(minute=0, second=0, microsecond=0)
         raw_since = await conn.fetchval("SELECT CASE WHEN raw_since = '-infinity'::timestamptz THEN '0001-01-01 00:00:00+00'::timestamptz ELSE raw_since END FROM public.activity_retention_state WHERE singleton", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
         state = await conn.fetchrow("SELECT summaries_ready, summarized_until FROM public.activity_retention_state WHERE singleton", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
@@ -331,10 +484,18 @@ async def main_async(args):
     import asyncpg
     from db_config import local_dsn
     conn = await asyncpg.connect(local_dsn(), server_settings={"timezone": "Asia/Shanghai"})
+    status_sql = """SELECT enabled, raw_since::text AS raw_since, summaries_ready,
+        summarized_until::text AS summarized_until, backfill_until::text AS backfill_until,
+        to_jsonb(s)->>'minute_covered_from' AS minute_covered_from,
+        to_jsonb(s)->>'minute_covered_until' AS minute_covered_until
+        FROM public.activity_retention_state s WHERE singleton"""
     try:
         if args.action == "status":
-            row = await conn.fetchrow("SELECT enabled, raw_since::text AS raw_since, summaries_ready, summarized_until::text AS summarized_until, backfill_until::text AS backfill_until FROM public.activity_retention_state WHERE singleton", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
+            row = await conn.fetchrow(status_sql, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
             print(json.dumps(dict(row), default=str))
+            return
+        if args.action == "backfill-minutes":
+            print(json.dumps(await backfill_minutes(conn, hours=args.hours, max_batches=args.max_minute_batches)))
             return
         if args.action == "maintain":
             print(json.dumps(await maintain(conn)))
@@ -347,7 +508,7 @@ async def main_async(args):
             if args.action == "enable" and not await conn.fetchval("SELECT summaries_ready FROM public.activity_retention_state WHERE singleton", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC):
                 raise RuntimeError("complete backfill and dashboard deployment before enabling retention")
             await conn.execute("UPDATE public.activity_retention_state SET enabled=$1 WHERE singleton", args.action == "enable", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
-        row = await conn.fetchrow("SELECT enabled, raw_since::text AS raw_since, summaries_ready, summarized_until::text AS summarized_until, backfill_until::text AS backfill_until FROM public.activity_retention_state WHERE singleton", timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
+        row = await conn.fetchrow(status_sql, timeout=MAINTENANCE_QUERY_TIMEOUT_SEC)
         print(json.dumps(dict(row), default=str))
     finally:
         await conn.close()
@@ -355,9 +516,14 @@ async def main_async(args):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("action", choices=("install", "backfill", "enable", "disable", "maintain", "status"))
+    parser.add_argument("action", choices=("install", "backfill", "backfill-minutes", "enable", "disable", "maintain", "status"))
     parser.add_argument("--max-days", type=int, help="backfill only: stop after this many day batches without declaring coverage complete")
+    parser.add_argument("--hours", type=int, default=72, help="backfill-minutes: number of recent hours")
+    parser.add_argument("--max-minute-batches", type=int, help="backfill-minutes: stop after this many half-hour batches")
     args = parser.parse_args()
     if args.max_days is not None and (args.action != "backfill" or args.max_days < 1):
         parser.error("--max-days requires backfill and a positive value")
+    if args.action == "backfill-minutes" and (not 1 <= args.hours <= 168 or
+            args.max_minute_batches is not None and args.max_minute_batches < 1):
+        parser.error("backfill-minutes requires 1–168 hours and a positive batch limit")
     asyncio.run(main_async(args))
