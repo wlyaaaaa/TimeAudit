@@ -315,12 +315,12 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, keep_archive
             cleanup_error.original_error = original_error
             raise
         stage = getattr(original_error, 'stage', 'archive_export')
-        warning = disk_space_warning(original_error, filename, stage)
+        warning = disk_space_warning(original_error, filename, stage) or file_warning(original_error, filename, stage)
         if (warning is None and isinstance(original_error, BackupCommandError) and stage == 'pg_dump'
                 and re.search(r'(?:stdout|standard output).*(?:not enough space|no space left|disk is full)', original_error.detail, re.I)):
             warning = {'relative_path': filename, 'reason': 'insufficient_destination_space', 'error_code': None, 'stage': stage}
         if warning:
-            return {'mode': 'backup', 'status': 'complete', 'file_warnings': [warning],
+            return {'mode': 'backup', 'status': 'failed', 'reason': warning['reason'], 'stage': stage, 'file_warnings': [warning],
                     'current_data_copied': False, 'completed_archives_preserved': True}
         raise
     with failure_stage("transaction_marker_cleanup"):
@@ -382,12 +382,13 @@ def main(argv=None):
             path = Path(filename).absolute()
             root = args.backup_dir.absolute()
             if path.is_relative_to(root) and root.is_dir():
-                warning = file_warning(original_error, path.relative_to(root), getattr(original_error, "stage", "archive_copy"))
+                stage = getattr(original_error, "stage", "archive_copy")
+                warning = disk_space_warning(original_error, path.relative_to(root), stage) or file_warning(original_error, path.relative_to(root), stage)
                 if warning is not None:
-                    print(json.dumps({"mode": "backup", "status": "complete", "file_warnings": [warning],
+                    print(json.dumps({"mode": "backup", "status": "failed", "reason": warning["reason"], "stage": stage, "file_warnings": [warning],
                                       "current_data_copied": False, "completed_archives_preserved": True,
                                       "verification_scope": "previous_completed_archives_only"}))
-                    return 0
+                    return 1
         busy = str(exc) == "backup_already_running"
         value = {"status": "busy" if busy else "failed", "mode": args.mode, **failure_details(original_error, args.mode), "completed_archives_preserved": getattr(original_error, "stage", None) != "retention"}
         if original_error is not exc:

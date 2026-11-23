@@ -95,12 +95,12 @@ class FileWarningTests(unittest.TestCase):
                 {"path": str(paths[0]), "success": True, "status": 3, "observed_unix": time.time()}]):
                 self.assertEqual(grafana.main(), 0)
 
-    def test_postgres_archive_av_warns_but_ordinary_io_fails(self):
+    def test_postgres_archive_av_and_ordinary_io_fail_the_whole_export(self):
         with tempfile.TemporaryDirectory() as name:
             exc = OSError(13, "synthetic", str(Path(name) / "candidate.dump.partial")); exc.winerror = 225
             exc.stage = "archive_export"
             with patch.object(postgres, "backup", side_effect=exc):
-                self.assertEqual(postgres.main(["backup", "--backup-dir", name]), 0)
+                self.assertEqual(postgres.main(["backup", "--backup-dir", name]), 1)
             with patch.object(postgres, "backup", side_effect=PermissionError(13, "full disk", str(Path(name) / "candidate.dump.partial"))):
                 self.assertEqual(postgres.main(["backup", "--backup-dir", name]), 1)
 

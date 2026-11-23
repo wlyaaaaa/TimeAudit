@@ -115,6 +115,7 @@ if ($dbExit -ne 0 -or ($grafanaExit -ne 0 -and $grafanaReceipt.local_snapshot_st
 $cloudStatus = if ($grafanaReceipt.cloud_sync_status -in @('complete','failed')) { $grafanaReceipt.cloud_sync_status } elseif ($grafanaExit -eq 0 -and -not $grafanaReceipt.retained_previous_backup) { 'complete' } else { $null }
 $databaseReasons = @(
     'backup_command_failed','backup_command_timed_out','backup_command_unavailable','docker_unavailable',
+    'insufficient_destination_space','antivirus_blocked','antivirus_removed',
     'container_image_identity_invalid','archive_catalog_too_large','archive_missing_required_table','archive_too_small','archive_header_invalid',
     'archive_changed_during_verification','archive_manifest_too_large','archive_manifest_invalid','archive_manifest_mismatch',
     'backup_transaction_path_invalid','backup_transaction_invalid','backup_transaction_file_identity_unavailable','backup_transaction_manifest_archive_conflict',
@@ -129,6 +130,7 @@ $summary = switch ($localStatus) {
 $summary += if ($cloudStatus -eq 'complete') { '、云端同步已完成' } elseif ($cloudStatus -eq 'failed') { '、云端推送失败' } else { '、云端同步未尝试或无结果' }
 $spaceSkipped = @($receipt.file_warnings | Where-Object reason -eq 'insufficient_destination_space')
 if ($spaceSkipped.Count) { $summary += '。备份盘空间不足，已跳过：' + ($spaceSkipped.relative_path -join '、') }
+if ($dbExit -ne 0 -and $databaseReceipt.completed_archives_preserved) { $summary += '。此前已完成的数据库导出已保留' }
 $runReceipt = [ordered]@{
     schema = 'timeaudit.backup-run.v1'
     status = $receipt.overall_status

@@ -173,9 +173,12 @@ exists. Legacy cursor profiles migrate; no anomaly directly changes hardware.
 project's qualified Python runtime. A binary export goes to a unique `.partial`
 file, is flushed, checked as a PostgreSQL custom archive, listed and SHA-256
 hashed before becoming a completed `.dump` with an atomic `.dump.json` manifest.
-Failed exports never replace a completed archive. Retention keeps at least three
+Failed exports never replace a completed archive. Retention keeps the latest two
 completed archives and removes only eligible old, verified pairs. Unverified
 historical originals are preserved rather than silently classified as disposable.
+The PostgreSQL archive is one backup unit. If space or another file error prevents
+this export from completing, it reports failure and exits nonzero. The existing
+daily entrypoint still runs Grafana independently and records both outcomes.
 
 Failures report the specific `reason`, `stage`, child `exit_code` and bounded
 `error_summary`; the daily receipt retains the same diagnostic under
