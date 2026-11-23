@@ -72,10 +72,20 @@ def read_power(start, end, read=_windows_power_events):
 
 
 def apply_power(segments, power):
-    """Use a proven shutdown to fill only unsampled time; never overwrite observations."""
-    if not power or not power["spans"]:
+    """Use shutdowns and restart boundaries to label unsampled time."""
+    if not power:
         return segments
-    spans, result, i = power["spans"], [], 0
+    spans = list(power["spans"])
+    for previous, segment in zip(segments, segments[1:]):
+        if not segment.get("unrecorded") or previous.get("unrecorded") or previous["end"] != segment["start"]:
+            continue
+        restart = next((at for at in power["markers"] if segment["start"] < at <= segment["end"]), None)
+        if restart is not None:
+            spans.append((segment["start"], restart))
+    if not spans:
+        return segments
+    spans.sort()
+    result, i = [], 0
     for segment in segments:
         start, end = segment["start"], segment["end"]
         while i < len(spans) and spans[i][1] <= start:
