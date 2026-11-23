@@ -179,6 +179,7 @@ historical originals are preserved rather than silently classified as disposable
 The PostgreSQL archive is one backup unit. If space or another file error prevents
 this export from completing, it reports failure and exits nonzero. The existing
 daily entrypoint still runs Grafana independently and records both outcomes.
+Backup outcome requirement (2026-11-23 10:47 Beijing): “某几个文件导致的备份问题不属于失败，属于大部分成功，定义改变”。
 
 Failures report the specific `reason`, `stage`, child `exit_code` and bounded
 `error_summary`; the daily receipt retains the same diagnostic under
