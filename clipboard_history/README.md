@@ -8,7 +8,7 @@
 - 首次启动、解锁、恢复和从暂停继续时只建立 sequence baseline，不导入此前的当前内容。
 - 每次复制都是独立事件；内容 SHA-256 只复用 blob，不去重事件。
 - `ExcludeClipboardContentFromMonitorProcessing` 和 `CanIncludeInClipboardHistory=0` 会阻止本地保存；`CanUploadToCloudClipboard=0` 不会。
-- 疑似密钥不自动采集。命中格式识别时只记录跳过原因，原文不入库。
+- 疑似密钥不自动采集。识别常见凭据格式、私钥块、带明确字段的凭据和像密码的独立字符串。普通备注里的随机字符不会单凭字符复杂度被拦，备注里出现明确凭据时整条跳过。只记录跳过原因，原文不入库。
 - 图片、二进制、虚拟文件、私有格式、过大或暂时锁定的内容只留下无 payload 的原因事件。
 - 查看器使用 SQLite `mode=ro` 与 `query_only=ON`；FTS5 缺失时明确失败，不回退为长期全表扫描。
 - “再次复制”写入注册格式 `PersonalOS.ClipboardHistory.RestoreV1`；采集器仅在 marker 与原事件内容一致时标记 `history_restore` 和 `restored_from_event_id`。

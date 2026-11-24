@@ -42,7 +42,17 @@ class ModelTests(unittest.TestCase):
         self.assertIsNone(fts_literal_query("  :*  "))
 
     def test_local_content_hints_use_synthetic_positive_and_negative_examples(self):
-        for secret in ('API_KEY="Ab3!cD9$eF4@gH8#"', "V7@qM2!nR8#pL5$z"):
+        token = "ghp_" + "aB3dE5fG7hJ9kL2mN4pQ6rS8"
+        for secret in (
+            'API_KEY="Ab3!cD9$eF4@gH8#"', "V7@qM2!nR8#pL5$z",
+            '备注 API_KEY="Ab3!cD9$eF4@gH8#"',
+            '配置 {"client_secret": "Ab3!cD9$eF4@gH8#"}',
+            'Bearer V7qM2nR8pL5zAb3cD9eF4gH8 使用说明',
+            f"发给同事的说明：{token} 有效",
+            f"https://example.invalid/?access_token={token}",
+            "备注\n-----BEGIN PRIVATE KEY-----\n"
+            "QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVo=\n-----END PRIVATE KEY-----",
+        ):
             self.assertEqual(classify_text(secret), CaptureDecision(None, None, "suspected_secret"))
         for ordinary in (
             "This is ordinary English copied from a page.",
@@ -50,8 +60,12 @@ class ModelTests(unittest.TestCase):
             "123e4567-e89b-12d3-a456-426614174000",
             "a" * 64,
             "API_KEY=your_api_key_here",
-            '备注 API_KEY="Ab3!cD9$eF4@gH8#"',
-            'Bearer V7qM2nR8pL5zAb3cD9eF4gH8 使用说明',
+            '备注 API_KEY=os.environ.get("API_TOKEN")',
+            'API_KEY=$env:OpenAI_Prod_Key', 'ACCESS_TOKEN=process.env.AccessTokenV2',
+            'KEY_STYLE=AuthTokenV2',
+            "配置里用 API_KEY=your_api_key_here 替换占位值",
+            "参考 https://example.invalid/docs?mode=search",
+            f"{token}.txt",
             "密钥V7@qM2!nR8#pL5$z",
             "\U00020000V7@qM2!nR8#pL5$z",
         ):

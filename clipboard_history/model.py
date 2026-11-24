@@ -62,14 +62,18 @@ def fts_literal_query(value: str) -> str | None:
 
 
 _SECRET_ASSIGNMENT = re.compile(
-    r"(?im)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret(?:[_-]?key)?|"
-    r"password|passwd|client[_-]?secret)\b\s*[:=]\s*"
+    r"(?im)(?<![a-z0-9_])(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret(?:[_-]?key)?|"
+    r"password|passwd|client[_-]?secret)\b['\"]?\s*[:=]\s*"
     r"(?!(?:[a-z_]\w*\.)+[a-z_]\w*\()['\"]?([^\s'\";,}]{8,256})"
 )
 _KNOWN_PREFIX = re.compile(
-    r"^(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{24,}|"
+    r"(?<![A-Za-z0-9_./-])(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{24,}|"
     r"github_pat_[A-Za-z0-9_]{30,}|xox[baprs]-[A-Za-z0-9-]{24,}|"
-    r"AIza[A-Za-z0-9_-]{30,}|AKIA[A-Z0-9]{16})$"
+    r"AIza[A-Za-z0-9_-]{30,}|AKIA[A-Z0-9]{16})(?![A-Za-z0-9_./-])"
+)
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"(?m)^-----BEGIN ((?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY)-----\r?\n"
+    r"[A-Za-z0-9+/]{32,}={0,2}(?:\r?\n[A-Za-z0-9+/]+={0,2})*\r?\n-----END \1-----\r?$"
 )
 _UUID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
@@ -106,6 +110,8 @@ _PLACEHOLDER = re.compile(
 _ORDINARY_TOKEN = re.compile(
     r"(?i:(?:build|issue|order|ticket)#[0-9]+|windows:[0-9]{2}h[12])|"
     r"[A-Za-z0-9.-]+:[0-9]{2,5}|"
+    r"[A-Z][A-Z0-9]*_[A-Z0-9_]+=[A-Za-z_][A-Za-z0-9_.-]*|"
+    r"(?i:(?:[a-z_]\w*=)?(?:\$(?:env:)?[a-z_]\w*|%[a-z_]\w*%|process\.env\.[a-z_]\w*))|"
     r"(?:[A-Za-z_]\w*\s*=\s*)?(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*\([A-Za-z0-9_,'\". ]*\);?"
 )
 
@@ -117,7 +123,7 @@ def _entropy(value: str) -> float:
 
 
 def _tokenish(value: str) -> bool:
-    if not 8 <= len(value) <= 256 or any(c.isspace() for c in value) or _PLACEHOLDER.search(value):
+    if not value.isascii() or not 8 <= len(value) <= 256 or any(c.isspace() for c in value) or _PLACEHOLDER.search(value):
         return False
     if _UUID.fullmatch(value) or re.fullmatch(r"[0-9a-fA-F]{32,128}", value):
         return False
@@ -163,17 +169,15 @@ def looks_like_secret(text: str) -> bool:
     value = text.strip()
     if not value:
         return False
-    # The product's secret-like filter is for key-shaped Latin/ASCII text.
-    # An assignment embedded in a Chinese note is still a note, not a key row.
-    if re.search(r"[\u3007\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\U00020000-\U000323af]", value):
-        return False
-    if _KNOWN_PREFIX.fullmatch(value) or _jwt_like(value) or _RECOVERY_KEY.fullmatch(value):
+    if _PRIVATE_KEY_BLOCK.search(value) or _jwt_like(value) or _RECOVERY_KEY.fullmatch(value):
+        return True
+    if any(not _PLACEHOLDER.search(match[0]) for match in _KNOWN_PREFIX.finditer(value)):
         return True
     if len(value) <= 256 and _tokenish(value):
         return True
     for match in _SECRET_ASSIGNMENT.finditer(value):
         candidate = match.group(1)
-        if _KNOWN_PREFIX.fullmatch(candidate) or _jwt_like(candidate) or _tokenish(candidate):
+        if _jwt_like(candidate) or _RECOVERY_KEY.fullmatch(candidate) or _tokenish(candidate):
             return True
     bearer = re.search(r"(?i)\bBearer\s+([A-Za-z0-9._-]{16,256})\b", value)
     return bool(bearer and (_jwt_like(bearer.group(1)) or _tokenish(bearer.group(1))))
