@@ -42,8 +42,8 @@ class ModelTests(unittest.TestCase):
         self.assertIsNone(fts_literal_query("  :*  "))
 
     def test_local_content_hints_use_synthetic_positive_and_negative_examples(self):
-        self.assertTrue(looks_like_secret('API_KEY="Ab3!cD9$eF4@gH8#"'))
-        self.assertTrue(looks_like_secret("V7@qM2!nR8#pL5$z"))
+        for secret in ('API_KEY="Ab3!cD9$eF4@gH8#"', "V7@qM2!nR8#pL5$z"):
+            self.assertEqual(classify_text(secret), CaptureDecision(None, None, "suspected_secret"))
         for ordinary in (
             "This is ordinary English copied from a page.",
             "def process_request(user_id): return user_id",
@@ -87,9 +87,12 @@ class ModelTests(unittest.TestCase):
             "Qwen3.6-35B-A3B", "Qwen3.8-27B-Q4_K_M.gguf", "Qwen3.8-27B:256k",
             "Model4.2-24B-Q8_0:128k", "Model4.2-24B-A2B-Instruct",
             "Model4.2-24B.safetensors", "encoder-v2.1.onnx",
+            "v1.2.3+Build2026", "Console.WriteLine(123);", "WORKSTATION1:8080",
+            "Build#1234", "Windows:22H2", 'API_KEY=os.environ.get("API_TOKEN")',
         ):
             with self.subTest(value=value):
                 self.assertEqual(content_kind(value, "text"), "text")
+                self.assertEqual(classify_text(value).text, value)
 
     def test_identifier_exceptions_preserve_secret_shapes(self):
         # Dots or a familiar extension alone must not exempt a mixed password.

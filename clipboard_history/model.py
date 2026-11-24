@@ -29,6 +29,8 @@ def classify_text(text: str) -> CaptureDecision:
         return CaptureDecision(None, None, "empty_text")
     if len(text.encode("utf-16-le", errors="strict")) > CAPTURE_LIMIT_BYTES:
         return CaptureDecision(None, None, "payload_too_large")
+    if looks_like_secret(text):
+        return CaptureDecision(None, None, "suspected_secret")
     parts = urlsplit(text.strip())
     payload_type = (
         "url"
@@ -61,7 +63,8 @@ def fts_literal_query(value: str) -> str | None:
 
 _SECRET_ASSIGNMENT = re.compile(
     r"(?im)\b(?:api[_-]?key|access[_-]?token|auth[_-]?token|secret(?:[_-]?key)?|"
-    r"password|passwd|client[_-]?secret)\b\s*[:=]\s*['\"]?([^\s'\";,}]{8,256})"
+    r"password|passwd|client[_-]?secret)\b\s*[:=]\s*"
+    r"(?!(?:[a-z_]\w*\.)+[a-z_]\w*\()['\"]?([^\s'\";,}]{8,256})"
 )
 _KNOWN_PREFIX = re.compile(
     r"^(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{24,}|"
@@ -89,7 +92,7 @@ _FILENAME = re.compile(
 )
 _VERSION_IDENTIFIER = re.compile(
     r"(?:[A-Za-z]+[-_])*[vV]?[0-9]+(?:\.[0-9]+){1,3}"
-    r"(?:[-_][A-Za-z]+(?:[.-]?[0-9]+)?)?"
+    r"(?:[-_][A-Za-z]+(?:[.-]?[0-9]+)?)?(?:\+[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)?"
 )
 _MODEL_IDENTIFIER = re.compile(
     r"(?:[A-Za-z]+[0-9]+(?:\.[0-9]+)*-[0-9]+(?:\.[0-9]+)?[Bb]"
@@ -99,6 +102,11 @@ _MODEL_IDENTIFIER = re.compile(
 _PLACEHOLDER = re.compile(
     r"(?i)(?:example|sample|placeholder|changeme|replace[_-]?me|your[_-]?|dummy|"
     r"not[_-]?a[_-]?real|<[^>]+>|\$\{[^}]+\})"
+)
+_ORDINARY_TOKEN = re.compile(
+    r"(?i:(?:build|issue|order|ticket)#[0-9]+|windows:[0-9]{2}h[12])|"
+    r"[A-Za-z0-9.-]+:[0-9]{2,5}|"
+    r"(?:[A-Za-z_]\w*\s*=\s*)?(?:[A-Za-z_]\w*\.)+[A-Za-z_]\w*\([A-Za-z0-9_,'\". ]*\);?"
 )
 
 
@@ -117,7 +125,9 @@ def _tokenish(value: str) -> bool:
         return False
     if "@" in value and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value):
         return False
-    if any(pattern.fullmatch(value) for pattern in (_FILENAME, _VERSION_IDENTIFIER, _MODEL_IDENTIFIER)):
+    if any(pattern.fullmatch(value) for pattern in (
+        _FILENAME, _VERSION_IDENTIFIER, _MODEL_IDENTIFIER, _ORDINARY_TOKEN,
+    )):
         return False
     if value.isalnum() and (len(value) < 24 or sum(c.isdigit() for c in value) < 4):
         return False
