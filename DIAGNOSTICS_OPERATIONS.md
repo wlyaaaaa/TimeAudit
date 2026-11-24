@@ -52,23 +52,23 @@ collectors. If Docker Desktop has exited, it invokes the existing registered
 `TimeAudit_AutoStart` task unless that task is already running, and checks
 readiness on the next minute's cycle. This preserves the registered interactive
 startup context instead of duplicating it in an ad hoc process. If Desktop is
-still present while the API is unavailable, only successful JSON output from
-`docker desktop status --format json` with `Status=stopped` starts a ten-minute
-confirmation window. Failed, timed-out, malformed or other status observations
-reset that window; observation gaps over three minutes also restart it.
-`log/docker_engine_recovery.json` preserves the window and an attempt latch
-between serialized watchdog runs. An unreadable receipt defers recovery.
-After ten continuously observed minutes, the watchdog records the attempt
-before running one official `desktop restart --timeout 110`, bounded to 120
-seconds. Success, or a subsequently healthy API, prevents any process termination.
-If restart fails, the API is still unavailable and a fresh bounded Desktop
-status probe still explicitly reports `stopped`, the fallback stops only
+still present while the API is unavailable, successful JSON output from
+`docker desktop status --format json` with `Status=running` or `Status=stopped`
+counts toward a ten-minute outage. Start, stop and unknown status observations
+reset that window, as do observation gaps over three minutes.
+`log/docker_engine_recovery.json` preserves the window and recovery progress
+between serialized watchdog runs. After ten continuously observed minutes it
+records one official `desktop restart --timeout 110`, bounded to 120 seconds.
+The watchdog reserves those 120 seconds plus three minutes for startup before
+considering fallback. Before stopping any processes it rechecks the API and
+requires a fresh `running` or `stopped` status and three minutes of outage
+observations since the last transition or gap. The fallback stops only
 `Docker Desktop.exe`, `com.docker.backend.exe`, `com.docker.build.exe` and
 `docker-desktop.exe` whose executable paths are inside the Docker installation
-directory, then invokes the existing `TimeAudit_AutoStart` task. A running or
-missing autostart task defers this recovery. The same unresolved incident never
-repeats the restart or fallback, even if Desktop subsequently disappears; a
-healthy API clears the latch for a later incident. Process identity is checked
+directory, then invokes the existing `TimeAudit_AutoStart` task. If Desktop
+has already exited, only the task is invoked. A running or missing autostart
+task defers recovery. Each incident gets at most one restart and one fallback.
+A healthy API clears the state for a later incident. Process identity is checked
 again using a live process handle; children that exit naturally do not abort bootstrap.
 Existing stopped PostgreSQL and Grafana containers are started
 without recreating containers, volumes or data. Grafana's local `/api/health`

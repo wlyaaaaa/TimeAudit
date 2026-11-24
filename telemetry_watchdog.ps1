@@ -131,8 +131,8 @@ function Test-MainWithinStartupGrace($process) {
 }
 
 # Docker can disappear after successful logon bootstrap. Keep recovery in this
-# serialized watchdog, before consumers. Only a continuously confirmed stopped
-# engine permits one bounded Desktop recovery; never recreate containers/data.
+# serialized watchdog, before consumers. A sustained engine API outage permits
+# one bounded Desktop restart and, if needed, one fallback.
 function Invoke-DockerBounded([string]$Arguments, [int]$TimeoutSeconds = 8) {
     $start = New-Object Diagnostics.ProcessStartInfo
     $start.FileName = $docker
@@ -179,33 +179,57 @@ function Get-DockerDesktopState {
     return 'unknown'
 }
 
-function Restore-StoppedDocker([string]$Status, [long]$NowSeconds = ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) {
+function Restore-UnavailableDocker([string]$Status, [long]$NowSeconds = ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) {
     if ($Status -eq 'healthy') {
         Remove-Item -LiteralPath $dockerRecoveryState -Force -ErrorAction SilentlyContinue
         return $false
     }
-    $state = @{ Version = 1; Since = 0L; Last = 0L; Attempted = $false }
+    $unavailable = $Status -in @('stopped', 'running')
+    $restartTimeout = 120
+    $startupGrace = 180
+    $state = @{ Version = 1; Since = 0L; Last = 0L; Attempted = $false; FallbackAfter = 0L }
     if (Test-Path -LiteralPath $dockerRecoveryState) {
         try {
             $saved = Get-Content -LiteralPath $dockerRecoveryState -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             if ($saved.Version -ne 1 -or $saved.Attempted -isnot [bool] -or $saved.Since -lt 0 -or $saved.Last -lt 0) { throw 'invalid recovery state' }
-            $state = @{ Version = 1; Since = [long]$saved.Since; Last = [long]$saved.Last; Attempted = $saved.Attempted }
+            $state = @{
+                Version = 1; Since = [long]$saved.Since; Last = [long]$saved.Last
+                Attempted = $saved.Attempted; FallbackAfter = [long]$saved.FallbackAfter
+            }
         } catch { Log 'Docker recovery state unreadable - defer automatic engine recovery'; return $true }
-    } elseif ($Status -ne 'stopped') { return $false }
-    if ($Status -ne 'stopped') {
-        # Unknown observations break continuity but never clear a spent attempt.
+    } elseif (-not $unavailable) { return $false }
+    if (-not $unavailable) {
+        # Starting, stopping and unreadable status break continuity.
         $state.Since = 0L; $state.Last = 0L
     } else {
         if ($state.Since -eq 0 -or $NowSeconds -lt $state.Last -or $NowSeconds - $state.Last -gt 180) { $state.Since = $NowSeconds }
         $state.Last = $NowSeconds
     }
-    $recover = $Status -eq 'stopped' -and -not $state.Attempted -and $NowSeconds - $state.Since -ge 600
-    if ($recover) {
+    $unavailableFor = $NowSeconds - $state.Since
+    $restart = $unavailable -and -not $state.Attempted -and $unavailableFor -ge 600
+    $fallback = $state.Attempted -and $state.FallbackAfter -gt 0 -and $NowSeconds -ge $state.FallbackAfter -and
+        ($Status -eq 'absent' -or ($unavailable -and $unavailableFor -ge $startupGrace))
+    if ($fallback) {
+        if ((Invoke-DockerBounded 'version --format {{.Server.Version}}').Success) {
+            Log 'Docker API recovered during restart grace'
+            $null = Restore-UnavailableDocker 'healthy'
+            return $true
+        }
+        if ($Status -ne 'absent' -and (Get-DockerDesktopState) -notin @('running', 'stopped')) {
+            $fallback = $false
+            $state.Since = 0L; $state.Last = 0L
+        }
+    }
+    if ($restart -or $fallback) {
         $autostart = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
         if (-not $autostart -or $autostart.State -eq 'Running') {
-            Log 'Docker stopped recovery deferred - registered autostart unavailable or already running'
-            $recover = $false
-        } else { $state.Attempted = $true }
+            Log 'Docker recovery deferred - registered autostart unavailable or already running'
+            $restart = $false; $fallback = $false
+        } else {
+            $state.Attempted = $true
+            $state.FallbackAfter = 0L
+            if ($restart) { $state.FallbackAfter = $NowSeconds + $restartTimeout + $startupGrace }
+        }
     }
     $temporary = $dockerRecoveryState + '.' + $PID + '.tmp'
     try {
@@ -213,25 +237,19 @@ function Restore-StoppedDocker([string]$Status, [long]$NowSeconds = ([DateTimeOf
         Move-Item -LiteralPath $temporary -Destination $dockerRecoveryState -Force -ErrorAction Stop
     } catch { Log 'Docker recovery state not persisted - no engine mutation'; return $true }
     finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
-    if (-not $recover) { return $state.Attempted }
-    Log 'Docker Desktop explicitly stopped for 10 minutes - one bounded official restart'
-    $restart = Invoke-DockerBounded 'desktop restart --timeout 110' 120
-    if ($restart.Success) { Log 'Docker Desktop restart completed - next cycle verifies dependencies'; return $true }
-    if ((Invoke-DockerBounded 'version --format {{.Server.Version}}').Success) {
-        Log 'Docker API recovered after unconfirmed Desktop restart - no process termination'
+    if ($restart) {
+        Log "Docker API unavailable for 10 minutes (desktop_status=$Status) - one bounded official restart"
+        $result = Invoke-DockerBounded 'desktop restart --timeout 110' $restartTimeout
+        Log "Docker Desktop restart returned success=$($result.Success), timed_out=$($result.TimedOut) - verifying API in later cycles"
         return $true
     }
-    if ((Get-DockerDesktopState) -ne 'stopped') {
-        Log 'Docker restart unconfirmed but Desktop is not explicitly stopped - preserve processes and attempt latch'
-        return $true
-    }
-    $autostart = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
-    if (-not $autostart -or $autostart.State -eq 'Running') { Log 'Docker fallback deferred - autostart unavailable or already running'; return $true }
+    if (-not $fallback) { return $state.Attempted }
     $installRoot = [IO.Path]::GetFullPath((Join-Path (Split-Path $docker -Parent) '..\..')).TrimEnd('\') + '\'
     $ownedNames = @('Docker Desktop.exe', 'com.docker.backend.exe', 'com.docker.build.exe', 'docker-desktop.exe')
     $filter = ($ownedNames | ForEach-Object { "Name='$_'" }) -join ' OR '
     try {
-        foreach ($candidate in @(Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop)) {
+        $candidates = if ($Status -ne 'absent') { Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop }
+        foreach ($candidate in $candidates) {
             if ($candidate.Name -notin $ownedNames -or [string]::IsNullOrWhiteSpace($candidate.ExecutablePath)) { continue }
             $process = Get-Process -Id $candidate.ProcessId -ErrorAction SilentlyContinue
             if (-not $process) { continue }
@@ -258,15 +276,13 @@ function Restore-TimeAuditDependencies {
     $probeTimer.Stop()
     if (-not $engine.Success) {
         $desktop = Get-Process -Name 'Docker Desktop','com.docker.backend' -ErrorAction SilentlyContinue
-        $desktopState = 'unknown'
+        $desktopState = 'absent'
         if ($desktop) {
             $desktopState = Get-DockerDesktopState
         }
-        $recoveryBlocked = Restore-StoppedDocker $desktopState
+        $recoveryBlocked = Restore-UnavailableDocker $desktopState
         if ($engine.TimedOut) {
-            # A slow API probe alone does not justify bootstrap. Only the
-            # separate explicit Desktop status above can authorize recovery.
-            Log ("Docker API probe timed out after {0:F2}s; desktop_status={1} - separate Desktop status governs stopped-engine recovery" -f $probeTimer.Elapsed.TotalSeconds, $desktopState)
+            Log ("Docker API probe timed out after {0:F2}s; desktop_status={1}" -f $probeTimer.Elapsed.TotalSeconds, $desktopState)
             return
         }
         if (-not $desktop) {
@@ -279,11 +295,11 @@ function Restore-TimeAuditDependencies {
                 Log 'Docker status probe failed - autostart already running or not registered'
             }
         } else {
-            Log 'Docker API unavailable - Desktop must be explicitly stopped for 10 minutes before one recovery attempt'
+            Log "Docker API unavailable; desktop_status=$desktopState"
         }
         return
     }
-    $null = Restore-StoppedDocker 'healthy'
+    $null = Restore-UnavailableDocker 'healthy'
     $grafanaStartAttempted = $false
     foreach ($name in 'audit-postgres','audit-grafana') {
         $state = Invoke-DockerBounded ('inspect --format {{.State.Status}} ' + $name)
