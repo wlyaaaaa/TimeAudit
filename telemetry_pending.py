@@ -13,10 +13,18 @@ class PendingTelemetry:
 
     def __init__(self, root):
         self.root = Path(root)
-        # The collector already holds its singleton. Any .tmp left by the
-        # previous process never reached atomic publication.
+        # A restart can interrupt the rename after a complete sample was flushed.
         for temporary in self.root.glob("*.tmp"):
-            temporary.unlink()
+            try:
+                self._read(temporary)
+            except (TypeError, ValueError):
+                temporary.unlink()
+                continue
+            published = temporary.with_suffix(".json")
+            if published.exists():
+                temporary.unlink()
+            else:
+                os.replace(temporary, published)
         self.pending = deque(sorted(self.root.glob("*.json")))
         self._direct = False
         self._buffered = 0
@@ -62,7 +70,11 @@ class PendingTelemetry:
         item = self.pending[0]
         if isinstance(item, tuple):
             return item
-        kind, stamp, rows = json.loads(item.read_text(encoding="utf-8"))
+        return self._read(item)
+
+    @staticmethod
+    def _read(path):
+        kind, stamp, rows = json.loads(path.read_text(encoding="utf-8"))
         return kind, datetime.fromisoformat(stamp), rows
 
     def acknowledge(self):

@@ -757,7 +757,11 @@ class DatabasePoolRecoveryTest(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(list(Path(directory).iterdir()))
             pending.defer()
             pending.record("activity", stamp + datetime.timedelta(seconds=3), activity)
+            latest = sorted(Path(directory).glob("*.json"))[-1]
+            latest.rename(latest.with_suffix(".tmp"))
+            (Path(directory) / "incomplete.tmp").write_text('["hardware",', encoding="utf-8")
             after_restart = PendingTelemetry(directory)
+            self.assertFalse(list(Path(directory).glob("*.tmp")))
             self.assertEqual(("hardware", stamp, hardware), after_restart.first())
             after_restart.acknowledge()
             self.assertEqual(("activity", stamp + datetime.timedelta(seconds=3), activity), after_restart.first())
