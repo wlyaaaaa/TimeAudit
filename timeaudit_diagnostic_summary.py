@@ -64,7 +64,9 @@ def format_utc(value: dt.datetime) -> str:
 
 
 VALID_FRAME_SQL = """CASE WHEN h.current_fps BETWEEN 0.5 AND 1000 THEN
-      (h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
+      ((h.fps_capture_detail = 'rtss_shared_memory_frame'
+          AND h.measurement_quality->>'fps_current_semantics' = 'latest_frame_reciprocal')
+       OR h.average_fps BETWEEN 0.5 AND 1000 OR h.average_fps IS NULL OR h.average_fps = 0)
       AND (h.fps_capture_status = 'active' OR h.fps_capture_status IS NULL)
       AND h.frametime_ms BETWEEN 0.5 AND 2000
       AND ((h.fps_capture_detail = 'rtss_shared_memory_frame' AND h.measurement_quality IS NULL)
