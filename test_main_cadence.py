@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import datetime
 import io
+import tempfile
 import threading
 import time
 import unittest
@@ -465,7 +466,7 @@ class HealthLeaseTest(unittest.TestCase):
 
 
 class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
-    async def test_cancelled_pre_sleep_snapshot_never_reaches_activity_write(self):
+    async def test_cancelled_pre_sleep_snapshot_never_reaches_local_record(self):
         run_activity = _extract_function(
             _module_tree(),
             "_collect_and_write_activity_snapshot",
@@ -487,16 +488,15 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
                 finally:
                     collection_finished.set()
 
-            async def write_batch_to_db(self, pool, rows, timestamp):
+            def record(self, kind, timestamp, rows):
                 self.write_calls += 1
 
         worker = SlowWorker()
         task = asyncio.create_task(
             run_activity(
                 worker,
-                object(),
+                worker,
                 datetime.datetime(2026, 8, 8, tzinfo=datetime.timezone.utc),
-                asyncio.Event(),
             )
         )
         try:
@@ -522,7 +522,7 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(collection_finished.is_set())
         self.assertEqual(0, worker.write_calls)
 
-    async def test_collection_that_spans_sleep_is_discarded_before_database_write(self):
+    async def test_collection_that_spans_sleep_is_discarded_before_recording(self):
         run_activity = _extract_function(
             _module_tree(),
             "_collect_and_write_activity_snapshot",
@@ -535,18 +535,15 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
             def collect_active_processes(self):
                 return ["cross-sleep-snapshot"]
 
-            async def write_batch_to_db(self, pool, rows, timestamp):
+            def record(self, kind, timestamp, rows):
                 self.write_calls += 1
 
         wall_times = iter((100.0, 161.0))
         worker = Worker()
-        hardware_committed = asyncio.Event()
-        hardware_committed.set()
         result = await run_activity(
             worker,
-            object(),
+            worker,
             datetime.datetime(2026, 8, 8, tzinfo=datetime.timezone.utc),
-            hardware_committed,
             wall_clock=lambda: next(wall_times),
             sleep_threshold=60.0,
         )
@@ -554,7 +551,7 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(result)
         self.assertEqual(0, worker.write_calls)
 
-    async def test_activity_waits_for_hardware_commit_and_preserves_timestamp_identity(self):
+    async def test_activity_records_without_database_and_preserves_timestamp_identity(self):
         run_activity = _extract_function(
             _module_tree(),
             "_collect_and_write_activity_snapshot",
@@ -567,25 +564,12 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
             def collect_active_processes(self):
                 return ["snapshot"]
 
-            async def write_batch_to_db(self, pool, rows, timestamp):
+            def record(self, kind, timestamp, rows):
                 self.written_timestamp = timestamp
 
         worker = Worker()
-        hardware_committed = asyncio.Event()
         sample_timestamp = object()
-        task = asyncio.create_task(
-            run_activity(
-                worker,
-                object(),
-                sample_timestamp,
-                hardware_committed,
-            )
-        )
-        await asyncio.sleep(0.02)
-        self.assertIsNone(worker.written_timestamp)
-
-        hardware_committed.set()
-        self.assertTrue(await asyncio.wait_for(task, timeout=1.0))
+        self.assertTrue(await asyncio.wait_for(run_activity(worker, worker, sample_timestamp), timeout=1.0))
         self.assertIs(sample_timestamp, worker.written_timestamp)
 
     async def test_slow_activity_does_not_block_fast_work_or_spawn_overlap(self):
@@ -610,7 +594,7 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
                     raise TimeoutError("test did not release slow activity")
                 return ["snapshot"]
 
-            async def write_batch_to_db(self, pool, rows, timestamp):
+            def record(self, kind, timestamp, rows):
                 self.write_calls += 1
 
         worker = SlowWorker()
@@ -620,15 +604,13 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
             task = asyncio.create_task(
                 run_activity(
                     worker,
-                    object(),
+                    worker,
                     datetime.datetime(2026, 8, 8, tzinfo=datetime.timezone.utc),
-                    hardware_committed,
                 )
             )
             starts.append(task)
             return task
 
-        hardware_committed = asyncio.Event()
         task = start_if_due(None, True, True, start_activity)
         try:
             for _ in range(200):
@@ -653,7 +635,6 @@ class ActivityLaneShutdownTest(unittest.IsolatedAsyncioTestCase):
         finally:
             release_collection.set()
 
-        hardware_committed.set()
         await asyncio.wait_for(task, timeout=1.0)
         self.assertEqual(1, worker.collect_calls)
         self.assertEqual(1, worker.write_calls)
@@ -763,6 +744,26 @@ class DatabasePoolRecoveryTest(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(recovered.closed)
         self.assertFalse(recovered.terminated)
 
+    def test_pending_samples_survive_restart_until_acknowledged(self):
+        from telemetry_pending import PendingTelemetry
+        stamp = datetime.datetime(2026, 11, 25, 13, 40, 21, tzinfo=datetime.timezone.utc)
+        hardware = {"current_fps": None, "collector_instance_id": "before-restart", "collector_sample_seq": 19}
+        activity = [{"os_pid": 123, "cpu": 2.5}]
+        with tempfile.TemporaryDirectory() as directory:
+            pending = PendingTelemetry(directory)
+            pending.allow_direct()
+            pending.record("hardware", stamp, hardware)
+            self.assertEqual(("hardware", stamp, hardware), pending.first())
+            self.assertFalse(list(Path(directory).iterdir()))
+            pending.defer()
+            pending.record("activity", stamp + datetime.timedelta(seconds=3), activity)
+            after_restart = PendingTelemetry(directory)
+            self.assertEqual(("hardware", stamp, hardware), after_restart.first())
+            after_restart.acknowledge()
+            self.assertEqual(("activity", stamp + datetime.timedelta(seconds=3), activity), after_restart.first())
+            after_restart.acknowledge()
+            self.assertFalse(PendingTelemetry(directory).pending)
+
 
 class CollectorCadenceWiringTest(unittest.TestCase):
     def setUp(self):
@@ -787,12 +788,12 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         self.assertEqual(5.0, _constant_value(self.tree, "DB_CONNECT_TIMEOUT_SEC"))
         pool_calls = [
             node
-            for node in ast.walk(self.collector)
+            for node in ast.walk(self.tree)
             if isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "create_pool"
         ]
-        self.assertEqual(2, len(pool_calls))
+        self.assertEqual(1, len(pool_calls))
         for call in pool_calls:
             keywords = {keyword.arg: keyword.value for keyword in call.keywords}
             self.assertIn("timeout", keywords)
@@ -801,12 +802,10 @@ class CollectorCadenceWiringTest(unittest.TestCase):
 
     def test_only_background_lane_owns_expensive_activity_pipeline(self):
         hardware_calls = _calls_named(self.collector, "collect_hardware_snapshot")
-        hardware_writes = _calls_named(self.collector, "write_to_db")
-        context_calls = _calls_named(self.collector, "poll_heartbeat")
-
         self.assertEqual(1, len(hardware_calls))
-        self.assertEqual(1, len(hardware_writes))
-        self.assertEqual(1, len(context_calls))
+        self.assertEqual(1, len(_calls_named(self.collector, "record")))
+        self.assertFalse(_calls_named(self.collector, "write_to_db"))
+        self.assertFalse(_calls_named(self.collector, "poll_heartbeat"))
 
         self.assertFalse(_attributes_named(self.collector, "collect_active_processes"))
         self.assertFalse(_calls_named(self.collector, "write_batch_to_db"))
@@ -814,7 +813,7 @@ class CollectorCadenceWiringTest(unittest.TestCase):
             1,
             len(_attributes_named(self.activity_lane, "collect_active_processes")),
         )
-        self.assertEqual(1, len(_calls_named(self.activity_lane, "write_batch_to_db")))
+        self.assertEqual(1, len(_calls_named(self.activity_lane, "record")))
 
     def test_slow_activity_lane_is_not_awaited_by_fast_collector(self):
         parent = {}
@@ -841,7 +840,6 @@ class CollectorCadenceWiringTest(unittest.TestCase):
             for node in ast.walk(self.collector)
             if isinstance(node, ast.Await) and isinstance(node.value, ast.Name)
         }
-        self.assertIn("hardware_write_task", awaited_names)
         self.assertNotIn("activity_task", awaited_names)
 
         self.assertFalse(
@@ -875,31 +873,10 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         self.assertIn(id(cancel_calls[0]), resume_nodes)
         self.assertEqual(1, len(_calls_named(resume_handler.body, "mark_sleep_boundary")))
 
-        assignments = {
-            target.id: node.value
-            for root in resume_handler.body
-            for node in ast.walk(root)
-            if isinstance(node, ast.Assign)
-            for target in node.targets
-            if isinstance(target, ast.Name)
-            and target.id in {
-                "health_started_at",
-                "activity_last_success_at",
-                "context_last_success_at",
-            }
-        }
-        self.assertEqual(
-            {
-                "health_started_at",
-                "activity_last_success_at",
-                "context_last_success_at",
-            },
-            set(assignments),
-        )
-        self.assertIsInstance(assignments["activity_last_success_at"], ast.Constant)
-        self.assertIsNone(assignments["activity_last_success_at"].value)
-        self.assertIsInstance(assignments["context_last_success_at"], ast.Constant)
-        self.assertIsNone(assignments["context_last_success_at"].value)
+        self.assertTrue(any(
+            ast.unparse(call.func) == "progress.clear"
+            for call in _calls_named(resume_handler.body, "clear")
+        ))
 
     def test_both_deadlines_advance_from_their_existing_anchor(self):
         advance_calls = [
@@ -918,10 +895,9 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         self.assertIn("next_telemetry_deadline", first_argument_names)
         self.assertIn("next_activity_deadline", first_argument_names)
 
-    def test_hardware_and_activity_share_post_context_sample_timestamp(self):
-        poll_call = _calls_named(self.collector, "poll_heartbeat")[0]
+    def test_hardware_and_activity_share_the_actual_sample_timestamp(self):
         collect_call = _calls_named(self.collector, "collect_hardware_snapshot")[0]
-        write_call = _calls_named(self.collector, "write_to_db")[0]
+        write_call = _calls_named(self.collector, "record")[0]
         activity_call = next(
             node
             for node in ast.walk(self.collector)
@@ -950,7 +926,6 @@ class CollectorCadenceWiringTest(unittest.TestCase):
 
         self.assertEqual(1, len(sample_assignments))
         sample_assignment = sample_assignments[0]
-        self.assertLess(poll_call.lineno, identity_calls[0].lineno)
         self.assertLess(identity_calls[0].lineno, sample_assignment.lineno)
         self.assertLess(
             sample_assignment.lineno,
@@ -958,17 +933,15 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         )
         self.assertIsInstance(collect_call.args[1], ast.Name)
         self.assertEqual("hardware_pid", collect_call.args[1].id)
-        self.assertIsInstance(write_call.args[2], ast.Name)
-        self.assertEqual("sample_timestamp", write_call.args[2].id)
+        self.assertIsInstance(write_call.args[1], ast.Name)
+        self.assertEqual("sample_timestamp", write_call.args[1].id)
         self.assertEqual(
             "datetime.datetime.now(datetime.timezone.utc)",
             ast.unparse(sample_assignment.value),
         )
-        self.assertGreaterEqual(len(activity_call.args), 4)
+        self.assertEqual(3, len(activity_call.args))
         self.assertIsInstance(activity_call.args[2], ast.Name)
         self.assertEqual("sample_timestamp", activity_call.args[2].id)
-        self.assertIsInstance(activity_call.args[3], ast.Name)
-        self.assertEqual("hardware_committed", activity_call.args[3].id)
 
     def test_activity_lane_uses_the_shared_sample_timestamp(self):
         timestamp_assignments = [
@@ -999,10 +972,10 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         self.assertEqual([], sample_reassignments)
 
         collect_call = _calls_named(self.activity_lane, "to_thread")[0]
-        write_call = _calls_named(self.activity_lane, "write_batch_to_db")[0]
+        write_call = _calls_named(self.activity_lane, "record")[0]
         self.assertLess(collect_call.lineno, write_call.lineno)
-        self.assertIsInstance(write_call.args[2], ast.Name)
-        self.assertEqual("sample_timestamp", write_call.args[2].id)
+        self.assertIsInstance(write_call.args[1], ast.Name)
+        self.assertEqual("sample_timestamp", write_call.args[1].id)
 
     def test_resume_is_rechecked_after_hardware_before_heartbeat(self):
         observe_calls = [
@@ -1014,13 +987,7 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         ]
         self.assertGreaterEqual(len(observe_calls), 2)
 
-        hardware_awaits = [
-            node
-            for node in ast.walk(self.collector)
-            if isinstance(node, ast.Await)
-            and isinstance(node.value, ast.Name)
-            and node.value.id == "hardware_write_task"
-        ]
+        capture_call = _calls_named(self.collector, "collect_hardware_snapshot")[0]
         heartbeat_call = next(
             node
             for node in ast.walk(self.collector)
@@ -1028,11 +995,10 @@ class CollectorCadenceWiringTest(unittest.TestCase):
             and isinstance(node.func, ast.Name)
             and node.func.id == "write_telemetry_heartbeat"
         )
-        self.assertEqual(1, len(hardware_awaits))
         post_hardware_checks = [
             call
             for call in observe_calls
-            if hardware_awaits[0].lineno < call.lineno < heartbeat_call.lineno
+            if capture_call.lineno < call.lineno < heartbeat_call.lineno
         ]
         self.assertTrue(post_hardware_checks)
 
@@ -1044,7 +1010,7 @@ class CollectorCadenceWiringTest(unittest.TestCase):
         node = heartbeat_call
         while node in parent:
             node = parent[node]
-            if isinstance(node, ast.If):
+            if isinstance(node, ast.If) and "resume_detected_this_slot" in ast.unparse(node.test):
                 guarding_if = node
                 break
         self.assertIsNotNone(guarding_if)

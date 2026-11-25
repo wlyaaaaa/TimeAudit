@@ -392,12 +392,11 @@ class HardwareTelemetryWorker:
 
     def _presentmon_needed(self):
         with self._fps_state_lock:
-            if getattr(self, "_rtss_mapping_available", False):
-                return False
             rtss_recent = (
                 time.monotonic() - self._rtss_frame_seen_monotonic
                 < self.RTSS_PRESENTMON_SUPPRESS_SECONDS
             )
+        # The RTSS table can stay open all day without sampling the current app.
         return self._render_active() and not rtss_recent
 
     @classmethod
@@ -439,7 +438,7 @@ class HardwareTelemetryWorker:
     ):
         if rtss_has_frame:
             return "active", "rtss_shared_memory_frame"
-        if rtss_mapping_available:
+        if rtss_mapping_available and source_available and not render_active and not presentmon_has_frame:
             return "gated_idle", "rtss_no_active_frame"
         return cls._map_fps_capture_state(
             source_available,
@@ -1926,6 +1925,11 @@ class HardwareTelemetryWorker:
             "cpu_ccd1_usage": ccd1_load
         }
 
+    def stamp_sample(self, data):
+        self._collector_sample_seq = getattr(self, "_collector_sample_seq", 0) + 1
+        data["collector_instance_id"] = getattr(self, "_collector_instance_id", None)
+        data["collector_sample_seq"] = self._collector_sample_seq
+
     async def write_to_db(self, pool, data, timestamp=None):
         if timestamp is None:
             timestamp = datetime.datetime.now(datetime.timezone.utc)
@@ -1935,8 +1939,8 @@ class HardwareTelemetryWorker:
         fps_capture_status = data.get("fps_capture_status", "source_unavailable")
         fps_capture_detail = data.get("fps_capture_detail", "gpu_source_unavailable")
 
-        self._collector_sample_seq = getattr(self, "_collector_sample_seq", 0) + 1
-        instance_id = getattr(self, "_collector_instance_id", None)
+        if "collector_sample_seq" not in data:
+            self.stamp_sample(data)
         query = """
             INSERT INTO public.fact_system_hardware 
             ("timestamp", current_fps, average_fps, one_percent_low_fps, frametime_ms, frametime_jitter,
@@ -1948,7 +1952,8 @@ class HardwareTelemetryWorker:
              network_ping_ms, is_packet_loss, network_jitter, cpu_ccd0_usage, cpu_ccd1_usage,
              measurement_quality, collector_instance_id, collector_sample_seq,
              disk_busy_pct, disk_temperature_c, pagefile_usage_pct)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39);
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39)
+            ON CONFLICT ("timestamp") DO NOTHING;
         """
         async with pool.acquire() as conn:
             await conn.execute(
@@ -1963,7 +1968,7 @@ class HardwareTelemetryWorker:
                 data["system_hard_page_faults"], data["disk_max_latency_ms"], data["network_ping_ms"],
                 1 if data["is_packet_loss"] else 0, data["network_jitter"], ccd0_load, ccd1_load,
                 json.dumps(data.get("measurement_quality", {}), allow_nan=False),
-                instance_id, self._collector_sample_seq,
+                data["collector_instance_id"], data["collector_sample_seq"],
                 data.get("disk_busy_pct"), data.get("disk_temperature_c"), data.get("pagefile_usage_pct")
             )
 

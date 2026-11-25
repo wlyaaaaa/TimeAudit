@@ -121,10 +121,10 @@ from hardware_worker import HardwareTelemetryWorker
 from context_worker import WindowStateTracker
 from activity_worker import ProcessActivityWorker
 from lifecycle_worker import ProcessLifecycleWorker
-from runtime_health import write_lifecycle_health, write_telemetry_heartbeat
+from runtime_health import BACKFILL_HEARTBEAT_FILE, write_lifecycle_health, write_telemetry_heartbeat
 from process_activity_retention import maintain as maintain_activity_retention
+from telemetry_pending import PendingTelemetry
 
-DB_DSN = local_dsn()
 WARMUP_INTERVAL_SEC = 43200
 TELEMETRY_INTERVAL_SEC = 1.0
 ACTIVITY_INTERVAL_SEC = 3.0
@@ -134,7 +134,9 @@ ACTIVITY_INTERVAL_SEC = 3.0
 # connection timeout.
 DB_CONNECT_TIMEOUT_SEC = 5.0
 DB_CLOSE_TIMEOUT_SEC = 5.0
+DB_STEP_TIMEOUT_SEC = 15.0
 DB_RETRY_INTERVAL_SEC = 1.0
+PENDING_TELEMETRY_ROOT = r"E:\Data\TimeAudit\PendingTelemetry"
 # Partition warmup/retention is maintenance work, not part of the 1 Hz fast
 # lane.  A transient DDL/DB failure must therefore retry on a bounded backoff
 # instead of re-entering both maintenance paths on every telemetry slot.
@@ -299,9 +301,8 @@ def _sample_current_foreground_identity(tracker, process_name_resolver):
 
 async def _collect_and_write_activity_snapshot(
     activity_worker,
-    pool,
+    pending_telemetry,
     sample_timestamp,
-    hardware_committed,
     *,
     wall_clock=time.time,
     sleep_threshold=SLEEP_RESUME_THRESHOLD_SEC,
@@ -314,14 +315,7 @@ async def _collect_and_write_activity_snapshot(
         # that its delta baselines are no longer meaningful). Never persist that
         # mixed snapshot; the main loop will reset baselines on its next turn.
         return False
-    await hardware_committed.wait()
-    if wall_clock() - collection_started_wall > sleep_threshold:
-        return False
-    await activity_worker.write_batch_to_db(
-        pool,
-        active_procs,
-        sample_timestamp,
-    )
+    pending_telemetry.record("activity", sample_timestamp, active_procs)
     return True
 
 
@@ -393,15 +387,15 @@ def enforce_singleton():
 # 导致预建分区用完后 CREATE 失败、写入丢数据。边界串带 +08 偏移，PostgreSQL 会正确存为 timestamptz。
 CN_TZ = datetime.timezone(datetime.timedelta(hours=8))
 
-def get_week_bounds(delta_weeks=0):
-    today = datetime.datetime.now(CN_TZ).date() + datetime.timedelta(weeks=delta_weeks)
+def get_week_bounds(delta_weeks=0, at=None):
+    today = (at or datetime.datetime.now(CN_TZ)).astimezone(CN_TZ).date() + datetime.timedelta(weeks=delta_weeks)
     monday = today - datetime.timedelta(days=today.weekday())
     next_monday = monday + datetime.timedelta(days=7)
     iso_year, iso_week, _ = monday.isocalendar()
     return iso_year, iso_week, f"{monday} 00:00:00+08", f"{next_monday} 00:00:00+08"
 
-def get_month_bounds(delta_months=0):
-    today = datetime.datetime.now(CN_TZ).date()
+def get_month_bounds(delta_months=0, at=None):
+    today = (at or datetime.datetime.now(CN_TZ)).astimezone(CN_TZ).date()
     year = today.year
     month = today.month + delta_months
     while month > 12:
@@ -431,13 +425,15 @@ async def ensure_fps_capture_schema(pool):
                 ADD COLUMN IF NOT EXISTS pagefile_usage_pct real;
         """)
 
-async def auto_warmup_partitions(pool):
+async def auto_warmup_partitions(pool, at=None, kind=None):
     async with pool.acquire() as conn:
         print(f"[{datetime.datetime.now().strftime('%X')} 🔧 预热引擎] 开始对齐时序物理分区桶...")
-        for delta in [0, 1]:
-            year, week, start, end = get_week_bounds(delta)
+        deltas = (0,) if at else (0, 1)
+        for delta in deltas if kind != "hardware" else ():
+            year, week, start, end = get_week_bounds(delta, at)
             suffix = f"y{year}w{week:02d}"
-            for parent_table in ["fact_process_context", "fact_process_activity"]:
+            tables = ("fact_process_activity",) if kind else ("fact_process_context", "fact_process_activity")
+            for parent_table in tables:
                 sub_table = f"{parent_table}_{suffix}"
                 query = f"""
                     CREATE TABLE IF NOT EXISTS public.{sub_table} 
@@ -446,8 +442,8 @@ async def auto_warmup_partitions(pool):
                 """
                 await conn.execute(query)
                 
-        for delta in [0, 1]:
-            year, month, start, end = get_month_bounds(delta)
+        for delta in deltas if kind != "activity" else ():
+            year, month, start, end = get_month_bounds(delta, at)
             sub_table = f"fact_system_hardware_y{year}m{month:02d}"
             query = f"""
                 CREATE TABLE IF NOT EXISTS public.{sub_table} 
@@ -455,7 +451,10 @@ async def auto_warmup_partitions(pool):
                 FOR VALUES FROM ('{start}') TO ('{end}');
             """
             await conn.execute(query)
-        print("[✅ 预热引擎] 当期及未来分区舱室绑定完毕！")
+        if at:
+            print(f"[数据库] 已补建样本 {at.isoformat()} 所需的分区。")
+        else:
+            print("[✅ 预热引擎] 当期及未来分区舱室绑定完毕！")
 
 async def auto_retention_cleanup(pool):
     """Maintain activity summaries/60-day detail; preserve all other policies."""
@@ -553,6 +552,97 @@ async def _register_initial_processes(lifecycle_worker):
     print(f"[主控] 初次活体映射扫描完毕，共计登记了 {len(lifecycle_worker.shared_pid_key_map)} 个存活进程。")
 
 
+async def _await_database_step(pool, operation):
+    # asyncpg's command timeout can leave rollback or pool release waiting
+    # for cancellation from a server that is no longer responsive.
+    step = asyncio.create_task(operation)
+    try:
+        return await asyncio.wait_for(asyncio.shield(step), DB_STEP_TIMEOUT_SEC)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pool.terminate()
+        step.cancel()
+        await asyncio.gather(step, return_exceptions=True)
+        raise
+
+
+async def _publish_pending_telemetry(pending, tracker, hardware, activity, lifecycle, progress):
+    """Reuse the database writers without making Windows sampling wait for them."""
+    loop = asyncio.get_running_loop()
+    writers = {"hardware": hardware.write_to_db, "activity": activity.write_batch_to_db}
+    fresh_for = {"hardware": 15.0, "activity": ACTIVITY_HEALTH_MAX_AGE_SEC}
+    initial_registration = None
+    last_connection_error = None
+    next_backfill_heartbeat = 0.0
+    try:
+        while True:
+            pool = None
+            try:
+                pool = await asyncpg.create_pool(
+                    dsn=local_dsn(), min_size=1, max_size=12,
+                    timeout=DB_CONNECT_TIMEOUT_SEC, command_timeout=5.0,
+                )
+                if initial_registration is None:
+                    await _await_database_step(pool, ensure_fps_capture_schema(pool))
+                    await _await_database_step(pool, cleanup_orphan_context_sessions(pool))
+                    lifecycle.start_kernel_listener(pool)
+                    initial_registration = asyncio.create_task(_register_initial_processes(lifecycle))
+                else:
+                    lifecycle.update_pool(pool)
+                next_context = 0.0
+                while True:
+                    if loop.time() >= next_context:
+                        next_context = loop.time() + TELEMETRY_INTERVAL_SEC
+                        try:
+                            if await _await_database_step(
+                                pool, tracker.poll_heartbeat(pool, datetime.datetime.now(datetime.timezone.utc))
+                            ):
+                                progress["context"] = loop.time()
+                        except asyncio.TimeoutError:
+                            raise
+                        except Exception:
+                            print("⚠️ 切窗监测工作异常；等待健康租约复核。")
+                    if not pending.pending:
+                        pending.allow_direct()
+                        await asyncio.sleep(0.25)
+                        continue
+                    kind, sample_at, rows = pending.first()
+                    try:
+                        await _await_database_step(pool, writers[kind](pool, rows, sample_at))
+                    except asyncpg.CheckViolationError as exc:
+                        if not str(exc).startswith("no partition of relation"):
+                            raise
+                        await _await_database_step(pool, auto_warmup_partitions(pool, sample_at, kind))
+                        await _await_database_step(pool, writers[kind](pool, rows, sample_at))
+                    pending.acknowledge()
+                    if last_connection_error is not None:
+                        print("[数据库] 已恢复写入，按时间补回本机待写样本。")
+                        last_connection_error = None
+                    age = time.time() - sample_at.timestamp()
+                    if 0 <= age <= fresh_for[kind]:
+                        progress[kind] = loop.time()
+                    elif age > fresh_for[kind] and loop.time() >= next_backfill_heartbeat:
+                        write_telemetry_heartbeat(BACKFILL_HEARTBEAT_FILE)
+                        next_backfill_heartbeat = loop.time() + 10.0
+            except (asyncpg.PostgresError, asyncpg.InterfaceError, OSError, RuntimeError, asyncio.TimeoutError) as exc:
+                reason = type(exc).__name__
+                if reason != last_connection_error:
+                    print(f"[数据库] 待补写暂缓 ({reason})，本机继续采集。")
+                last_connection_error = reason
+            finally:
+                try:
+                    pending.defer()
+                except OSError as exc:
+                    print(f"[本机采样] 保存待确认样本失败 ({type(exc).__name__})。")
+                lifecycle.update_pool(None)
+                progress.clear()
+                await _close_database_pool(pool)
+            await asyncio.sleep(DB_RETRY_INTERVAL_SEC)
+    finally:
+        if initial_registration is not None:
+            initial_registration.cancel()
+            await asyncio.gather(initial_registration, return_exceptions=True)
+
+
 async def _run_collector():
     try:
         psutil.Process().nice(psutil.ABOVE_NORMAL_PRIORITY_CLASS)
@@ -570,26 +660,8 @@ async def _run_collector():
     print(f"🚀 Windows 11 Native Telemetry Engine 正在拉起... [PID: {os.getpid()}]")
     print("====================================================")
     
-    pool = None
-    while pool is None:
-        candidate_pool = None
-        connection_phase = "connect"
-        try:
-            candidate_pool = await asyncpg.create_pool(
-                dsn=DB_DSN,
-                min_size=1,
-                max_size=12,
-                timeout=DB_CONNECT_TIMEOUT_SEC,
-                command_timeout=5.0,
-            )
-            connection_phase = "fps_schema"
-            await ensure_fps_capture_schema(candidate_pool)
-            pool = candidate_pool
-            print("[连接池] 成功创建数据库连接池！")
-        except Exception as e:
-            await _close_database_pool(candidate_pool)
-            print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 等待数仓] phase={connection_phase} {e!r}，{DB_RETRY_INTERVAL_SEC:g}秒后重试...")
-            await asyncio.sleep(DB_RETRY_INTERVAL_SEC)
+    pending_telemetry = PendingTelemetry(PENDING_TELEMETRY_ROOT)
+    progress = {}
 
     warmup_last_success_wall = 0.0
     warmup_retry_deadline_wall = 0.0
@@ -602,11 +674,6 @@ async def _run_collector():
     hardware_worker = HardwareTelemetryWorker()
     activity_worker = ProcessActivityWorker()
     lifecycle_worker = ProcessLifecycleWorker(global_pid_key_map)
-    
-    lifecycle_worker.start_kernel_listener(pool)
-    
-    # 冷启动闭合上次关机遗留的幽灵前台会话(end_timestamp 永久 NULL)。
-    await cleanup_orphan_context_sessions(pool)
 
     wall_anchor = time.time()   # 最近一次墙钟观测；每个潜在长等待后复核，避免漏掉本轮内睡眠
     loop = asyncio.get_running_loop()
@@ -615,8 +682,7 @@ async def _run_collector():
     activity_task = None
     activity_resume_reset_pending = False
     health_started_at = loop.time()
-    activity_last_success_at = None
-    context_last_success_at = None
+    last_heartbeat_sample = None
     activity_health_warning_active = False
     context_health_warning_active = False
     lifecycle_report_due_at = 0.0
@@ -626,8 +692,6 @@ async def _run_collector():
         nonlocal activity_task
         nonlocal activity_resume_reset_pending
         nonlocal health_started_at
-        nonlocal activity_last_success_at
-        nonlocal context_last_success_at
         nonlocal warmup_last_success_wall
         nonlocal warmup_retry_deadline_wall
         nonlocal warmup_retry_delay
@@ -654,8 +718,7 @@ async def _run_collector():
             maintenance_task.cancel()
         maintenance_resume_reset_pending = True
         health_started_at = loop.time()
-        activity_last_success_at = None
-        context_last_success_at = None
+        progress.clear()
         activity_resume_reset_pending = True
         try:
             tracker.mark_sleep_boundary(pre_sleep_dt)
@@ -671,8 +734,8 @@ async def _run_collector():
         warmup_retry_deadline_wall = 0.0
         warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
 
-    initial_registration_task = asyncio.create_task(
-        _register_initial_processes(lifecycle_worker)
+    publisher = asyncio.create_task(
+        _publish_pending_telemetry(pending_telemetry, tracker, hardware_worker, activity_worker, lifecycle_worker, progress)
     )
     try:
         while True:
@@ -695,6 +758,11 @@ async def _run_collector():
             )
             resume_detected_this_slot |= detected_at_slot_start
             now_wall = wall_anchor
+            if publisher.done():
+                publisher.result()
+            pool = lifecycle_worker.pool
+            if pool is None and maintenance_task is not None and not maintenance_task.done():
+                maintenance_task.cancel()
 
             # 【Bug2 修复】分区预热按"墙钟"调度：旧版用睡眠中暂停的 monotonic，会把 12h 真实间隔拖成
             # 12 天纯活跃时长，极可能跨过自然周/月物理边界 → PostgreSQL "no partition of relation found"
@@ -739,6 +807,7 @@ async def _run_collector():
                 maintenance_task is None
                 and not maintenance_resume_reset_pending
                 and pool is not None
+                and len(pending_telemetry.pending) <= 2
                 and _warmup_due(
                     warmup_last_success_wall,
                     warmup_retry_deadline_wall,
@@ -765,54 +834,12 @@ async def _run_collector():
                 except Exception:
                     pass
 
-            if pool is None:
-                candidate_pool = None
-                connection_phase = "connect"
-                try:
-                    candidate_pool = await asyncpg.create_pool(
-                        dsn=DB_DSN,
-                        min_size=1,
-                        max_size=12,
-                        timeout=DB_CONNECT_TIMEOUT_SEC,
-                        command_timeout=5.0,
-                    )
-                    # Startup already installed these columns. Repeating ALTER TABLE
-                    # here would gate recovery on an exclusive lock behind readers.
-                    pool = candidate_pool
-                    if hasattr(lifecycle_worker, 'update_pool'):
-                        lifecycle_worker.update_pool(pool)
-                    print("[连接池] 自愈引擎：重新构建并穿透数据库连接池成功！")
-                except Exception as reconnect_err:
-                    await _close_database_pool(candidate_pool)
-                    print(f"[{datetime.datetime.now().strftime('%X')} ⚠️ 自愈重试] 重建连接池失败: phase={connection_phase} {reconnect_err!r}，等待下次循环...")
-                    wall_anchor, detected_after_reconnect = _observe_sleep_resume(
-                        wall_anchor,
-                        _handle_sleep_resume,
-                    )
-                    resume_detected_this_slot |= detected_after_reconnect
-                    await asyncio.sleep(DB_RETRY_INTERVAL_SEC)
-                    continue
-
-            context_poll_timestamp = datetime.datetime.now(datetime.timezone.utc)
-            context_poll_healthy = False
-            try:
-                context_poll_healthy = bool(
-                    await tracker.poll_heartbeat(pool, context_poll_timestamp)
-                )
-            except Exception:
-                print("⚠️ 切窗监测工作异常；等待健康租约复核。")
-            if context_poll_healthy:
-                context_last_success_at = loop.time()
-
-            database_phase = "hardware_collect"
             try:
                 (
                     activity_task,
                     activity_error,
-                    activity_succeeded,
+                    _,
                 ) = _reap_finished_activity_task(activity_task)
-                if activity_succeeded:
-                    activity_last_success_at = loop.time()
                 collection_state_idle = activity_worker.is_collection_state_idle()
                 if (
                     activity_resume_reset_pending
@@ -822,9 +849,7 @@ async def _run_collector():
                     activity_worker.reset_on_resume()
                     activity_resume_reset_pending = False
 
-                # Context persistence can await metadata/DB work. Re-read focus
-                # immediately before the hardware/FPS sample so an Alt-Tab during
-                # that await cannot leave PresentMon bound to the previous PID.
+                # FPS uses the foreground identity from this hardware slot.
                 hardware_pid, fg_app_name = _sample_current_foreground_identity(
                     tracker,
                     lambda pid: psutil.Process(pid).name(),
@@ -837,73 +862,35 @@ async def _run_collector():
                     hardware_pid,
                 )
 
-                # Start the 1-second hardware/FPS write immediately. On every third
-                # slot it progresses concurrently with the expensive process scan, so
-                # that slow process metadata cannot unnecessarily delay fresh display
-                # telemetry reaching the database.
-                hardware_write_task = asyncio.create_task(
-                    hardware_worker.write_to_db(
-                        pool,
-                        hw_data,
-                        sample_timestamp,
-                    )
+                wall_anchor, detected_after_hardware = _observe_sleep_resume(
+                    wall_anchor,
+                    _handle_sleep_resume,
                 )
-                hardware_committed = asyncio.Event()
-                if activity_error is None and not activity_resume_reset_pending:
-                    activity_task = _start_activity_task_if_due(
-                        activity_task,
-                        activity_due,
-                        activity_worker.is_collection_state_idle(),
-                        lambda: asyncio.create_task(
-                            _collect_and_write_activity_snapshot(
-                                activity_worker,
-                                pool,
-                                sample_timestamp,
-                                hardware_committed,
-                            )
-                        ),
-                    )
-                hardware_succeeded = False
-                try:
-                    database_phase = "hardware_write"
-                    await hardware_write_task
-                    hardware_succeeded = True
-                    wall_anchor, detected_after_hardware = _observe_sleep_resume(
-                        wall_anchor,
-                        _handle_sleep_resume,
-                    )
-                    resume_detected_this_slot |= detected_after_hardware
-                    if not detected_after_hardware:
-                        hardware_committed.set()
-                finally:
-                    if not hardware_write_task.done():
-                        hardware_write_task.cancel()
-                    await asyncio.gather(
-                        hardware_write_task,
-                        return_exceptions=True,
-                    )
-
-                (
-                    activity_task,
-                    completed_activity_error,
-                    completed_activity_succeeded,
-                ) = _reap_finished_activity_task(activity_task)
-                if completed_activity_succeeded:
-                    activity_last_success_at = loop.time()
-                if activity_error is None:
-                    activity_error = completed_activity_error
+                resume_detected_this_slot |= detected_after_hardware
+                if not detected_after_hardware:
+                    hardware_worker.stamp_sample(hw_data)
+                    pending_telemetry.record("hardware", sample_timestamp, hw_data)
+                    if not activity_resume_reset_pending:
+                        activity_task = _start_activity_task_if_due(
+                            activity_task,
+                            activity_due,
+                            activity_worker.is_collection_state_idle(),
+                            lambda: asyncio.create_task(
+                                _collect_and_write_activity_snapshot(activity_worker, pending_telemetry, sample_timestamp)
+                            ),
+                        )
 
                 health_now = loop.time()
                 context_lease_healthy = _health_lease_is_current(
                     health_started_at,
-                    context_last_success_at,
+                    progress.get("context"),
                     health_now,
                     CONTEXT_HEALTH_INITIAL_GRACE_SEC,
                     CONTEXT_HEALTH_MAX_AGE_SEC,
                 )
                 activity_lease_healthy = _health_lease_is_current(
                     health_started_at,
-                    activity_last_success_at,
+                    progress.get("activity"),
                     health_now,
                     ACTIVITY_HEALTH_INITIAL_GRACE_SEC,
                     ACTIVITY_HEALTH_MAX_AGE_SEC,
@@ -923,37 +910,23 @@ async def _run_collector():
                     activity_lease_healthy,
                     activity_health_warning_active,
                 )
+                latest_commit = progress.get("hardware")
                 if (
                     not resume_detected_this_slot
                     and _should_refresh_telemetry_heartbeat(
-                        hardware_succeeded,
+                        latest_commit is not None and latest_commit != last_heartbeat_sample,
                         context_lease_healthy,
                         activity_lease_healthy,
                         lifecycle_issue is None,
                     )
                 ):
-                    write_telemetry_heartbeat()
+                    if write_telemetry_heartbeat():
+                        last_heartbeat_sample = latest_commit
 
                 if activity_error is not None:
-                    database_phase = "activity_write"
-                    raise activity_error
-            except (asyncpg.PostgresError, OSError, asyncio.TimeoutError) as db_err:
-                print(f"[{datetime.datetime.now().strftime('%X')} 🚨 连接断开] 检测到连接异常: phase={database_phase} {db_err!r}")
-                await _cancel_and_reap_activity_task(activity_task)
-                activity_task = None
-                await _cancel_and_reap_maintenance_task(maintenance_task)
-                maintenance_task = None
-                warmup_last_success_wall = 0.0
-                warmup_retry_deadline_wall = now_wall + WARMUP_RETRY_INITIAL_SEC
-                warmup_retry_delay = WARMUP_RETRY_INITIAL_SEC
-                if pool:
-                    # Bound cleanup even when the old pool still has borrowed connections.
-                    await _close_database_pool(pool)
-                    pool = None
-                    if hasattr(lifecycle_worker, 'update_pool'):
-                        lifecycle_worker.update_pool(None)
+                    print(f"⚠️ 本机进程采样异常: {type(activity_error).__name__}")
             except Exception as loop_err:
-                print(f"⚠️ 并发遥测落库异动: {loop_err}")
+                print(f"⚠️ 本机硬件采样或保存异常: {type(loop_err).__name__}")
                 
             finished = loop.time()
             next_telemetry_deadline = _advance_periodic_deadline(
@@ -977,14 +950,13 @@ async def _run_collector():
     except asyncio.CancelledError:
         print("[主控] 捕获终止信号，停机...")
     finally:
-        initial_registration_task.cancel()
-        await asyncio.gather(initial_registration_task, return_exceptions=True)
         await _cancel_and_reap_activity_task(activity_task)
         await _cancel_and_reap_maintenance_task(maintenance_task)
+        publisher.cancel()
+        await asyncio.gather(publisher, return_exceptions=True)
         activity_worker.terminate()
         lifecycle_worker.terminate()
         hardware_worker.terminate()
-        await _close_database_pool(pool)
         print("[主控] 遥测管线释放，闭舱。")
 
 

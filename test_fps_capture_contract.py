@@ -249,17 +249,20 @@ class FpsCaptureContractTest(unittest.TestCase):
         ):
             self.assertTrue(worker._presentmon_needed())
 
-    def test_available_rtss_mapping_suppresses_presentmon_without_game_frames(self):
+    def test_available_rtss_mapping_without_frames_allows_existing_render_gate(self):
         worker = hardware_worker.HardwareTelemetryWorker.__new__(
             hardware_worker.HardwareTelemetryWorker
         )
         worker._fps_state_lock = threading.Lock()
         worker._rtss_frame_seen_monotonic = 0.0
         worker._rtss_mapping_available = True
-        with patch.object(worker, "_render_active", return_value=True):
-            self.assertFalse(worker._presentmon_needed())
+        with patch.object(hardware_worker.time, "monotonic", return_value=100.0):
+            with patch.object(worker, "_render_active", return_value=True):
+                self.assertTrue(worker._presentmon_needed())
+            with patch.object(worker, "_render_active", return_value=False):
+                self.assertFalse(worker._presentmon_needed())
 
-    def test_rtss_mapping_without_a_unique_frame_is_healthy_idle(self):
+    def test_rtss_mapping_without_a_frame_uses_presentmon_capture_state(self):
         status, detail = hardware_worker.HardwareTelemetryWorker._resolve_fps_capture_state(
             rtss_mapping_available=True,
             rtss_has_frame=False,
@@ -268,10 +271,10 @@ class FpsCaptureContractTest(unittest.TestCase):
             presentmon_has_frame=False,
             started_monotonic=100.0,
             now_monotonic=120.0,
-            error_detail="presentmon_start_failed",
+            error_detail=None,
         )
-        self.assertEqual("gated_idle", status)
-        self.assertEqual("rtss_no_active_frame", detail)
+        self.assertEqual("waiting_frames", status)
+        self.assertEqual("no_fresh_foreground_frame", detail)
 
     def test_rtss_pid_selection_prefers_os_focus_then_fresh_header_fallback(self):
         header = bytearray(96)
@@ -323,10 +326,10 @@ class FpsCaptureContractTest(unittest.TestCase):
             if isinstance(node, ast.AsyncFunctionDef)
             and node.name == "ensure_fps_capture_schema"
         )
-        collector = next(
+        publisher = next(
             node for node in tree.body
             if isinstance(node, ast.AsyncFunctionDef)
-            and node.name == "_run_collector"
+            and node.name == "_publish_pending_telemetry"
         )
         helper_source = ast.unparse(helper)
         self.assertIn("ADD COLUMN IF NOT EXISTS fps_capture_status text", helper_source)
@@ -336,7 +339,7 @@ class FpsCaptureContractTest(unittest.TestCase):
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "ensure_fps_capture_schema"
-            for node in ast.walk(collector)
+            for node in ast.walk(publisher)
         ))
         self.assertIn("fps_capture_status", schema)
         self.assertIn("fps_capture_detail", schema)

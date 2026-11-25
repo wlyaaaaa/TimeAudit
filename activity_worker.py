@@ -623,17 +623,23 @@ class ProcessActivityWorker:
 
     async def get_or_register_cached(self, conn, proc_info):
         exe_path = proc_info["exe"]
-        is_elevated = self.path_elevation_cache.get(exe_path)
+        # A queued observation may outlive its PID. Only unrecorded callers
+        # can consult Windows for the process's current privilege.
+        is_elevated = proc_info.get("is_elevated")
         if is_elevated is None:
-            is_elevated = await asyncio.to_thread(check_process_elevation, proc_info["os_pid"])
-            if is_elevated < 0:
+            is_elevated = self.path_elevation_cache.get(exe_path)
+            if is_elevated is None:
+                is_elevated = await asyncio.to_thread(check_process_elevation, proc_info["os_pid"])
+        if is_elevated < 0:
+            is_elevated = self.path_elevation_cache.get(exe_path)
+            if is_elevated is None:
                 is_elevated = await conn.fetchval(
                     "SELECT is_elevated FROM public.dim_process_registry WHERE process_name = $2 AND md5(executable_path) = md5($1) AND executable_path = $1 ORDER BY created_at DESC LIMIT 1",
                     exe_path, proc_info["name"]
                 )
                 if is_elevated is None:
                     is_elevated = 0
-            self.path_elevation_cache[exe_path] = is_elevated
+        self.path_elevation_cache.setdefault(exe_path, is_elevated)
 
         from lifecycle_worker import SIGNATURE_CACHE, check_file_signature
         signature_status = SIGNATURE_CACHE.get(exe_path)
@@ -806,12 +812,18 @@ class ProcessActivityWorker:
             cmdline_str = ""
             parent_name = None
             service_name = None
+            is_elevated = None
             
             if p_key is None:
                 try:
                     proc = psutil.Process(pid)
                     exe_path = proc.exe()
                     if not exe_path: continue
+                    is_elevated = self.path_elevation_cache.get(exe_path)
+                    if is_elevated is None:
+                        is_elevated = check_process_elevation(pid)
+                        if is_elevated >= 0:
+                            self.path_elevation_cache[exe_path] = is_elevated
                     cmdline_str = " ".join(proc.cmdline()) if proc.cmdline() else ""
                     cmdline_str = sanitize_command_line(name, cmdline_str)
                     
@@ -878,6 +890,7 @@ class ProcessActivityWorker:
             active_list.append({
                 "os_pid": pid, "create_time": create_time, "name": name,
                 "exe": exe_path, "cmdline": cmdline_str, "parent_name": parent_name, "service_name": service_name, 
+                "is_elevated": is_elevated,
                 "cpu": float(cpu), "gpu": p_gpu_util,
                 "ram_mb": ram_mb, "vram_gb": p_vram, "vram_shared_mb": shared_vram_mb,
                 "r_rate": r_rate_mb, "w_rate": w_rate_mb, "iops": int(iops_rate), 
@@ -922,7 +935,8 @@ class ProcessActivityWorker:
                  proc_vram_used_gb, proc_vram_shared_mb, proc_disk_read_rate_mb, proc_disk_write_rate_mb, proc_disk_iops, 
                  proc_network_send_kb, proc_network_recv_kb, proc_active_connections, proc_remote_ip_port, 
                  proc_cpu_affinity, proc_thread_count, is_not_responding)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18);
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
+                ON CONFLICT ("timestamp", process_key, os_pid) DO NOTHING;
             """
 
             async with conn.transaction():

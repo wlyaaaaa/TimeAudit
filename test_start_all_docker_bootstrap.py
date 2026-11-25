@@ -13,6 +13,7 @@ def test_start_all_waits_for_docker_daemon_before_compose():
     assert "docker desktop.exe" in source
     assert ":wait_docker" in source
     assert 'docker version --format "{{.server.version}}"' in source
+    assert source.index("start-elevatedengine.ps1") < source.index(":wait_docker")
     assert source.index('docker version --format "{{.server.version}}"') < source.index("docker compose up -d")
     assert "db_wait_seconds" in source
     assert "db_wait_remaining" in source

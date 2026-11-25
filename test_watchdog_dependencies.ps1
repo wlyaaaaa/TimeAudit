@@ -32,6 +32,7 @@ function Get-Process {
     if ($script:desktop) { @{Id=1} }
 }
 function Get-ScheduledTask { param($TaskName, $ErrorAction) @{State=$script:taskState} }
+function Get-DockerLayerFault { param($NowSeconds) $script:layerFaultAt }
 function Start-ScheduledTask { param($TaskName, $ErrorAction) $script:startedTasks.Add($TaskName) }
 function Get-CimInstance { param($ClassName, $Filter, $ErrorAction) $script:candidates }
 function Stop-Process {
@@ -64,6 +65,7 @@ function Reset-Scenario {
     $script:missingPids=@(); $script:replacementPaths=@{}; $script:exitDuringStop=0; $script:deniedPid=0
     $script:desktopStatus='{"Status":"running"}'; $script:statusSuccess=$true; $script:statusTimeout=$false
     $script:restartOK=$true
+    $script:layerFaultAt=0L
     $script:engine=$true; $script:engineTimeout=$false; $script:desktop=$true; $script:taskState='Ready'
     $script:states=@{'audit-postgres'='running';'audit-grafana'='running'}
     $script:grafanaHealthy=$true; $script:mutationTimeout=$false
@@ -75,43 +77,43 @@ function Assert-Equal($actual, $expected, $label) {
 try {
 Reset-Scenario
 $script:engine=$false; $script:desktop=$false
-Restore-TimeAuditDependencies
+Assert-Equal (Restore-TimeAuditDependencies) $false 'unavailable engine defers container checks'
 Assert-Equal $startedTasks @('TimeAudit_AutoStart') 'missing Desktop uses registered startup'
 Assert-Equal $commands.Count 1 'missing engine cannot mutate containers'
 
 Reset-Scenario
 $script:engine=$false; $script:desktop=$false; $script:taskState='Running'
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal $startedTasks.Count 0 'ongoing autostart is not duplicated'
 
 Reset-Scenario
 $script:engine=$false
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal $startedTasks.Count 0 'unavailable existing Desktop is not restarted'
 
 Reset-Scenario
-Restore-TimeAuditDependencies
+Assert-Equal (Restore-TimeAuditDependencies) $true 'responding Docker API allows container checks'
 Assert-Equal @($commands | Where-Object {$_ -match '^(start|restart)'}) @() 'healthy dependencies untouched'
 
 Reset-Scenario
 $script:states=@{'audit-postgres'='exited';'audit-grafana'='exited'}
 $script:grafanaHealthy=$false; $script:mutationTimeout=$true
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal @($commands | Where-Object {$_ -match '^(start|restart)'}) @('start audit-postgres','start audit-grafana') 'only existing stopped dependencies started; unknown result not replayed'
 
 Reset-Scenario
 $script:grafanaHealthy=$false
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal @($commands | Where-Object {$_ -match '^restart'}) @('restart audit-grafana') 'only unhealthy Grafana restarted'
 
 Reset-Scenario
 $script:grafanaHealthy=$false; $script:grafanaStarted=[DateTimeOffset]::UtcNow.ToString('o')
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal @($commands | Where-Object {$_ -match '^restart'}) @() 'fresh Grafana receives startup grace'
 
 Reset-Scenario
 $script:states=@{}
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal @($commands | Where-Object {$_ -match '^(start|restart)'}) @() 'unknown or missing containers never recreated'
 Reset-Scenario
 $script:engine=$false
@@ -127,7 +129,23 @@ $null=Restore-UnavailableDocker 'unknown' 1000720
 $null=Restore-UnavailableDocker 'stopped' 1000780
 Assert-Equal $commands.Count 1 'attempt remains latched across subsequent stopped and unknown probes'
 $null=Restore-UnavailableDocker 'healthy'
-Assert-Equal (Test-Path -LiteralPath $dockerRecoveryState) $false 'healthy API rearms a later incident'
+Assert-Equal ((Get-Content -LiteralPath $dockerRecoveryState -Raw | ConvertFrom-Json).Attempted) $false 'healthy API rearms a later incident'
+
+Reset-Scenario
+$script:engine=$false; $script:layerFaultAt=1100000L
+$null=Restore-UnavailableDocker 'unknown' 1100010
+Assert-Equal $commands.Count 0 'the vendor event alone cannot restart an engine with unknown status'
+$script:taskState='Disabled'
+$null=Restore-UnavailableDocker 'stopped' 1100020
+Assert-Equal $commands.Count 0 'a confirmed fault respects intentional maintenance'
+$script:taskState='Ready'
+$null=Restore-UnavailableDocker 'stopped' 1100030
+Assert-Equal $commands @('desktop restart --timeout 110') 'confirmed layer crash skips the ten-minute wait'
+$null=Restore-UnavailableDocker 'healthy' 1100040
+$null=Restore-UnavailableDocker 'healthy' 1100050
+$saved=Get-Content -LiteralPath $dockerRecoveryState -Raw | ConvertFrom-Json
+Assert-Equal $saved.Incidents.Count 1 'vendor log re-read does not duplicate the same incident'
+Assert-Equal $saved.Incidents[0].RecoveredAt 1100040 'first successful API read closes the incident durably'
 
 foreach ($case in @(
     @{Output='{"Status":"stopped"}'; Success=$false; Timeout=$false},
@@ -139,7 +157,7 @@ foreach ($case in @(
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     @{Version=1;Since=$now-660;Last=$now-60;Attempted=$false} | ConvertTo-Json | Set-Content -LiteralPath $dockerRecoveryState
     $script:desktopStatus=$case.Output; $script:statusSuccess=$case.Success; $script:statusTimeout=$case.Timeout
-    Restore-TimeAuditDependencies
+    $null=Restore-TimeAuditDependencies
     $saved=Get-Content -LiteralPath $dockerRecoveryState -Raw | ConvertFrom-Json
     Assert-Equal $saved.Since 0 'unknown or starting Desktop breaks outage continuity'
     Assert-Equal @($commands | Where-Object {$_ -match '^desktop restart'}) @() 'unknown status cannot restart Docker'
@@ -183,7 +201,7 @@ $null=Restore-UnavailableDocker 'running' 4000960
 Assert-Equal $killed.Count 3 'failed recovery is not repeated next cycle'
 Assert-Equal $startedTasks.Count 1 'bootstrap is not repeated next cycle'
 $script:desktop=$false
-Restore-TimeAuditDependencies
+$null=Restore-TimeAuditDependencies
 Assert-Equal $startedTasks.Count 1 'later Desktop absence cannot bypass the spent attempt latch'
 
 $fallbackCandidates=$script:candidates
@@ -226,7 +244,7 @@ foreach ($status in 'stopped','running') {
     $script:engine=$false; $script:engineTimeout=$true; $script:desktopStatus='{"Status":"' + $status + '"}'
     $now=[DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
     @{Version=1;Since=$now-660;Last=$now-60;Attempted=$false} | ConvertTo-Json | Set-Content -LiteralPath $dockerRecoveryState
-    Restore-TimeAuditDependencies
+    $null=Restore-TimeAuditDependencies
     Assert-Equal @($commands | Where-Object {$_ -match '^desktop restart'}) @('desktop restart --timeout 110') "$status Desktop with sustained engine timeouts is restarted"
 }
 
@@ -235,7 +253,7 @@ $script:restartOK=$false; $script:engine=$true
 0..15 | ForEach-Object { $null=Restore-UnavailableDocker 'stopped' (5000000 + $_ * 60) }
 Assert-Equal $killed.Count 0 'API recovery after unconfirmed restart suppresses termination'
 Assert-Equal $startedTasks.Count 0 'API recovery after unconfirmed restart suppresses bootstrap'
-Assert-Equal (Test-Path -LiteralPath $dockerRecoveryState) $false 'healthy API clears the pending fallback'
+Assert-Equal ((Get-Content -LiteralPath $dockerRecoveryState -Raw | ConvertFrom-Json).FallbackAfter) 0 'healthy API clears the pending fallback'
 'PASS: Docker API outage, startup grace and one-shot recovery'
 } finally {
     Remove-Item -LiteralPath $dockerRecoveryState -Force -ErrorAction SilentlyContinue
