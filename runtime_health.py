@@ -11,6 +11,7 @@ from typing import Iterable
 
 ROOT = Path(__file__).resolve().parent
 HEARTBEAT_FILE = ROOT / "log" / "telemetry_heartbeat"
+BACKFILL_HEARTBEAT_FILE = ROOT / "log" / "telemetry_backfill_heartbeat"
 LIFECYCLE_HEALTH_FILE = ROOT / "log" / "lifecycle_health.json"
 LIFECYCLE_HEALTH_SCHEMA = "timeaudit.lifecycle-health.v1"
 

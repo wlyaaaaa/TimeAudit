@@ -1,5 +1,5 @@
 ﻿# TimeAudit telemetry watchdog
-# Restores Docker dependencies before checking these four collectors/sources:
+# Repairs these collectors/sources, restoring Docker before the database sidecar:
 #   1. main.py            -> the Python hardware/process telemetry engine (writes fact_* tables)
 #   2. LibreHardwareMonitor -> CPU temperature/clock/power/voltage source; endpoint health is authoritative.
 #   3. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
@@ -21,6 +21,7 @@ $lhmExe = 'E:\Projects\Tools\TimeAudit\LibreHardwareMonitor.exe'
 $lhmTaskName = 'LibreHardwareMonitor'
 $lhmEndpoint = 'http://127.0.0.1:18085/data.json'
 $heartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_heartbeat'
+$backfillHeartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_backfill_heartbeat'
 $ahkHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ahk_heartbeat'
 $ingesterHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ingester_heartbeat.json'
 $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
@@ -394,7 +395,6 @@ function Remove-StaleTask($taskName) {
 }
 
 function Invoke-TimeAuditWatchdog {
-$dockerReady = Restore-TimeAuditDependencies
 Remove-StaleTask 'TimeAudit_WatchdogRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogAhkRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogLhmRestart_tmp'
@@ -530,16 +530,16 @@ if (-not $mainProc) {
     Start-Sleep -Seconds $startupGraceSeconds
     $mainProc = Find-MainProc
     if (-not $mainProc) {
-        if (-not (Test-DatabaseQuery)) {
-            Log ("main.py restart deferred because PostgreSQL endpoint {0}:{1} is unavailable" -f $dbHost, $dbHostPort)
-        } elseif (Test-AutoStartWithinGrace) {
+        if (Test-AutoStartWithinGrace) {
             Log ("main.py not running yet, but TimeAudit_AutoStart is within its {0}s startup window - defer this cycle" -f $autoStartMaxGraceSeconds)
         } else {
             Restart-Main 'NOT running after startup grace period'
         }
     }
 } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-    if (-not (Test-DatabaseQuery)) {
+    if (Test-HeartbeatFresh $backfillHeartbeat $heartbeatMaxAgeSeconds) {
+        Log 'The collector is committing historical samples - defer main.py restart'
+    } elseif (-not (Test-DatabaseQuery)) {
         Log ("main.py heartbeat stale but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
     } elseif (Test-MainWithinStartupGrace $mainProc) {
         Log ("main.py heartbeat stale but live process is within its {0}s startup grace - defer" -f $mainStartupHeartbeatGraceSeconds)
@@ -548,11 +548,7 @@ if (-not $mainProc) {
         Start-Sleep -Seconds $heartbeatGraceSeconds
         $mainProc = Find-MainProc
         if (-not $mainProc) {
-            if (Test-DatabaseQuery) {
-                Restart-Main 'stopped during heartbeat grace period'
-            } else {
-                Log ("main.py stopped during heartbeat grace but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
-            }
+            Restart-Main 'stopped during heartbeat grace period'
         } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
             if (Test-DatabaseQuery) {
                 Restart-Main 'heartbeat stale after grace period'
@@ -564,6 +560,7 @@ if (-not $mainProc) {
 }
 
 # === 2. LibreHardwareMonitor (hardware sensor source) ===
+$dockerReady = Restore-TimeAuditDependencies
 if (-not (Test-LhmEndpoint)) {
     Log ("LibreHardwareMonitor endpoint unavailable - waiting {0}s for startup/resume recovery" -f $lhmGraceSeconds)
     Start-Sleep -Seconds $lhmGraceSeconds

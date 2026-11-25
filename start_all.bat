@@ -18,6 +18,15 @@ powershell -NoProfile -NonInteractive -Command "$target=Join-Path $env:PROJECT_D
 if %errorlevel% neq 0 start "" "%PROJECT_DIR%\TimeAudit.ahk"
 
 cd /d "%PROJECT_DIR%"
+echo [*] 独立启动本机遥测采集器...
+if not exist "%PYTHONW%" (
+    echo [-] TimeAudit isolated runtime is missing. Run setup_runtime.ps1 first.
+    set "ENGINE_EXIT=1"
+) else (
+    pwsh -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%PROJECT_DIR%\Start-ElevatedEngine.ps1"
+    set "ENGINE_EXIT=!errorlevel!"
+)
+
 echo [*] 启动 Docker Desktop 并等待 Linux engine 就绪...
 if exist "%DOCKER_DESKTOP%" (
     start "" "%DOCKER_DESKTOP%"
@@ -54,7 +63,7 @@ ping -n 3 127.0.0.1 >nul
 powershell -NoProfile -NonInteractive -Command "$client = [Net.Sockets.TcpClient]::new(); try { $pending = $client.ConnectAsync('127.0.0.1', [int]$env:TIMEAUDIT_DB_HOST_PORT); if (-not $pending.Wait(1000)) { exit 1 }; if (-not $client.Connected) { exit 1 }; exit 0 } catch { exit 1 } finally { $client.Dispose() }" >nul 2>nul
 if %errorlevel% neq 0 (
     if !DB_WAIT_REMAINING! LEQ 0 (
-        echo [-] 数据库端口 %TIMEAUDIT_DB_HOST_PORT% 在 %DB_WAIT_SECONDS% 秒内未就绪，放弃启动采集器。
+        echo [-] 数据库端口 %TIMEAUDIT_DB_HOST_PORT% 在 %DB_WAIT_SECONDS% 秒内未就绪。
         exit /b 1
     )
     set /a DB_WAIT_REMAINING-=2
@@ -62,13 +71,5 @@ if %errorlevel% neq 0 (
 )
 echo [+] 数据库端口已经就位！
 
-echo [*] 启动后台核心守护进程 + 提权拉起 Python 遥测引擎...
-if not exist "%PYTHONW%" (
-    echo [-] TimeAudit isolated runtime is missing. Run setup_runtime.ps1 first.
-    exit /b 1
-)
-pwsh -NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File "%PROJECT_DIR%\Start-ElevatedEngine.ps1"
-if %errorlevel% neq 0 exit /b %errorlevel%
-
-echo [+] 引擎启动指令已下发！
+if not "%ENGINE_EXIT%"=="0" exit /b %ENGINE_EXIT%
 exit /b 0

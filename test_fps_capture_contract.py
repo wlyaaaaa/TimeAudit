@@ -326,10 +326,10 @@ class FpsCaptureContractTest(unittest.TestCase):
             if isinstance(node, ast.AsyncFunctionDef)
             and node.name == "ensure_fps_capture_schema"
         )
-        collector = next(
+        publisher = next(
             node for node in tree.body
             if isinstance(node, ast.AsyncFunctionDef)
-            and node.name == "_run_collector"
+            and node.name == "_publish_pending_telemetry"
         )
         helper_source = ast.unparse(helper)
         self.assertIn("ADD COLUMN IF NOT EXISTS fps_capture_status text", helper_source)
@@ -339,7 +339,7 @@ class FpsCaptureContractTest(unittest.TestCase):
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "ensure_fps_capture_schema"
-            for node in ast.walk(collector)
+            for node in ast.walk(publisher)
         ))
         self.assertIn("fps_capture_status", schema)
         self.assertIn("fps_capture_detail", schema)

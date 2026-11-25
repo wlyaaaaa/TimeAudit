@@ -87,6 +87,16 @@ Shared health includes Grafana, so collectors alone cannot make the service
 healthy. Public HTTPS reachability is a separate tunnel/publication check.
 Recovery does not reconstruct telemetry that was never collected.
 
+After Windows login, the existing TimeAudit startup launches the native
+collector before waiting for Docker or PostgreSQL. The collector records
+hardware, available frame readings and three-second process snapshots in
+`E:\Data\TimeAudit\PendingTelemetry`. The same process retries database
+delivery independently of collection. It removes each local record only after
+the corresponding fact write succeeds. Replays retain the original timestamp
+and use the existing fact keys to keep each sample single. A separate,
+short-lived receipt lets the watchdog recognize an active backfill while the
+ordinary database heartbeat still reflects fresh database writes.
+
 Docker readiness uses `version --format {{.Server.Version}}`. `docker info`
 enumerates every CLI plugin even with a server-only format; slow plugin metadata
 must not be reported as a Docker API timeout or block dependency recovery.
