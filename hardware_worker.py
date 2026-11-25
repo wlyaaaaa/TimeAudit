@@ -1378,13 +1378,17 @@ class HardwareTelemetryWorker:
             "gpu_core_temp", "gpu_hotspot_temp", "gpu_board_power",
             "gpu_throttling_reasons", "pcie_bus_utilization",
         ))
+        result = {
+            key: value if (value := nvml_metrics.get(key)) is not None else lhm_metrics.get(key)
+            for key in unavailable
+        }
+        # The render gate's source describes utilisation, even if other readings came from LHM.
+        source = None
         if nvml_metrics.get("source_available"):
-            return "nvml", {key: nvml_metrics.get(key) for key in unavailable}
-        if lhm_metrics.get("gpu_usage") is None:
-            return None, unavailable
-        result = unavailable.copy()
-        result.update(lhm_metrics)
-        return "lhm", result
+            source = "nvml"
+        elif lhm_metrics.get("gpu_usage") is not None:
+            source = "lhm"
+        return source, result
 
     def _background_lhm_loop(self):
         """通过 LibreHardwareMonitor 内置 Web 服务(/data.json)采集 NVML/PDH 无法可靠提供的真实硬件量：
@@ -1510,42 +1514,27 @@ class HardwareTelemetryWorker:
         if not self.nvml_initialized:
             return res
         with NVML_LOCK:
-            try:
-                res["gpu_usage"] = float(pynvml.nvmlDeviceGetUtilizationRates(self.gpu_handle).gpu)
-                core_temp = float(pynvml.nvmlDeviceGetTemperature(self.gpu_handle, 0))
-                res["gpu_core_temp"] = core_temp
+            handle = self.gpu_handle
 
-                # NVML can return success with unusable values in a long-lived
-                # process. Treat those readings like a failed handle, so the
-                # existing reinitialization and real LHM fallback can recover.
-                if (
-                    self._valid_gpu_metric(res["gpu_usage"], 0.0, 100.0) is None
-                    or self._valid_gpu_metric(core_temp, 0.0, 120.0) is None
-                ):
-                    raise ValueError("nvml_core_metrics_out_of_bounds")
+            def read(get_value, maximum):
+                try:
+                    return self._valid_gpu_metric(get_value(), 0.0, maximum)
+                except Exception:
+                    return None
 
-                # NVML sensor 1 is not a portable core-hotspot reading.
-                # Do not disguise memory temperature or core+offset as hotspot.
-                res["gpu_hotspot_temp"] = None
-
-                res["gpu_board_power"] = float(pynvml.nvmlDeviceGetPowerUsage(self.gpu_handle)) / 1000.0
-                res["gpu_core_clock"] = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_GRAPHICS))
-                # 列类型为 integer，NVML 返回真实显存时钟(MHz)；去掉旧的 smallint(32767)截断 bug。
-                mem_clock = int(pynvml.nvmlDeviceGetClockInfo(self.gpu_handle, NVML_CLOCK_MEM))
-                res["gpu_mem_clock"] = mem_clock
-                if (
-                    self._valid_gpu_metric(res["gpu_board_power"], 0.0, 2000.0) is None
-                    or self._valid_gpu_metric(res["gpu_core_clock"], 0.0, 100000.0) is None
-                    or self._valid_gpu_metric(mem_clock, 0.0, 100000.0) is None
-                ):
-                    raise ValueError("nvml_power_or_clocks_out_of_bounds")
-
-                # 占位：下游 collect_hardware_snapshot 用 LHM 真实核心电压覆盖(NVML 在 GeForce 无法提供)。
-                # 易在特定驱动/版本上抛异常的非核心调用——各自隔离，绝不连累上面已取得的核心指标。
+            usage = read(lambda: pynvml.nvmlDeviceGetUtilizationRates(handle).gpu, 100.0)
+            temperature = read(lambda: pynvml.nvmlDeviceGetTemperature(handle, 0), 120.0)
+            if usage is not None or temperature is not None:
+                res["gpu_usage"] = usage
+                res["gpu_core_temp"] = temperature
+                res["gpu_board_power"] = read(lambda: pynvml.nvmlDeviceGetPowerUsage(handle) / 1000.0, 2000.0)
+                for key, clock in (("gpu_core_clock", NVML_CLOCK_GRAPHICS), ("gpu_mem_clock", NVML_CLOCK_MEM)):
+                    value = read(lambda: pynvml.nvmlDeviceGetClockInfo(handle, clock), 100_000.0)
+                    res[key] = int(value) if value is not None else None
                 res["gpu_throttling_reasons"] = self._read_gpu_throttle_reasons()
                 res["pcie_bus_utilization"] = self._read_gpu_pcie_util()
-                res["source_available"] = True
-            except Exception:
+                res["source_available"] = usage is not None
+            if usage is None or temperature is None:
                 try:
                     pynvml.nvmlShutdown()
                 except Exception:

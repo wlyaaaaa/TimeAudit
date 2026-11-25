@@ -91,17 +91,17 @@ class FpsCaptureContractTest(unittest.TestCase):
             self.assertEqual(54.0, valid["gpu_core_temp"])
             self.assertEqual(112.0, valid["gpu_board_power"])
 
-    def test_nvml_nonfinite_and_out_of_bounds_core_metrics_are_unavailable(self):
+    def test_nvml_invalid_values_leave_only_the_affected_metric_unavailable(self):
         worker = hardware_worker.HardwareTelemetryWorker.__new__(
             hardware_worker.HardwareTelemetryWorker
         )
         worker._read_gpu_throttle_reasons = lambda: 0
         worker._read_gpu_pcie_util = lambda: 0.0
         cases = (
-            ("usage", -1), ("usage", 101), ("usage", float("nan")),
-            ("temperature", 293), ("temperature", float("inf")),
-            ("power", -1), ("power", 2000001), ("power", float("nan")),
-            ("clock", -1), ("clock", 100001), ("clock", float("inf")),
+            ("gpu_usage", -1), ("gpu_usage", 101), ("gpu_usage", float("nan")),
+            ("gpu_core_temp", 293), ("gpu_core_temp", float("inf")),
+            ("gpu_board_power", -1), ("gpu_board_power", 2000001), ("gpu_board_power", float("nan")),
+            ("gpu_core_clock", -1), ("gpu_core_clock", 100001), ("gpu_core_clock", float("inf")),
         )
         for field, value in cases:
             with self.subTest(field=field, value=value), patch.multiple(
@@ -115,14 +115,42 @@ class FpsCaptureContractTest(unittest.TestCase):
                 worker.nvml_initialized = True
                 worker.gpu_handle = object()
                 nvml["nvmlDeviceGetUtilizationRates"].return_value = SimpleNamespace(
-                    gpu=value if field == "usage" else 30
+                    gpu=value if field == "gpu_usage" else 30
                 )
-                nvml["nvmlDeviceGetTemperature"].return_value = value if field == "temperature" else 54
-                nvml["nvmlDeviceGetPowerUsage"].return_value = value if field == "power" else 112000
-                nvml["nvmlDeviceGetClockInfo"].return_value = value if field == "clock" else 2500
-                self.assertFalse(worker._sample_nvml_gpu_metrics()["source_available"])
-                self.assertFalse(worker.nvml_initialized)
-                nvml["nvmlShutdown"].assert_called_once()
+                nvml["nvmlDeviceGetTemperature"].return_value = value if field == "gpu_core_temp" else 54
+                nvml["nvmlDeviceGetPowerUsage"].return_value = value if field == "gpu_board_power" else 112000
+                nvml["nvmlDeviceGetClockInfo"].side_effect = [value if field == "gpu_core_clock" else 2500, 14001]
+                sample = worker._sample_nvml_gpu_metrics()
+                self.assertIsNone(sample[field])
+                self.assertEqual(sample["gpu_mem_clock"], 14001)
+                self.assertEqual(sample["source_available"], field != "gpu_usage")
+                reset_handle = field in {"gpu_usage", "gpu_core_temp"}
+                self.assertEqual(worker.nvml_initialized, not reset_handle)
+                self.assertEqual(nvml["nvmlShutdown"].call_count, int(reset_handle))
+
+    def test_unavailable_nvml_clock_keeps_the_other_sensor_readings(self):
+        worker = hardware_worker.HardwareTelemetryWorker.__new__(hardware_worker.HardwareTelemetryWorker)
+        worker.nvml_initialized = True
+        worker.gpu_handle = object()
+        worker._read_gpu_throttle_reasons = lambda: 0
+        worker._read_gpu_pcie_util = lambda: 0.0
+        with patch.multiple(
+            hardware_worker.pynvml,
+            nvmlShutdown=unittest.mock.DEFAULT,
+            nvmlDeviceGetUtilizationRates=unittest.mock.DEFAULT,
+            nvmlDeviceGetTemperature=unittest.mock.DEFAULT,
+            nvmlDeviceGetPowerUsage=unittest.mock.DEFAULT,
+            nvmlDeviceGetClockInfo=unittest.mock.DEFAULT,
+        ) as nvml:
+            nvml['nvmlDeviceGetUtilizationRates'].return_value = SimpleNamespace(gpu=5)
+            nvml['nvmlDeviceGetTemperature'].return_value = 48
+            nvml['nvmlDeviceGetPowerUsage'].return_value = 83000
+            nvml['nvmlDeviceGetClockInfo'].side_effect = [OSError('clock unavailable'), 14001]
+            source, sample = worker._merge_gpu_metrics(worker._sample_nvml_gpu_metrics(), {})
+        self.assertEqual((source, sample['gpu_usage'], sample['gpu_board_power']), ('nvml', 5.0, 83.0))
+        self.assertIsNone(sample['gpu_core_clock'])
+        self.assertEqual(sample['gpu_mem_clock'], 14001)
+        nvml['nvmlShutdown'].assert_not_called()
 
     def test_lhm_gpu_core_load_recovers_nvml_failure_without_zero(self):
         lhm = hardware_worker.HardwareTelemetryWorker._extract_lhm_gpu_metrics({
