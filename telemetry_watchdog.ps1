@@ -1,5 +1,5 @@
 ﻿# TimeAudit telemetry watchdog
-# Restores Docker dependencies before checking these four collectors/sources:
+# Repairs these collectors/sources, restoring Docker before the database sidecar:
 #   1. main.py            -> the Python hardware/process telemetry engine (writes fact_* tables)
 #   2. LibreHardwareMonitor -> CPU temperature/clock/power/voltage source; endpoint health is authoritative.
 #   3. TimeAudit.ahk      -> the AutoHotkey foreground/macro-state engine (feeds app_usage_logs,
@@ -21,10 +21,12 @@ $lhmExe = 'E:\Projects\Tools\TimeAudit\LibreHardwareMonitor.exe'
 $lhmTaskName = 'LibreHardwareMonitor'
 $lhmEndpoint = 'http://127.0.0.1:18085/data.json'
 $heartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_heartbeat'
+$backfillHeartbeat = 'E:\Projects\Tools\TimeAudit\log\telemetry_backfill_heartbeat'
 $ahkHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ahk_heartbeat'
 $ingesterHeartbeat = 'E:\Projects\Tools\TimeAudit\log\ingester_heartbeat.json'
 $docker = 'C:\Program Files\Docker\Docker\resources\bin\docker.exe'
 $dockerRecoveryState = Join-Path $PSScriptRoot 'log\docker_engine_recovery.json'
+$dockerHostLog = Join-Path $env:LOCALAPPDATA 'Docker\log\host\com.docker.backend.exe.log'
 $compose = 'E:\Projects\Tools\TimeAudit\docker-compose.yml'
 $grafanaHealthUrl = 'http://127.0.0.1:43000/api/health'
 $dbHost = '127.0.0.1'
@@ -179,25 +181,63 @@ function Get-DockerDesktopState {
     return 'unknown'
 }
 
-function Restore-UnavailableDocker([string]$Status, [long]$NowSeconds = ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) {
-    if ($Status -eq 'healthy') {
-        Remove-Item -LiteralPath $dockerRecoveryState -Force -ErrorAction SilentlyContinue
-        return $false
+function Get-DockerLayerFault([long]$NowSeconds) {
+    $rotated = Get-ChildItem -LiteralPath (Split-Path $dockerHostLog -Parent) `
+        -Filter ((Split-Path $dockerHostLog -Leaf) + '.*') -File -ErrorAction SilentlyContinue |
+        Sort-Object Name -Descending | Select-Object -First 1
+    $faults = foreach ($path in @($dockerHostLog, $rotated.FullName)) {
+        if (-not $path) { continue }
+        foreach ($line in (Get-Content -LiteralPath $path -Tail 640 -Encoding UTF8 -ErrorAction SilentlyContinue)) {
+            if ($line -notmatch '^\[([^]]+)\]\[com\.docker\.backend\.exe\.engines\] engine linux/wsl shutdown requested .*: layer not mounted\)$') { continue }
+            $at = [DateTimeOffset]::MinValue
+            if ([DateTimeOffset]::TryParse($Matches[1], [ref]$at)) {
+                $seconds = $at.ToUnixTimeSeconds()
+                if ($seconds -le $NowSeconds -and $NowSeconds - $seconds -le 240) { $seconds }
+            }
+        }
     }
+    return $faults | Sort-Object -Unique
+}
+
+function Restore-UnavailableDocker([string]$Status, [long]$NowSeconds = ([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())) {
     $unavailable = $Status -in @('stopped', 'running')
     $restartTimeout = 120
     $startupGrace = 180
-    $state = @{ Version = 1; Since = 0L; Last = 0L; Attempted = $false; FallbackAfter = 0L }
-    if (Test-Path -LiteralPath $dockerRecoveryState) {
+    $state = @{ Version = 1; Since = 0L; Last = 0L; Attempted = $false; FallbackAfter = 0L; Incidents = @() }
+    $hasState = Test-Path -LiteralPath $dockerRecoveryState
+    if ($hasState) {
         try {
             $saved = Get-Content -LiteralPath $dockerRecoveryState -Raw -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
             if ($saved.Version -ne 1 -or $saved.Attempted -isnot [bool] -or $saved.Since -lt 0 -or $saved.Last -lt 0) { throw 'invalid recovery state' }
             $state = @{
                 Version = 1; Since = [long]$saved.Since; Last = [long]$saved.Last
                 Attempted = $saved.Attempted; FallbackAfter = [long]$saved.FallbackAfter
+                Incidents = @($saved.Incidents | Where-Object { $_ -and $_.FailedAt -gt 0 } | Select-Object -Last 12)
             }
-        } catch { Log 'Docker recovery state unreadable - defer automatic engine recovery'; return $true }
-    } elseif (-not $unavailable) { return $false }
+        } catch {
+            if ($Status -eq 'healthy') {
+                Remove-Item -LiteralPath $dockerRecoveryState -Force -ErrorAction SilentlyContinue
+                return $false
+            }
+            Log 'Docker recovery state unreadable - defer automatic engine recovery'; return $true
+        }
+    }
+    $lastIncident = $state.Incidents | Select-Object -Last 1
+    $notes = @()
+    foreach ($fault in (Get-DockerLayerFault $NowSeconds)) {
+        if ($fault -gt [Math]::Max([long]$lastIncident.FailedAt, [long]$lastIncident.RecoveredAt)) {
+            $lastIncident = @{ FailedAt = $fault; RecoveredAt = 0L; Reason = 'layer_not_mounted' }
+            $state.Incidents = @($state.Incidents + $lastIncident | Select-Object -Last 12)
+            $notes += "Docker Linux engine failed at $([DateTimeOffset]::FromUnixTimeSeconds($fault).ToString('o')) (layer not mounted)"
+        }
+    }
+    if ($Status -eq 'healthy') {
+        $openIncidents = @($state.Incidents | Where-Object { -not $_.RecoveredAt })
+        if ($state.Last -eq 0 -and -not $state.Attempted -and -not $openIncidents) { return $false }
+        foreach ($incident in $openIncidents) { $incident.RecoveredAt = $NowSeconds }
+        if ($openIncidents) { $notes += "Docker engine API recovered at $([DateTimeOffset]::FromUnixTimeSeconds($NowSeconds).ToString('o'))" }
+        $state.Attempted = $false; $state.FallbackAfter = 0L
+    }
     if (-not $unavailable) {
         # Starting, stopping and unreadable status break continuity.
         $state.Since = 0L; $state.Last = 0L
@@ -206,7 +246,9 @@ function Restore-UnavailableDocker([string]$Status, [long]$NowSeconds = ([DateTi
         $state.Last = $NowSeconds
     }
     $unavailableFor = $NowSeconds - $state.Since
-    $restart = $unavailable -and -not $state.Attempted -and $unavailableFor -ge 600
+    $confirmedFault = $Status -eq 'stopped' -and $lastIncident.Reason -eq 'layer_not_mounted' -and
+        -not $lastIncident.RecoveredAt -and $NowSeconds - $lastIncident.FailedAt -le 240
+    $restart = $unavailable -and -not $state.Attempted -and ($confirmedFault -or $unavailableFor -ge 600)
     $fallback = $state.Attempted -and $state.FallbackAfter -gt 0 -and $NowSeconds -ge $state.FallbackAfter -and
         ($Status -eq 'absent' -or ($unavailable -and $unavailableFor -ge $startupGrace))
     if ($fallback) {
@@ -222,23 +264,35 @@ function Restore-UnavailableDocker([string]$Status, [long]$NowSeconds = ([DateTi
     }
     if ($restart -or $fallback) {
         $autostart = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
-        if (-not $autostart -or $autostart.State -eq 'Running') {
-            Log 'Docker recovery deferred - registered autostart unavailable or already running'
+        if (-not $autostart -or $autostart.State -in @('Running', 'Disabled')) {
+            Log 'Docker recovery deferred - registered autostart unavailable, disabled or already running'
             $restart = $false; $fallback = $false
         } else {
             $state.Attempted = $true
             $state.FallbackAfter = 0L
-            if ($restart) { $state.FallbackAfter = $NowSeconds + $restartTimeout + $startupGrace }
+            if ($restart) {
+                $state.FallbackAfter = $NowSeconds + $restartTimeout + $startupGrace
+                if (-not $lastIncident -or $lastIncident.RecoveredAt) {
+                    $lastIncident = @{ FailedAt = $state.Since; RecoveredAt = 0L; Reason = 'api_unavailable' }
+                    $state.Incidents = @($state.Incidents + $lastIncident | Select-Object -Last 12)
+                }
+            }
         }
     }
+    if ($Status -eq 'healthy' -and -not $state.Incidents) {
+        Remove-Item -LiteralPath $dockerRecoveryState -Force -ErrorAction SilentlyContinue
+        return $false
+    }
+    if ($Status -in @('unknown', 'absent') -and -not $state.Incidents -and -not $hasState) { return $false }
     $temporary = $dockerRecoveryState + '.' + $PID + '.tmp'
     try {
-        [IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json -Compress), [Text.UTF8Encoding]::new($false))
+        [IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json -Depth 4 -Compress), [Text.UTF8Encoding]::new($false))
         Move-Item -LiteralPath $temporary -Destination $dockerRecoveryState -Force -ErrorAction Stop
     } catch { Log 'Docker recovery state not persisted - no engine mutation'; return $true }
     finally { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue }
+    foreach ($note in $notes) { Log $note }
     if ($restart) {
-        Log "Docker API unavailable for 10 minutes (desktop_status=$Status) - one bounded official restart"
+        Log "Docker engine unavailable (desktop_status=$Status, confirmed_layer_fault=$confirmedFault, observed_seconds=$unavailableFor) - one bounded official restart"
         $result = Invoke-DockerBounded 'desktop restart --timeout 110' $restartTimeout
         Log "Docker Desktop restart returned success=$($result.Success), timed_out=$($result.TimedOut) - verifying API in later cycles"
         return $true
@@ -283,12 +337,12 @@ function Restore-TimeAuditDependencies {
         $recoveryBlocked = Restore-UnavailableDocker $desktopState
         if ($engine.TimedOut) {
             Log ("Docker API probe timed out after {0:F2}s; desktop_status={1}" -f $probeTimer.Elapsed.TotalSeconds, $desktopState)
-            return
+            return $false
         }
         if (-not $desktop) {
-            if ($recoveryBlocked) { Log 'Docker remains unavailable after its one recovery attempt - no repeated bootstrap'; return }
+            if ($recoveryBlocked) { Log 'Docker remains unavailable after its one recovery attempt - no repeated bootstrap'; return $false }
             $autostart = Get-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction SilentlyContinue
-            if ($autostart -and $autostart.State -ne 'Running') {
+            if ($autostart -and $autostart.State -notin @('Running', 'Disabled')) {
                 Log 'Docker Desktop absent - invoking registered autostart; next cycle verifies readiness'
                 Start-ScheduledTask -TaskName 'TimeAudit_AutoStart' -ErrorAction Stop
             } else {
@@ -297,7 +351,7 @@ function Restore-TimeAuditDependencies {
         } else {
             Log "Docker API unavailable; desktop_status=$desktopState"
         }
-        return
+        return $false
     }
     $null = Restore-UnavailableDocker 'healthy'
     $grafanaStartAttempted = $false
@@ -314,12 +368,12 @@ function Restore-TimeAuditDependencies {
             if (-not $result.Success) { Log ("Dependency {0} start not confirmed; next cycle inspects state" -f $name) }
         }
     }
-    if ($grafanaStartAttempted) { return }
+    if ($grafanaStartAttempted) { return $true }
     if (-not (Test-GrafanaEndpoint)) {
         $started = Invoke-DockerBounded 'inspect --format {{.State.StartedAt}} audit-grafana'
         $startedAt = [DateTimeOffset]::MinValue
         if (-not $started.Success -or -not [DateTimeOffset]::TryParse($started.Output, [ref]$startedAt) -or
-            ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds -lt 120) { return }
+            ([DateTimeOffset]::UtcNow - $startedAt).TotalSeconds -lt 120) { return $true }
         Start-Sleep -Seconds $sidecarGraceSeconds
         if (-not (Test-GrafanaEndpoint)) {
             $state = Invoke-DockerBounded 'inspect --format {{.State.Status}} audit-grafana'
@@ -330,6 +384,7 @@ function Restore-TimeAuditDependencies {
             }
         }
     }
+    return $true
 }
 
 function Remove-StaleTask($taskName) {
@@ -340,7 +395,6 @@ function Remove-StaleTask($taskName) {
 }
 
 function Invoke-TimeAuditWatchdog {
-Restore-TimeAuditDependencies
 Remove-StaleTask 'TimeAudit_WatchdogRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogAhkRestart_tmp'
 Remove-StaleTask 'TimeAudit_WatchdogLhmRestart_tmp'
@@ -476,16 +530,16 @@ if (-not $mainProc) {
     Start-Sleep -Seconds $startupGraceSeconds
     $mainProc = Find-MainProc
     if (-not $mainProc) {
-        if (-not (Test-DatabaseQuery)) {
-            Log ("main.py restart deferred because PostgreSQL endpoint {0}:{1} is unavailable" -f $dbHost, $dbHostPort)
-        } elseif (Test-AutoStartWithinGrace) {
+        if (Test-AutoStartWithinGrace) {
             Log ("main.py not running yet, but TimeAudit_AutoStart is within its {0}s startup window - defer this cycle" -f $autoStartMaxGraceSeconds)
         } else {
             Restart-Main 'NOT running after startup grace period'
         }
     }
 } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
-    if (-not (Test-DatabaseQuery)) {
+    if (Test-HeartbeatFresh $backfillHeartbeat $heartbeatMaxAgeSeconds) {
+        Log 'The collector is committing historical samples - defer main.py restart'
+    } elseif (-not (Test-DatabaseQuery)) {
         Log ("main.py heartbeat stale but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
     } elseif (Test-MainWithinStartupGrace $mainProc) {
         Log ("main.py heartbeat stale but live process is within its {0}s startup grace - defer" -f $mainStartupHeartbeatGraceSeconds)
@@ -494,11 +548,7 @@ if (-not $mainProc) {
         Start-Sleep -Seconds $heartbeatGraceSeconds
         $mainProc = Find-MainProc
         if (-not $mainProc) {
-            if (Test-DatabaseQuery) {
-                Restart-Main 'stopped during heartbeat grace period'
-            } else {
-                Log ("main.py stopped during heartbeat grace but PostgreSQL endpoint {0}:{1} is unavailable - defer restart" -f $dbHost, $dbHostPort)
-            }
+            Restart-Main 'stopped during heartbeat grace period'
         } elseif (-not (Test-HeartbeatFresh $heartbeat $heartbeatMaxAgeSeconds)) {
             if (Test-DatabaseQuery) {
                 Restart-Main 'heartbeat stale after grace period'
@@ -510,6 +560,7 @@ if (-not $mainProc) {
 }
 
 # === 2. LibreHardwareMonitor (hardware sensor source) ===
+$dockerReady = Restore-TimeAuditDependencies
 if (-not (Test-LhmEndpoint)) {
     Log ("LibreHardwareMonitor endpoint unavailable - waiting {0}s for startup/resume recovery" -f $lhmGraceSeconds)
     Start-Sleep -Seconds $lhmGraceSeconds
@@ -575,7 +626,9 @@ function Restart-Ingester($reason) {
     }
 }
 
-if (-not (Test-DatabaseEndpoint)) {
+if (-not $dockerReady) {
+    Log 'audit-ingester recovery deferred until the Docker engine API responds'
+} elseif (-not (Test-DatabaseEndpoint)) {
     Log ("audit-ingester recovery deferred because PostgreSQL endpoint {0}:{1} is unavailable" -f $dbHost, $dbHostPort)
 } elseif (-not (Test-IngesterRunning)) {
     Restart-Ingester 'NOT running'

@@ -91,17 +91,17 @@ class FpsCaptureContractTest(unittest.TestCase):
             self.assertEqual(54.0, valid["gpu_core_temp"])
             self.assertEqual(112.0, valid["gpu_board_power"])
 
-    def test_nvml_nonfinite_and_out_of_bounds_core_metrics_are_unavailable(self):
+    def test_nvml_invalid_values_leave_only_the_affected_metric_unavailable(self):
         worker = hardware_worker.HardwareTelemetryWorker.__new__(
             hardware_worker.HardwareTelemetryWorker
         )
         worker._read_gpu_throttle_reasons = lambda: 0
         worker._read_gpu_pcie_util = lambda: 0.0
         cases = (
-            ("usage", -1), ("usage", 101), ("usage", float("nan")),
-            ("temperature", 293), ("temperature", float("inf")),
-            ("power", -1), ("power", 2000001), ("power", float("nan")),
-            ("clock", -1), ("clock", 100001), ("clock", float("inf")),
+            ("gpu_usage", -1), ("gpu_usage", 101), ("gpu_usage", float("nan")),
+            ("gpu_core_temp", 293), ("gpu_core_temp", float("inf")),
+            ("gpu_board_power", -1), ("gpu_board_power", 2000001), ("gpu_board_power", float("nan")),
+            ("gpu_core_clock", -1), ("gpu_core_clock", 100001), ("gpu_core_clock", float("inf")),
         )
         for field, value in cases:
             with self.subTest(field=field, value=value), patch.multiple(
@@ -115,14 +115,42 @@ class FpsCaptureContractTest(unittest.TestCase):
                 worker.nvml_initialized = True
                 worker.gpu_handle = object()
                 nvml["nvmlDeviceGetUtilizationRates"].return_value = SimpleNamespace(
-                    gpu=value if field == "usage" else 30
+                    gpu=value if field == "gpu_usage" else 30
                 )
-                nvml["nvmlDeviceGetTemperature"].return_value = value if field == "temperature" else 54
-                nvml["nvmlDeviceGetPowerUsage"].return_value = value if field == "power" else 112000
-                nvml["nvmlDeviceGetClockInfo"].return_value = value if field == "clock" else 2500
-                self.assertFalse(worker._sample_nvml_gpu_metrics()["source_available"])
-                self.assertFalse(worker.nvml_initialized)
-                nvml["nvmlShutdown"].assert_called_once()
+                nvml["nvmlDeviceGetTemperature"].return_value = value if field == "gpu_core_temp" else 54
+                nvml["nvmlDeviceGetPowerUsage"].return_value = value if field == "gpu_board_power" else 112000
+                nvml["nvmlDeviceGetClockInfo"].side_effect = [value if field == "gpu_core_clock" else 2500, 14001]
+                sample = worker._sample_nvml_gpu_metrics()
+                self.assertIsNone(sample[field])
+                self.assertEqual(sample["gpu_mem_clock"], 14001)
+                self.assertEqual(sample["source_available"], field != "gpu_usage")
+                reset_handle = field in {"gpu_usage", "gpu_core_temp"}
+                self.assertEqual(worker.nvml_initialized, not reset_handle)
+                self.assertEqual(nvml["nvmlShutdown"].call_count, int(reset_handle))
+
+    def test_unavailable_nvml_clock_keeps_the_other_sensor_readings(self):
+        worker = hardware_worker.HardwareTelemetryWorker.__new__(hardware_worker.HardwareTelemetryWorker)
+        worker.nvml_initialized = True
+        worker.gpu_handle = object()
+        worker._read_gpu_throttle_reasons = lambda: 0
+        worker._read_gpu_pcie_util = lambda: 0.0
+        with patch.multiple(
+            hardware_worker.pynvml,
+            nvmlShutdown=unittest.mock.DEFAULT,
+            nvmlDeviceGetUtilizationRates=unittest.mock.DEFAULT,
+            nvmlDeviceGetTemperature=unittest.mock.DEFAULT,
+            nvmlDeviceGetPowerUsage=unittest.mock.DEFAULT,
+            nvmlDeviceGetClockInfo=unittest.mock.DEFAULT,
+        ) as nvml:
+            nvml['nvmlDeviceGetUtilizationRates'].return_value = SimpleNamespace(gpu=5)
+            nvml['nvmlDeviceGetTemperature'].return_value = 48
+            nvml['nvmlDeviceGetPowerUsage'].return_value = 83000
+            nvml['nvmlDeviceGetClockInfo'].side_effect = [OSError('clock unavailable'), 14001]
+            source, sample = worker._merge_gpu_metrics(worker._sample_nvml_gpu_metrics(), {})
+        self.assertEqual((source, sample['gpu_usage'], sample['gpu_board_power']), ('nvml', 5.0, 83.0))
+        self.assertIsNone(sample['gpu_core_clock'])
+        self.assertEqual(sample['gpu_mem_clock'], 14001)
+        nvml['nvmlShutdown'].assert_not_called()
 
     def test_lhm_gpu_core_load_recovers_nvml_failure_without_zero(self):
         lhm = hardware_worker.HardwareTelemetryWorker._extract_lhm_gpu_metrics({
@@ -249,17 +277,20 @@ class FpsCaptureContractTest(unittest.TestCase):
         ):
             self.assertTrue(worker._presentmon_needed())
 
-    def test_available_rtss_mapping_suppresses_presentmon_without_game_frames(self):
+    def test_available_rtss_mapping_without_frames_allows_existing_render_gate(self):
         worker = hardware_worker.HardwareTelemetryWorker.__new__(
             hardware_worker.HardwareTelemetryWorker
         )
         worker._fps_state_lock = threading.Lock()
         worker._rtss_frame_seen_monotonic = 0.0
         worker._rtss_mapping_available = True
-        with patch.object(worker, "_render_active", return_value=True):
-            self.assertFalse(worker._presentmon_needed())
+        with patch.object(hardware_worker.time, "monotonic", return_value=100.0):
+            with patch.object(worker, "_render_active", return_value=True):
+                self.assertTrue(worker._presentmon_needed())
+            with patch.object(worker, "_render_active", return_value=False):
+                self.assertFalse(worker._presentmon_needed())
 
-    def test_rtss_mapping_without_a_unique_frame_is_healthy_idle(self):
+    def test_rtss_mapping_without_a_frame_uses_presentmon_capture_state(self):
         status, detail = hardware_worker.HardwareTelemetryWorker._resolve_fps_capture_state(
             rtss_mapping_available=True,
             rtss_has_frame=False,
@@ -268,10 +299,10 @@ class FpsCaptureContractTest(unittest.TestCase):
             presentmon_has_frame=False,
             started_monotonic=100.0,
             now_monotonic=120.0,
-            error_detail="presentmon_start_failed",
+            error_detail=None,
         )
-        self.assertEqual("gated_idle", status)
-        self.assertEqual("rtss_no_active_frame", detail)
+        self.assertEqual("waiting_frames", status)
+        self.assertEqual("no_fresh_foreground_frame", detail)
 
     def test_rtss_pid_selection_prefers_os_focus_then_fresh_header_fallback(self):
         header = bytearray(96)
@@ -323,10 +354,10 @@ class FpsCaptureContractTest(unittest.TestCase):
             if isinstance(node, ast.AsyncFunctionDef)
             and node.name == "ensure_fps_capture_schema"
         )
-        collector = next(
+        publisher = next(
             node for node in tree.body
             if isinstance(node, ast.AsyncFunctionDef)
-            and node.name == "_run_collector"
+            and node.name == "_publish_pending_telemetry"
         )
         helper_source = ast.unparse(helper)
         self.assertIn("ADD COLUMN IF NOT EXISTS fps_capture_status text", helper_source)
@@ -336,7 +367,7 @@ class FpsCaptureContractTest(unittest.TestCase):
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id == "ensure_fps_capture_schema"
-            for node in ast.walk(collector)
+            for node in ast.walk(publisher)
         ))
         self.assertIn("fps_capture_status", schema)
         self.assertIn("fps_capture_detail", schema)

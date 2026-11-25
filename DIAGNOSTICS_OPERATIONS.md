@@ -49,16 +49,19 @@ Missing lifecycle events cannot be reconstructed by recovery.
 
 The existing watchdog also restores the Docker dependencies before checking
 collectors. If Docker Desktop has exited, it invokes the existing registered
-`TimeAudit_AutoStart` task unless that task is already running, and checks
+`TimeAudit_AutoStart` task if it is enabled and idle, and checks
 readiness on the next minute's cycle. This preserves the registered interactive
 startup context instead of duplicating it in an ad hoc process. If Desktop is
 still present while the API is unavailable, successful JSON output from
 `docker desktop status --format json` with `Status=running` or `Status=stopped`
-counts toward a ten-minute outage. Start, stop and unknown status observations
-reset that window, as do observation gaps over three minutes.
-`log/docker_engine_recovery.json` preserves the window and recovery progress
-between serialized watchdog runs. After ten continuously observed minutes it
-records one official `desktop restart --timeout 110`, bounded to 120 seconds.
+counts toward a ten-minute outage. Starting, stopping and unknown status
+observations reset that window, as do observation gaps over three minutes.
+A stopped engine with the recent Docker Linux/WSL fatal `layer not mounted`
+event can use the same official `desktop restart --timeout 110` on its first
+confirmed stopped probe. The watchdog only reads the tail of Docker's current
+and previous backend logs for this event. Ordinary container cleanup warnings
+during startup and unreadable Desktop status never qualify for a fast restart.
+Other outages need ten continuous minutes. Either restart is bounded to 120 seconds.
 The watchdog reserves those 120 seconds plus three minutes for startup before
 considering fallback. Before stopping any processes it rechecks the API and
 requires a fresh `running` or `stopped` status and three minutes of outage
@@ -66,18 +69,42 @@ observations since the last transition or gap. The fallback stops only
 `Docker Desktop.exe`, `com.docker.backend.exe`, `com.docker.build.exe` and
 `docker-desktop.exe` whose executable paths are inside the Docker installation
 directory, then invokes the existing `TimeAudit_AutoStart` task. If Desktop
-has already exited, only the task is invoked. A running or missing autostart
+has already exited, only the task is invoked. A disabled, running or missing autostart
 task defers recovery. Each incident gets at most one restart and one fallback.
-A healthy API clears the state for a later incident. Process identity is checked
-again using a live process handle; children that exit naturally do not abort bootstrap.
+A successful API probe resets the attempt counter and closes open incidents.
+`log/docker_engine_recovery.json` keeps the latest 12 fault/recovery pairs across
+reboots and the existing `telemetry_watchdog.log` records each observed
+transition. The owner can see the retained times under 实况 → 自动任务 → 时间记录守护.
+Process identity is checked again using a live process handle. Children that
+exit naturally do not abort bootstrap.
 Existing stopped PostgreSQL and Grafana containers are started
 without recreating containers, volumes or data. Grafana's local `/api/health`
 must report its database `ok`; a running Grafana that still fails after a grace
 period can be restarted individually. Docker commands have bounded waits, and
-an unconfirmed mutation is inspected on the next cycle rather than replayed.
+an unconfirmed mutation is inspected on the next cycle. The ingester waits
+for a responding engine before it tries to inspect or restart its container.
 Shared health includes Grafana, so collectors alone cannot make the service
 healthy. Public HTTPS reachability is a separate tunnel/publication check.
 Recovery does not reconstruct telemetry that was never collected.
+
+After Windows login, the existing TimeAudit startup launches the native
+collector before waiting for Docker or PostgreSQL. With a responsive database,
+hardware, available frame readings and process snapshots go straight to the
+existing writers without temporary sample files. At startup, during a database
+failure or when a fifth sample would wait for confirmation, the collector saves
+new and unconfirmed samples in `E:\Data\TimeAudit\PendingTelemetry`. An
+orderly shutdown saves unconfirmed samples as well. Up to four samples still
+waiting in memory can be lost if the process is forcibly stopped. A database
+step that hangs, including transaction cleanup, triggers a reconnect after 15
+seconds.
+
+During a continuous outage the collector can save up to 4,800 records per hour
+at the normal cadence. Each activity record contains all rows from its snapshot,
+so storage use varies with running processes. The collector keeps the only
+local copy until its fact write succeeds, then removes it. Replays preserve the
+original timestamp and use existing fact keys. A separate, short-lived receipt
+lets the watchdog recognize an active backfill while the ordinary database
+heartbeat still reflects fresh database writes.
 
 Docker readiness uses `version --format {{.Server.Version}}`. `docker info`
 enumerates every CLI plugin even with a server-only format; slow plugin metadata

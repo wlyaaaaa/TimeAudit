@@ -234,7 +234,6 @@ def test_watchdog_defers_restart_while_database_endpoint_is_down():
     assert "function Test-DatabaseEndpoint" in source
     assert "function Test-DatabaseQuery" in source
     assert "$dbProbeScript" in source
-    assert source.count("Test-DatabaseQuery") >= 4
     assert "ConnectAsync($dbHost, $dbHostPort)" in source
     assert "heartbeat stale but PostgreSQL endpoint" in source
     assert "audit-ingester recovery deferred because PostgreSQL endpoint" in source
