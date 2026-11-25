@@ -7,6 +7,7 @@ global logPath := "E:\Projects\Tools\TimeAudit\log\buffer.csv"
 global ahkHeartbeatPath := "E:\Projects\Tools\TimeAudit\log\ahk_heartbeat"
 global healthPath := A_ScriptDir . "\log\ahk_health.json"
 global maxIdleTime := 60000
+global lastGamepadInput := 0
 global isScreenOff := false
 global isLocked := false
 global suspended := false
@@ -25,7 +26,34 @@ global sessionNotify := DllCall("Wtsapi32\WTSRegisterSessionNotification", "Ptr"
 OnMessage(0x0218, WindowPowerEventHook)
 OnMessage(0x02B1, SessionEventHook)
 OnExit(SafeExitHandler)
+SetTimer(SampleGamepadInput, 50)
 SetTimer(CaptureActiveWindow, -2000, 1)
+
+SampleGamepadInput() {
+    global lastGamepadInput, suspended
+    static xinput := DllCall("LoadLibrary", "Str", A_WinDir "\System32\xinput1_4.dll", "Ptr")
+    static getState := xinput ? DllCall("GetProcAddress", "Ptr", xinput, "AStr", "XInputGetState", "Ptr") : 0
+    static state := Buffer(16), nextProbe := [0, 0, 0, 0]
+    if (suspended || !getState)
+        return
+    now := DllCall("GetTickCount64", "UInt64")
+    Loop 4 {
+        if (now < nextProbe[A_Index])
+            continue
+        if DllCall(getState, "UInt", A_Index - 1, "Ptr", state, "UInt") {
+            nextProbe[A_Index] := now + 1000
+            continue
+        }
+        leftX := NumGet(state, 8, "Short"), leftY := NumGet(state, 10, "Short")
+        rightX := NumGet(state, 12, "Short"), rightY := NumGet(state, 14, "Short")
+        ; XInput's standard stick dead zones and trigger threshold filter resting noise.
+        if (NumGet(state, 4, "UShort") || NumGet(state, 6, "UChar") > 30 || NumGet(state, 7, "UChar") > 30
+            || leftX * leftX + leftY * leftY > 7849 ** 2 || rightX * rightX + rightY * rightY > 8689 ** 2) {
+            lastGamepadInput := now
+            return
+        }
+    }
+}
 
 CaptureActiveWindow() {
     global captureErrors, captureFailing
@@ -46,15 +74,16 @@ CaptureActiveWindow() {
 }
 
 CaptureActiveWindowCore() {
-    global tracker, isScreenOff, isLocked, suspended, maxIdleTime
+    global tracker, isScreenOff, isLocked, suspended, maxIdleTime, lastGamepadInput
     if suspended
         return
     ; 2. 【层级漏斗状态机】动态判定当前这一秒电脑到底属于什么工时状态
     currentProcess := ""
     currentTitle := ""
     
-    ; 暂离检测级联：若键鼠静止超设定期限，但系统输出通道有音频振幅（看视频/开会），则豁免暂离状态
-    isIdleState := (A_TimeIdlePhysical >= maxIdleTime)
+    ; 键鼠和手柄均无操作满一分钟后，再查音频豁免。
+    isIdleState := (A_TimeIdlePhysical >= maxIdleTime
+        && (!lastGamepadInput || DllCall("GetTickCount64", "UInt64") - lastGamepadInput >= maxIdleTime))
     if (isIdleState && IsSystemAudioPlaying()) {
         isIdleState := false
     }
@@ -69,7 +98,7 @@ CaptureActiveWindowCore() {
     } 
     else if (isIdleState) {
         currentProcess := "System_Idle"
-        currentTitle := "用户暂离/无键鼠物理操作"
+        currentTitle := "用户暂离/无键鼠或手柄操作"
     } 
     else {
         currentProcess := "Idle"
@@ -180,6 +209,7 @@ SessionEventHook(wParam, *) {
 SafeExitHandler(ExitReason, *) {
     Critical(true)
     global tracker, hPowerNotify, sessionNotify
+    SetTimer(SampleGamepadInput, 0)
     SetTimer(CaptureActiveWindow, 0)
     tracker.Finish(A_NowUTC, DllCall("GetTickCount64", "UInt64"))
     WriteAhkHealth()
