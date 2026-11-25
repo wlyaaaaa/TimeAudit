@@ -392,12 +392,11 @@ class HardwareTelemetryWorker:
 
     def _presentmon_needed(self):
         with self._fps_state_lock:
-            if getattr(self, "_rtss_mapping_available", False):
-                return False
             rtss_recent = (
                 time.monotonic() - self._rtss_frame_seen_monotonic
                 < self.RTSS_PRESENTMON_SUPPRESS_SECONDS
             )
+        # The RTSS table can stay open all day without sampling the current app.
         return self._render_active() and not rtss_recent
 
     @classmethod
@@ -439,7 +438,7 @@ class HardwareTelemetryWorker:
     ):
         if rtss_has_frame:
             return "active", "rtss_shared_memory_frame"
-        if rtss_mapping_available:
+        if rtss_mapping_available and source_available and not render_active and not presentmon_has_frame:
             return "gated_idle", "rtss_no_active_frame"
         return cls._map_fps_capture_state(
             source_available,
