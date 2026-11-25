@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import sqlite3
 import subprocess
+import sys
 from urllib.parse import quote
 
 from personal_activity_reader import parse_utc, seconds
@@ -41,6 +42,17 @@ def query(sql, timeout=12):
         raise TimeoutError
     result.check_returncode()
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
+
+
+def retained_count(table):
+    sql = f"SELECT count(*) FROM public.{table};"
+    # These exact counts run once a day outside the two-minute live refresh.
+    try:
+        return query(sql, 300)[0]
+    except subprocess.CalledProcessError as error:
+        if error.returncode != 2:  # psql lost the connection in a noninteractive session.
+            raise
+        return query(sql, 300)[0]
 
 
 def daily_records(rows, until):
@@ -95,13 +107,18 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
     def attempt(keys, action):
         try:
             action()
-        except (TimeoutError, subprocess.TimeoutExpired):
+        except (TimeoutError, subprocess.TimeoutExpired) as error:
+            if static:
+                print(f"留存取数 {keys} {type(error).__name__}", file=sys.stderr)
             put(dict.fromkeys(keys.split()), "本次读取超时")
-        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, sqlite3.Error):
+        except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, sqlite3.Error) as error:
+            if static:
+                detail = getattr(error, "returncode", None)
+                print(f"留存取数 {keys} {type(error).__name__} returncode={detail}", file=sys.stderr)
             put(dict.fromkeys(keys.split()), "取数失败；未填零")
     if static:
         for key, table in (("hardware", "fact_system_hardware"), ("lifecycle", "fact_process_lifecycle_events"), ("registry", "dim_process_registry")):
-            attempt(key, lambda key=key, table=table: put({key: query(f"SELECT count(*) FROM public.{table};", 120)[0]}))
+            attempt(key, lambda key=key, table=table: put({key: retained_count(table)}))
         def earliest():
             row = query("SELECT json_build_array((SELECT to_char(min(start_time) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.app_usage_logs),(SELECT to_char(min(timestamp) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.fact_process_context WHERE is_foreground=1));")[0]
             put(dict(earliest=f"活动 {row[0]}；窗口 {row[1]}" if all(row) else None))

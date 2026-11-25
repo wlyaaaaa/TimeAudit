@@ -1,5 +1,5 @@
 import datetime as dt
-from subprocess import CompletedProcess
+from subprocess import CalledProcessError, CompletedProcess
 
 from live_project_snapshot import daily_records
 import live_project_snapshot as live
@@ -77,6 +77,20 @@ def test_static_retains_each_old_measurement_only_when_its_read_fails(tmp_path, 
     assert result["scopes"]["registry"] == "取数失败；沿用上次读数"
     assert result["times"]["earliest"]
     assert not live.read(output)["metrics"]
+
+
+def test_static_count_retries_a_lost_database_connection(monkeypatch):
+    calls = []
+
+    def get_rows(sql, timeout):
+        calls.append((sql, timeout))
+        if len(calls) == 1:
+            raise CalledProcessError(2, 'psql')
+        return [456]
+
+    monkeypatch.setattr(live, 'query', get_rows)
+    assert live.retained_count('fact_process_lifecycle_events') == 456
+    assert calls == [('SELECT count(*) FROM public.fact_process_lifecycle_events;', 300)] * 2
 
 
 def test_live_snapshot_preserves_other_values_when_sources_are_missing(tmp_path, monkeypatch):
