@@ -88,14 +88,23 @@ healthy. Public HTTPS reachability is a separate tunnel/publication check.
 Recovery does not reconstruct telemetry that was never collected.
 
 After Windows login, the existing TimeAudit startup launches the native
-collector before waiting for Docker or PostgreSQL. The collector records
-hardware, available frame readings and three-second process snapshots in
-`E:\Data\TimeAudit\PendingTelemetry`. The same process retries database
-delivery independently of collection. It removes each local record only after
-the corresponding fact write succeeds. Replays retain the original timestamp
-and use the existing fact keys to keep each sample single. A separate,
-short-lived receipt lets the watchdog recognize an active backfill while the
-ordinary database heartbeat still reflects fresh database writes.
+collector before waiting for Docker or PostgreSQL. With a responsive database,
+hardware, available frame readings and process snapshots go straight to the
+existing writers without temporary sample files. At startup, during a database
+failure or when a fifth sample would wait for confirmation, the collector saves
+new and unconfirmed samples in `E:\Data\TimeAudit\PendingTelemetry`. An
+orderly shutdown saves unconfirmed samples as well. Up to four samples still
+waiting in memory can be lost if the process is forcibly stopped. A database
+step that hangs, including transaction cleanup, triggers a reconnect after 15
+seconds.
+
+During a continuous outage the collector can save up to 4,800 records per hour
+at the normal cadence. Each activity record contains all rows from its snapshot,
+so storage use varies with running processes. The collector keeps the only
+local copy until its fact write succeeds, then removes it. Replays preserve the
+original timestamp and use existing fact keys. A separate, short-lived receipt
+lets the watchdog recognize an active backfill while the ordinary database
+heartbeat still reflects fresh database writes.
 
 Docker readiness uses `version --format {{.Server.Version}}`. `docker info`
 enumerates every CLI plugin even with a server-only format; slow plugin metadata

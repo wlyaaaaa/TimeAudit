@@ -751,7 +751,11 @@ class DatabasePoolRecoveryTest(unittest.IsolatedAsyncioTestCase):
         activity = [{"os_pid": 123, "cpu": 2.5}]
         with tempfile.TemporaryDirectory() as directory:
             pending = PendingTelemetry(directory)
+            pending.allow_direct()
             pending.record("hardware", stamp, hardware)
+            self.assertEqual(("hardware", stamp, hardware), pending.first())
+            self.assertFalse(list(Path(directory).iterdir()))
+            pending.defer()
             pending.record("activity", stamp + datetime.timedelta(seconds=3), activity)
             after_restart = PendingTelemetry(directory)
             self.assertEqual(("hardware", stamp, hardware), after_restart.first())

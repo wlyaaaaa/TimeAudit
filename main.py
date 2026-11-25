@@ -134,6 +134,7 @@ ACTIVITY_INTERVAL_SEC = 3.0
 # connection timeout.
 DB_CONNECT_TIMEOUT_SEC = 5.0
 DB_CLOSE_TIMEOUT_SEC = 5.0
+DB_STEP_TIMEOUT_SEC = 15.0
 DB_RETRY_INTERVAL_SEC = 1.0
 PENDING_TELEMETRY_ROOT = r"E:\Data\TimeAudit\PendingTelemetry"
 # Partition warmup/retention is maintenance work, not part of the 1 Hz fast
@@ -551,6 +552,19 @@ async def _register_initial_processes(lifecycle_worker):
     print(f"[主控] 初次活体映射扫描完毕，共计登记了 {len(lifecycle_worker.shared_pid_key_map)} 个存活进程。")
 
 
+async def _await_database_step(pool, operation):
+    # asyncpg's command timeout can leave rollback or pool release waiting
+    # for cancellation from a server that is no longer responsive.
+    step = asyncio.create_task(operation)
+    try:
+        return await asyncio.wait_for(asyncio.shield(step), DB_STEP_TIMEOUT_SEC)
+    except (asyncio.TimeoutError, asyncio.CancelledError):
+        pool.terminate()
+        step.cancel()
+        await asyncio.gather(step, return_exceptions=True)
+        raise
+
+
 async def _publish_pending_telemetry(pending, tracker, hardware, activity, lifecycle, progress):
     """Reuse the database writers without making Windows sampling wait for them."""
     loop = asyncio.get_running_loop()
@@ -568,8 +582,8 @@ async def _publish_pending_telemetry(pending, tracker, hardware, activity, lifec
                     timeout=DB_CONNECT_TIMEOUT_SEC, command_timeout=5.0,
                 )
                 if initial_registration is None:
-                    await ensure_fps_capture_schema(pool)
-                    await cleanup_orphan_context_sessions(pool)
+                    await _await_database_step(pool, ensure_fps_capture_schema(pool))
+                    await _await_database_step(pool, cleanup_orphan_context_sessions(pool))
                     lifecycle.start_kernel_listener(pool)
                     initial_registration = asyncio.create_task(_register_initial_processes(lifecycle))
                 else:
@@ -579,21 +593,26 @@ async def _publish_pending_telemetry(pending, tracker, hardware, activity, lifec
                     if loop.time() >= next_context:
                         next_context = loop.time() + TELEMETRY_INTERVAL_SEC
                         try:
-                            if await tracker.poll_heartbeat(pool, datetime.datetime.now(datetime.timezone.utc)):
+                            if await _await_database_step(
+                                pool, tracker.poll_heartbeat(pool, datetime.datetime.now(datetime.timezone.utc))
+                            ):
                                 progress["context"] = loop.time()
+                        except asyncio.TimeoutError:
+                            raise
                         except Exception:
                             print("⚠️ 切窗监测工作异常；等待健康租约复核。")
                     if not pending.pending:
+                        pending.allow_direct()
                         await asyncio.sleep(0.25)
                         continue
                     kind, sample_at, rows = pending.first()
                     try:
-                        await writers[kind](pool, rows, sample_at)
+                        await _await_database_step(pool, writers[kind](pool, rows, sample_at))
                     except asyncpg.CheckViolationError as exc:
                         if not str(exc).startswith("no partition of relation"):
                             raise
-                        await auto_warmup_partitions(pool, sample_at, kind)
-                        await writers[kind](pool, rows, sample_at)
+                        await _await_database_step(pool, auto_warmup_partitions(pool, sample_at, kind))
+                        await _await_database_step(pool, writers[kind](pool, rows, sample_at))
                     pending.acknowledge()
                     if last_connection_error is not None:
                         print("[数据库] 已恢复写入，按时间补回本机待写样本。")
@@ -610,6 +629,10 @@ async def _publish_pending_telemetry(pending, tracker, hardware, activity, lifec
                     print(f"[数据库] 待补写暂缓 ({reason})，本机继续采集。")
                 last_connection_error = reason
             finally:
+                try:
+                    pending.defer()
+                except OSError as exc:
+                    print(f"[本机采样] 保存待确认样本失败 ({type(exc).__name__})。")
                 lifecycle.update_pool(None)
                 progress.clear()
                 await _close_database_pool(pool)
