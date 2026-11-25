@@ -537,7 +537,7 @@ def read_activity(after, until, *, automation=(), query_fn=query):
             "semantics": {
                 "actor_role": "device_observation_not_person_presence",
                 "foreground": "window focus intervals; end timestamp authoritative; open duration unknown",
-                "ahk": "current collector: physical idle threshold 60s, suppressed when system audio plays; per-row audio exemption and historical collector version not stored",
+                "ahk": "current collector: physical idle threshold 120s, suppressed when system audio plays; per-row audio exemption and historical collector version not stored",
                 "no_foreground_response": "Idle denotes no responsive focused window, not physical idle",
                 "automation": "only supplied known intervals annotated; absence does not establish human operation",
                 "aggregation": "half-open intervals; union within groups; sources and apps must not be summed as person time",
@@ -745,7 +745,7 @@ def read_activity_summary(after, until, *, automation=(), top_n=10, query_fn=que
             "semantics": {"actor_role": "device_observation_not_person_presence",
                           "coverage": "per-source union of recorded half-open intervals; uncovered means no interval from that source, not proof of device inactivity",
                           "states": "AHK collector categories remain distinct; state unions may overlap and must not be added",
-                          "physical_idle": "60s threshold in current collector, suppressed while system audio plays; per-row exemption and historical version unknown",
+                          "physical_idle": "120s threshold in current collector, suppressed while system audio plays; per-row exemption and historical version unknown",
                           "no_foreground_response": "Idle means no responsive focused window, not physical idle",
                           "foreground": "focus intervals; end timestamp authoritative; open duration unknown",
                           "days": "Asia/Shanghai UTC+08 calendar days; intervals clipped at local midnight; intersecting_row_count may repeat a row on adjacent days",

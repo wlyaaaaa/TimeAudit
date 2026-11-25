@@ -6,7 +6,7 @@ Persistent
 global logPath := "E:\Projects\Tools\TimeAudit\log\buffer.csv"
 global ahkHeartbeatPath := "E:\Projects\Tools\TimeAudit\log\ahk_heartbeat"
 global healthPath := A_ScriptDir . "\log\ahk_health.json"
-global maxIdleTime := 60000
+global maxIdleTime := 120000
 global lastGamepadInput := 0
 global isScreenOff := false
 global isLocked := false
@@ -81,7 +81,7 @@ CaptureActiveWindowCore() {
     currentProcess := ""
     currentTitle := ""
     
-    ; 键鼠和手柄均无操作满一分钟后，再查音频豁免。
+    ; 键鼠和手柄均无操作达到门槛后，再查音频豁免。
     isIdleState := (A_TimeIdlePhysical >= maxIdleTime
         && (!lastGamepadInput || DllCall("GetTickCount64", "UInt64") - lastGamepadInput >= maxIdleTime))
     if (isIdleState && IsSystemAudioPlaying()) {

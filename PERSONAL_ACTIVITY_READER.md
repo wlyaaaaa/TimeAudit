@@ -28,7 +28,7 @@ Python 消费方调用 `read_activity(after_datetime, until_datetime, automation
 
 - `foreground` 来自 `fact_process_context` 的 `is_foreground=1`。闭合会话使用起止时间裁切；`duration_ms` 与起止时间差超过 1 秒时记录异常。开放会话不外推，单列数量；窗口前已存在的开放行由 `unclosed_before_window_count` 提示，不能把旧未闭合行当作整个请求区间都在活动。
 - `ahk` 来自 `app_usage_logs` 的 start_time 与 duration_seconds。状态包括 physical_idle、display_off、lock、sleep、collection_gap、no_foreground_response、foreground_hung、capture_unknown；其他行为仅称 app_observed。
-- 当前 AHK 在键鼠和 XInput 手柄都超过 60 秒无操作时判为暂离，系统正在输出音频时仍可豁免。手柄按键、按住控制或超过死区的摇杆／扳机算活动。逐条记录不保存输入来源、音频豁免标志或历史采集器版本，因此不能从 app_observed 倒推出有物理输入，也不能用当前判定方法反推历史。`Idle` 是无前台响应，`System_Idle` 对应用户暂离。
+- 当前 AHK 在键鼠（含串流）和 XInput 手柄都满 120 秒无操作时判为暂离，系统正在输出音频时仍可豁免。手柄按键、按住控制或超过死区的摇杆／扳机算活动。逐条记录不保存输入来源、音频豁免标志或历史采集器版本，因此不能从 app_observed 倒推出有物理输入，也不能用当前判定方法反推历史。`Idle` 是无前台响应，`System_Idle` 对应用户暂离。
 - 每组分别做区间并集；同源重叠通过 `overlapping_row_seconds` 提示。它表示重复累计的时长，不是独立重叠墙钟时长。AHK 的 cross_state_overlap_seconds 同理。两来源、不同应用之间都不可直接相加为本人时间。
 - foreground 组额外输出与 AHK 各状态的交集。它保留“窗口还在前台，同时设备日志为空闲/熄屏”等事实，不自动把这一段认作本人使用。
 - `recorded_union_seconds` 包括采集间隙标记这种已持久化记录；AHK 的 `explicit_collection_gap_seconds` 单列明确间隙，`non_gap_recorded_seconds` 仅表示非间隙记录并集。未覆盖秒数、缺口数量、最大缺口、首尾记录分别返回。保存边界不能证明连续覆盖；未知始终保留。

@@ -31,13 +31,13 @@ CheckIntervals(events) {
 try {
     sink := TestSink()
     state := TimeAuditState(ObjBindMethod(sink, "Write"), At(0), 0)
-    loop 51 {
+    loop 61 {
         second := (A_Index - 1) * 2
-        state.Step(At(second), second * 1000, second >= 100 ? "System_Idle" : "app", second < 80 ? "first" : "second", 60)
+        state.Step(At(second), second * 1000, second >= 120 ? "System_Idle" : "app", second < 100 ? "first" : "second", 120)
     }
-    state.Finish(At(104), 104000)
+    state.Finish(At(124), 124000)
     CheckIntervals(sink.events)
-    Assert(sink.events[-1].beginUtc >= At(80), "idle_rewound_committed_time")
+    Assert(sink.events[-1].beginUtc >= At(100), "idle_rewound_committed_time")
 
     sink := TestSink()
     state := TimeAuditState(ObjBindMethod(sink, "Write"), At(0), 0)
