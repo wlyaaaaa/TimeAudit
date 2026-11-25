@@ -12,6 +12,7 @@ import argparse
 import datetime as dt
 import json
 import math
+from pathlib import Path
 import shutil
 import subprocess
 import sys
@@ -607,6 +608,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--live-output")
     parser.add_argument("--live-config")
     parser.add_argument("--live-static", action="store_true")
+    parser.add_argument("--land-live-output", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -616,9 +618,27 @@ def main(argv: list[str] | None = None) -> int:
         now = dt.datetime.now(UTC)
         if args.live_static and not args.live_output:
             raise RuntimeError("argument_invalid")
+        landing = None
+        if args.land_live_output:
+            root = Path(__file__).resolve().parent
+            name = "docs/live.snapshot.json"
+            if not args.live_static or Path(args.live_output).resolve() != root / name:
+                raise RuntimeError("argument_invalid")
+            sys.path.append(r"E:\PCConfig\tools\remote-computer-mcp")
+            try:
+                from automation.stale_git import Generated
+            except ImportError:
+                print("实况快照未自动提交：PCConfig 提交工具不可用", file=sys.stderr)
+            else:
+                landing = Generated(root, "wlyaaaaa/TimeAudit", "main", (name,))
+                if landing.blocked:
+                    print(landing.blocked, file=sys.stderr)
+                    return 0
         if args.live_static:
             from live_project_snapshot import export_snapshot
             export_snapshot(None, None, None, args.live_output, static=True, config_path=args.live_config)
+            if landing is not None:
+                print(landing.land(), file=sys.stderr)
             return 0
         if args.hours is not None and (args.after_utc or args.until_utc):
             raise RuntimeError("window_argument_conflict")
