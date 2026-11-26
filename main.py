@@ -726,6 +726,8 @@ async def _run_collector():
             print(f"[唤醒自愈] 前台会话截断失败: {resume_err}")
         try:
             hardware_worker.last_ctx_switches = None
+            if desktop := getattr(hardware_worker, "_desktop_frames", None):
+                desktop.sample(False)
         except Exception as resume_err:
             print(f"[唤醒自愈] 硬件速率基线重置失败: {resume_err}")
         # Sleep can cross a natural partition boundary. Force the next slot to

@@ -19,10 +19,14 @@ from ctypes import wintypes  # 【修复】网络探针线程使用 wintypes.HAN
                             # ICMP 初始化必抛 NameError → has_icmp=False → 永远退化为 TCP connect 测延迟。
 import os
 import struct
-from collections import defaultdict
+from collections import defaultdict, deque
+from pathlib import Path
 import psutil
 import pynvml
 import atexit
+from desktop_frames import DesktopFrames
+
+ACTIVITY_HEARTBEAT = Path(__file__).resolve().parent / "log" / "ahk_health.json"
 
 NVML_PCIE_UTIL_TX_BYTES = 0
 NVML_PCIE_UTIL_RX_BYTES = 1
@@ -148,6 +152,8 @@ class HardwareTelemetryWorker:
         self._presentmon_session_cleanup_done = False
         self._rtss_frame_seen_monotonic = 0.0
         self._rtss_mapping_available = False
+        self._rtss_frame_keys = deque(maxlen=4)
+        self._desktop_frames = DesktopFrames()
         self.nvml_initialized = False
         self.gpu_handle = None
         self.presentmon_process = None
@@ -223,7 +229,6 @@ class HardwareTelemetryWorker:
         self._init_nvml()
         self._init_pdh_cppc_engine()
         self._start_native_socket_network_stream()
-        self._start_presentmon_listener()
 
         # 只负责准备外部硬件监视器文件；运行中的 LHM 由独立计划任务/外部
         # telemetry watchdog 统一拥有，避免本进程与计划任务各拉起一个 NVML
@@ -726,7 +731,7 @@ class HardwareTelemetryWorker:
                     first = ctypes.string_at(entry_address, entry_size)
                     second = ctypes.string_at(entry_address, entry_size)
                     header_after = ctypes.string_at(view, 96)
-                    stable_offsets = (0, 272, 280, 5020, 5024)
+                    stable_offsets = (0, 272, 276, 280, 5020, 5024)
                     layout_stable = (
                         header_before[:32] == header_after[:32]
                         and header_before[72:80] == header_after[72:80]
@@ -739,10 +744,12 @@ class HardwareTelemetryWorker:
                         return None, False
                     if self._rtss_u32(second, 0) != candidate_pid:
                         return None, False
-                    return self._parse_rtss_app_entry(
-                        second,
-                        kernel32.GetTickCount(),
-                    ), True
+                    sample = self._parse_rtss_app_entry(second, kernel32.GetTickCount())
+                    if sample:
+                        ring = self._rtss_u32(second, 5020) if entry_size >= 5024 else None
+                        sample["frame_key"] = (candidate_pid, self._rtss_u32(second, 272),
+                                               self._rtss_u32(second, 276), ring)
+                    return sample, True
 
                 for candidate_pid in candidate_pids:
                     sample, consistent = read_sample(candidate_pid)
@@ -1700,6 +1707,46 @@ class HardwareTelemetryWorker:
             pass
         return 0.0
 
+    @staticmethod
+    def _desktop_in_use():
+        try:
+            age = time.time() - ACTIVITY_HEARTBEAT.stat().st_mtime
+            state = json.loads(ACTIVITY_HEARTBEAT.read_text(encoding="utf-8-sig"))
+            if not -1 <= age < 10:
+                return None
+            if "desktop_in_use" in state:
+                in_use = state["desktop_in_use"]
+                return in_use if type(in_use) is bool else None
+            # The running AHK may still have the older heartbeat during an update.
+            idle = state.get("idle_physical_ms")
+            locked, screen_off = state.get("locked"), state.get("screen_off")
+            if (state.get("state") != "healthy" or type(idle) is not int or idle < 0
+                    or type(locked) is not bool or type(screen_off) is not bool):
+                return None
+            return not locked and not screen_off and idle < 120000
+        except (OSError, ValueError, TypeError, AttributeError):
+            return None
+
+    def _sample_frames(self, foreground_pid):
+        rtss = self._read_rtss_fps_snapshot(foreground_pid)
+        key = rtss.get("frame_key") if rtss else None
+        new_rtss = key is not None and key not in self._rtss_frame_keys
+        in_use = self._desktop_in_use()
+        # Consume the desktop interval even in an RTSS slot. The next slot
+        # starts at the same boundary and cannot count that desktop interval again.
+        rate = self._desktop_frames.sample(in_use, discard=new_rtss)
+        if new_rtss:
+            self._rtss_frame_keys.append(key)
+            return rtss, "active", "rtss_shared_memory_frame", "latest_frame_reciprocal"
+        if rate is not None:
+            detail = "desktop_duplication_frame" if rate > 0 else "desktop_duplication_still"
+            return {"current_fps": rate}, "active", detail, "desktop_update_rate"
+        if in_use:
+            return {}, "waiting_frames", "desktop_duplication_waiting", None
+        if in_use is None:
+            return {}, "waiting_frames", "desktop_activity_unknown", None
+        return {}, "gated_idle", "desktop_not_in_use", None
+
     def collect_hardware_snapshot(self, foreground_app_name, foreground_pid=None):
         self.active_foreground_app = foreground_app_name if foreground_app_name else ""
         self.active_foreground_pid = (
@@ -1793,7 +1840,6 @@ class HardwareTelemetryWorker:
             "lhm_age_seconds": None if lhm_age is None else round(lhm_age, 3),
             "pdh_age_seconds": None if pdh_age is None else round(pdh_age, 3),
             "disk_source": "pdh" if disk_max_latency_ms is not None else "unavailable",
-            "fps_current_semantics": "latest_frame_reciprocal",
             "observer_scope": "main_process_only",
             "main_cpu_core_pct": observer.get("main_cpu_core_pct"),
             "main_working_set_mib": observer.get("main_working_set_mib"),
@@ -1820,66 +1866,13 @@ class HardwareTelemetryWorker:
 
         system_dpc_latency = self.dpc_checker.get_latency_us()
 
-        current_fps = average_fps = one_percent_low_fps = frametime_ms = frametime_jitter = None
-        rtss_fps = self._read_rtss_fps_snapshot(self.active_foreground_pid)
-        frametimes = []
-        if rtss_fps:
-            current_fps = rtss_fps["current_fps"]
-            average_fps = rtss_fps["average_fps"]
-            one_percent_low_fps = rtss_fps["one_percent_low_fps"]
-            frametime_ms = rtss_fps["frametime_ms"]
-            frametime_jitter = rtss_fps["frametime_jitter"]
-            with self._fps_state_lock:
-                self._rtss_frame_seen_monotonic = now_ts
-                self._presentmon_error = None
-        else:
-            frametimes = self._select_presentmon_window(
-                self.active_foreground_app,
-                self.active_foreground_pid,
-            )
-        if not rtss_fps and frametimes:
-            sorted_ft = sorted(frametimes)
-            low_99_idx = min(len(sorted_ft) - 1, int(len(sorted_ft) * 0.99))
-            ft = frametimes[-1]
-
-            current_fps = 1000.0 / ft
-            one_percent_low_fps = 1000.0 / sorted_ft[low_99_idx]
-            average_fps = 1000.0 / (sum(frametimes) / len(frametimes))
-            frametime_ms = ft
-            frametime_jitter = abs(frametimes[-1] - frametimes[-2]) if len(frametimes) > 1 else 0.0
-
-        with self._fps_state_lock:
-            gate_started = self._render_gate_started_monotonic
-            presentmon_started = self._presentmon_started_monotonic
-            presentmon_error = self._presentmon_error
-            rtss_mapping_available = self._rtss_mapping_available
-        fps_capture_status, fps_capture_detail = self._resolve_fps_capture_state(
-            rtss_mapping_available=rtss_mapping_available,
-            rtss_has_frame=bool(rtss_fps),
-            source_available=(
-                gpu_metrics_source in {"nvml", "lhm"} and gpu_usage is not None
-            ),
-            render_active=self._render_active(),
-            presentmon_has_frame=bool(frametimes),
-            started_monotonic=(
-                presentmon_started
-                if presentmon_started is not None
-                else gate_started
-            ),
-            now_monotonic=now_ts,
-            error_detail=presentmon_error,
-        )
-        if fps_capture_status == "active" and not rtss_fps:
-            fps_capture_detail = (
-                "presentmon_foreground_frame"
-            )
+        frames, fps_capture_status, fps_capture_detail, semantics = self._sample_frames(self.active_foreground_pid)
+        if semantics:
+            measurement_quality["fps_current_semantics"] = semantics
 
         return {
-            "current_fps": current_fps if current_fps is not None else 0.0,
-            "average_fps": average_fps if average_fps is not None else 0.0,
-            "one_percent_low_fps": one_percent_low_fps if one_percent_low_fps is not None else 0.0,
-            "frametime_ms": frametime_ms if frametime_ms is not None else 0.0,
-            "frametime_jitter": frametime_jitter if frametime_jitter is not None else 0.0,
+            **{metric: frames.get(metric) or 0.0 for metric in
+               ("current_fps", "average_fps", "one_percent_low_fps", "frametime_ms", "frametime_jitter")},
             
             "cpu_total_usage": cpu_total,
             "cpu_vcore_voltage": cpu_vcore,   # LHM 主板真实 Vcore；不可用时写 NULL，绝不伪造
@@ -1964,6 +1957,8 @@ class HardwareTelemetryWorker:
     def terminate(self):
         with self._presentmon_process_condition:
             self.stop_event.set()
+        if desktop := getattr(self, "_desktop_frames", None):
+            desktop.close()
         self.dpc_checker.stop()
         if hasattr(self, 'presentmon_thread') and self.presentmon_thread:
             try:
