@@ -177,17 +177,17 @@ def query(sql, after, until, *, timeout=25):
         raise ActivityQueryError("query_failed", "serialization", exc) from None
 
 
-def rank_history_sql(sql, *, disk=False):
+def rank_history_sql(sql, *, disk=False, network=False):
     """Fold only the statistics used by a 24-hour ranking before joining identities."""
     source = re.search(r"(?m)^FROM public\.activity_process_stats\([^\n]+\)$", sql)
     if not source:
         return sql
-    from process_activity_retention import DISK_ACTIVE, IDENTITY_SQL
+    from process_activity_retention import DISK_ACTIVE, IDENTITY_SQL, NETWORK_ACTIVE
 
     columns = list(dict.fromkeys(re.findall(r"\b(?:sum|max)\((\w+)\)", sql)))
     aggregates = []
     for column in columns:
-        if column in ('sample_count', 'disk_sample_count'):
+        if column in ('sample_count', 'disk_sample_count', 'network_sample_count'):
             expression = 'count(*)'
         else:
             field, operation = column.rsplit('_', 1)
@@ -195,7 +195,8 @@ def rank_history_sql(sql, *, disk=False):
             expression = f'{operation}({field}{"::double precision" if operation != "count" else ""})'
         aggregates.append(f'{expression} AS {column}')
     projected = ', '.join(columns)
-    disk_filter = f' AND {DISK_ACTIVE}' if disk else ''
+    active = DISK_ACTIVE if disk else NETWORK_ACTIVE if network else None
+    active_filter = f' AND {active}' if active else ''
     # Same full hours and half-open raw intervals as activity_process_stats.
     ranked = f"""FROM (
 WITH state AS (
@@ -213,11 +214,11 @@ WITH state AS (
     FROM (
         SELECT a.* FROM public.fact_process_activity a CROSS JOIN bounds b
         WHERE timestamp >= :'after_utc'::timestamptz AND timestamp < :'until_utc'::timestamptz AND timestamp >= cutoff
-          AND timestamp < least(last, full_from) AND full_to > full_from{disk_filter}
+          AND timestamp < least(last, full_from) AND full_to > full_from{active_filter}
         UNION ALL
         SELECT a.* FROM public.fact_process_activity a CROSS JOIN bounds b
         WHERE timestamp >= :'after_utc'::timestamptz AND timestamp < :'until_utc'::timestamptz
-          AND timestamp >= CASE WHEN full_to > full_from THEN greatest(cutoff, full_to) ELSE cutoff END{disk_filter}
+          AND timestamp >= CASE WHEN full_to > full_from THEN greatest(cutoff, full_to) ELSE cutoff END{active_filter}
     ) samples GROUP BY process_key
 )
 SELECT {IDENTITY_SQL}, {projected} FROM raw a
@@ -231,6 +232,10 @@ WHERE bucket_start < covered AND bucket_start < last
   AND bucket_start >= date_trunc('hour', first)
 ) process_history"""
     return sql[:source.start()] + ranked + sql[source.end():]
+
+
+def rank_network_history_sql(sql):
+    return rank_history_sql(sql, network=True)
 
 
 def read_thread_history(sql, read, after, until):
