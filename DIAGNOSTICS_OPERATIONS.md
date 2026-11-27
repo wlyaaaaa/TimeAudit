@@ -135,6 +135,40 @@ explicitly deploy a configuration change. Grafana now uses host port 43000;
 failure. All local health, backup/restore defaults and the registered tunnel
 origin must agree when this port changes.
 
+### Database container memory and recovery
+
+The existing nightly check runs `timeaudit_health.py` and flags anomalies in the
+`docker_memory` component. It checks PostgreSQL's live shared buffers and cgroup
+cap against the Compose settings, and reads cgroup current usage, peak since
+container creation, and OOM counters for PostgreSQL, Grafana and the ingester.
+The warning levels for current usage excluding inactive file pages are 3 GiB,
+768 MiB and 192 MiB, respectively. The database warning leaves room above its
+1 GiB cache for queries and maintenance. The sidecar levels are several times
+their observed usage and allow larger results and delayed batches to finish.
+Peak usage includes file cache. A high peak alone calls for inspecting the
+memory breakdown. When changing the database settings, update the expected
+values in `timeaudit_health.py` with the same change. The watchdog's core health
+keeps checking collection and service readiness.
+
+For a planned database-only recreation, first record the current database
+mount, Windows collector identities, and the newest hardware, process and AHK
+facts. Confirm the Grafana health and the existing live readers before the change.
+After `docker exec audit-postgres pg_isready -U leyang -d time_audit` succeeds,
+read `SHOW shared_buffers` and `docker inspect --format '{{.HostConfig.Memory}}' audit-postgres`.
+Verify the same collector identities, advancing heartbeats, empty/draining
+backlogs, and facts with original timestamps inside the outage interval.
+Compare the same time-bounded hardware and process/usage queries before and
+after the rollout once the cache is warm.
+
+Hardware including available FPS, and process snapshots are retried from
+`PendingTelemetry`. AHK activity survives in local CSV segments until a successful
+ingest transaction. Process lifecycle events can retry in memory while the
+Windows collector stays up. Native foreground context tracks window changes
+from the online database lane. An unchanged window keeps its open row, which
+can cover the interruption after the next recorded switch closes it. A switch
+during the database interruption can lose exact native context, while AHK's
+independent activity samples keep recording.
+
 ## Measurement semantics
 
 A scheduled hardware slot is consumed only after its monotonic deadline. Early

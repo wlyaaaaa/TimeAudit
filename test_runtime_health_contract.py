@@ -68,6 +68,23 @@ def test_grafana_failure_is_in_watchdog_core_health():
     assert report["degraded_components"] == ["grafana"]
 
 
+def test_docker_memory_reports_drift_oom_and_growth_separately():
+    def probe(command, **kwargs):
+        if "psql" in command:
+            return {"shared_buffers_bytes": 2048 * health.MIB}
+        return {"current_bytes": 256 * health.MIB, "peak_bytes": 700 * health.MIB, "limit_bytes": None,
+                "inactive_file_bytes": 32 * health.MIB, "oom": 0, "oom_kill": int("audit-grafana" in command)}
+
+    with patch.object(health, "_run", side_effect=probe), patch.object(health.shutil, "which", return_value="docker"):
+        report = health.docker_memory_health()
+    assert report["status"] == "degraded"
+    postgres, grafana, ingester = (report["containers"][name] for name in ("audit-postgres", "audit-grafana", "audit-ingester"))
+    assert postgres["reasons"] == ["postgres_shared_buffers_drift", "postgres_memory_limit_drift"]
+    assert grafana["reasons"] == ["cgroup_oom_since_start"]
+    assert ingester["reasons"] == ["working_set_above_budget"]
+    assert ingester["working_set_bytes"] == 224 * health.MIB
+
+
 def test_lifecycle_health_receipt_reports_faults_expires_and_clears(tmp_path):
     from runtime_health import LIFECYCLE_HEALTH_SCHEMA, write_lifecycle_health
 
@@ -143,7 +160,7 @@ def test_completed_file_warning_is_visible_in_health_summary_without_degradation
     with patch.object(health, "database_health", return_value=clean), patch.object(health, "heartbeat", return_value=clean), \
          patch.object(health, "lhm_health", return_value=clean), patch.object(health, "grafana_health", return_value=clean), \
          patch.object(health, "blackbox_health", return_value=clean), patch.object(health, "watchdog_health", return_value=clean), \
-         patch.object(health, "backup_health", return_value=backup):
+         patch.object(health, "backup_health", return_value=backup), patch.object(health, "docker_memory_health", return_value=clean):
         result = health.build_health()
     assert result["status"] == "healthy"
     assert result["degraded_components"] == []
