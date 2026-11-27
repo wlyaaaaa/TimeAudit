@@ -1,4 +1,5 @@
 """Foreground and frame evidence for trusted local live consumers."""
+from collections import defaultdict
 import datetime as dt
 from functools import lru_cache
 import json
@@ -6,12 +7,13 @@ from pathlib import Path, PureWindowsPath
 import time
 
 from game_catalog import classify
-from personal_activity_reader import ActivityQueryError, missing, query
+from personal_activity_reader import ActivityQueryError, intersect, merge, missing, query, seconds
 from timeaudit_diagnostic_summary import VALID_FRAME_SQL, format_utc, parse_utc
 
 ROOT = Path(__file__).resolve().parent
 FRESH = dt.timedelta(seconds=15)
 DAY = dt.timedelta(days=1)
+AWAY = {"system_idle", "system_lockscreen", "system_displayoff", "system_sleep", "lockapp.exe"}
 
 CURRENT_SQL = """
 WITH b AS NOT MATERIALIZED (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e),
@@ -31,23 +33,21 @@ SELECT json_build_object('focus', (SELECT row_to_json(f) FROM (
 """.replace("{valid_frame}", VALID_FRAME_SQL)
 
 HISTORY_SQL = """
-WITH b AS (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e),
-usage AS MATERIALIZED (
+WITH b AS NOT MATERIALIZED (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e),
+usage AS (
     SELECT greatest(a.start_time,b.s) AS s, least(a.start_time + a.duration_seconds * interval '1 second',b.e) AS e,
            lower(a.process_name) AS name FROM public.app_usage_logs a, b
     WHERE a.start_time >= b.s - interval '1 day' AND a.start_time < b.e AND a.duration_seconds > 0
       AND a.start_time + a.duration_seconds * interval '1 second' > b.s
 ),
-checked AS (
-    SELECT s,e,''::text AS path FROM usage
-    WHERE name IN ('idle','system_idle','system_lockscreen','system_displayoff','system_sleep')
-    UNION ALL
-    SELECT greatest(u.s,c.timestamp), least(u.e,c.end_timestamp), r.executable_path
-    FROM public.fact_process_context c JOIN public.dim_process_registry r USING(process_key)
-    JOIN usage u ON u.name=lower(r.process_name) AND u.s<c.end_timestamp AND u.e>c.timestamp CROSS JOIN b
-    WHERE c.timestamp >= b.s - interval '1 day' AND c.timestamp < b.e AND c.is_foreground=1
+focus AS (
+    SELECT greatest(c.timestamp,b.s) AS s, least(c.end_timestamp,b.e) AS e,
+           lower(r.process_name) AS name,c.os_pid,r.executable_path
+    FROM public.fact_process_context c JOIN public.dim_process_registry r USING(process_key), b
+    WHERE c.timestamp >= b.s - interval '1 day' AND c.timestamp < b.e AND c.end_timestamp > b.s AND c.is_foreground=1
 )
-SELECT json_build_array(s,e,path) FROM checked WHERE e>s;
+SELECT json_build_array(s,e,name,NULL,NULL) FROM usage WHERE e>s
+UNION ALL SELECT json_build_array(s,e,name,os_pid,executable_path) FROM focus WHERE e>s;
 """
 
 
@@ -63,16 +63,51 @@ def read_focus(until):
     return {}, None, None
 
 
+def read_game_evidence(after, until, *, timeout):
+    """Join recorded foreground and activity spans by executable name and time."""
+    rows = query(HISTORY_SQL, after, until, timeout=timeout)
+    usage, focus = defaultdict(list), defaultdict(list)
+    for s,e,name,pid,path in rows:
+        spans = usage[name] if pid is None else focus[name,pid,path]
+        spans.append((parse_utc(s),parse_utc(e)))
+    away = merge(span for name in AWAY for span in usage[name])
+    evidence = [(s,e,None,"","away",None) for s,e in away]
+    verdicts = {path: classify(path) for path in {p for n,_,p in focus if n in usage and n not in AWAY}}
+    for (name,pid,path),spans in focus.items():
+        if name in AWAY or path not in verdicts:
+            continue
+        kind,title = verdicts[path]
+        for s,e in intersect(usage[name],spans):
+            active = missing(intersect(away, [(s,e)]),s,e) if kind == "game" else [(s,e)]
+            evidence.extend((a,b,pid,path,kind,title) for a,b in active)
+    return evidence
+
+
+def summarize_game_history(evidence, until, *, sessions_from=None):
+    after = until - DAY
+    sessions_from = sessions_from or after
+    covered = [(max(s,after),e) for s,e,_,_,kind,_ in evidence if e > after and kind != "unknown"]
+    complete = not missing(covered, after, until)
+    games = defaultdict(list)
+    for s,e,_,_,kind,title in evidence:
+        if kind == "game":
+            games[title].append((s,e))
+    recent = {name: [(max(s,after),e) for s,e in spans if e > after] for name,spans in games.items()}
+    totals = {name: seconds(spans) for name,spans in recent.items() if spans}
+    sessions = sorted((s,e,name) for name,spans in games.items() for s,e in merge(spans))
+    sessions = [dict(game_name=name,start=format_utc(s) if s > sessions_from else None,end=format_utc(e))
+                for s,e,name in sessions[-2:]]
+    return dict(at=format_utc(until), played=True if totals else False if complete else None, complete=complete,
+        game_name=next(iter(totals)) if len(totals) == 1 else None,
+        seconds=seconds(span for spans in recent.values() for span in spans) if totals else 0 if complete else None,
+        games=[dict(game_name=name,seconds=value) for name,value in totals.items()],sessions_from=format_utc(sessions_from),
+        latest_session=sessions[-1] if sessions else None, previous_session=sessions[-2] if len(sessions) > 1 else None)
+
+
 @lru_cache(maxsize=2)
 def read_history(bucket, timeout):
     until = dt.datetime.fromtimestamp(bucket * 15, tz=dt.timezone.utc)
-    after = until - DAY
-    rows = query(HISTORY_SQL, after, until, timeout=timeout)
-    verdicts = {path: "non_game" if path == "" else classify(path)[0] for path in {r[2] for r in rows}}
-    covered = [(parse_utc(start), parse_utc(stop)) for start, stop, path in rows if verdicts[path] != "unknown"]
-    complete = not missing(covered, after, until)
-    played = "game" in verdicts.values()
-    return {"at": format_utc(until), "played": True if played else False if complete else None, "complete": complete}
+    return summarize_game_history(read_game_evidence(until - DAY, until, timeout=timeout), until)
 
 
 def read_game_status(until=None, *, timeout=5):
