@@ -61,16 +61,19 @@ Both audience contracts read these facts and their measurement times from
 `timeaudit.retained`, with the existing two-day freshness threshold. These exact
 queries stay outside the two-minute refresh's 35-second process bound.
 The existing watchdog refreshes live facts every two minutes with a 35-second
-process bound; a failed export retains the old file and its original times.
+process bound. The snapshot reads clipboard and dashboard files independently
+of its bounded database reads. If an individual source fails, its last
+successful value and timestamp are retained when available. Dashboard and
+viewer definition dates come from the corresponding source files' Git history.
 Private paths and owner output locations come from ignored `live.local.json`
 (a link to the private companion), or explicit `--live-config <JSON>`.
 No new task or resident collector is installed. The regular diagnostic interface
 above remains read-only and does not write a snapshot without this option.
 Unchanged static values and source size retain the existing snapshot and times.
 
-Missing Docker/PostgreSQL, a timeout, invalid arguments, or invalid/oversized
-query output returns only a bounded `status=unavailable` JSON document and exit
-code 2.
+For the regular diagnostic read, missing Docker/PostgreSQL, a timeout or
+invalid/oversized query output returns a bounded `status=unavailable` JSON
+document and exit code 2. Invalid arguments return the same error form.
 
 ## Verification
 

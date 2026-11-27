@@ -332,7 +332,7 @@ def query_aggregate(
         "exec",
         "-i",
         "-e",
-        "PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout=12000 -c lock_timeout=1000",
+        f"PGOPTIONS=-c default_transaction_read_only=on -c statement_timeout={min(12, max(1, timeout_seconds-2))*1000} -c lock_timeout=1000",
         CONTAINER_NAME,
         "psql",
         "-X",
@@ -664,6 +664,14 @@ def main(argv: list[str] | None = None) -> int:
             raise RuntimeError("window_too_large")
         if args.live_output and until_utc - after_utc != LIVE_WINDOW:
             raise RuntimeError("live_window_must_be_24_hours")
+        if args.live_output:
+            from live_project_snapshot import export_snapshot
+            def live_aggregate(timeout):
+                values = query_aggregate(after_utc, until_utc, timeout_seconds=timeout)
+                summary = build_summary(values, after_utc=after_utc, until_utc=until_utc, generated_at_utc=now)
+                return dict(values, max_gap_seconds=summary["window"]["max_gap_seconds"])
+            export_snapshot(live_aggregate, after_utc, until_utc, args.live_output, config_path=args.live_config)
+            return 0
         aggregate = query_aggregate(after_utc, until_utc)
         result = build_summary(
             aggregate,
@@ -671,11 +679,6 @@ def main(argv: list[str] | None = None) -> int:
             until_utc=until_utc,
             generated_at_utc=now,
         )
-        if args.live_output:
-            from live_project_snapshot import export_snapshot
-            export_snapshot(dict(aggregate, max_gap_seconds=result["window"]["max_gap_seconds"]),
-                after_utc, until_utc, args.live_output, config_path=args.live_config)
-            return 0
         print(
             json.dumps(
                 result,

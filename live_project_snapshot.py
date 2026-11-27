@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import time
 from urllib.parse import quote
 
 from personal_activity_reader import parse_utc, seconds
@@ -81,7 +82,7 @@ def dashboard_records():
         if value["uid"].startswith("website-computer-status"):
             continue
         count = sum(p.get("kind") in {"Panel", "LibraryPanel"} for p in value["elements"].values()) if "elements" in value else panels(value.get("panels", []))
-        changed = subprocess.check_output([GIT, "-C", str(ROOT), "log", "-1", "--format=%cI", "--", str(path)], text=True).strip()
+        changed = last_change(path)
         definition_href = "https://github.com/wlyaaaaa/TimeAudit/blob/main/"+quote(path.relative_to(ROOT).as_posix())
         changed_date = parse_utc(changed).astimezone(ZONE).date().isoformat() if changed else None
         records.append(dict(text=value["title"], title=value["title"], uid=value["uid"], panels=count,
@@ -90,6 +91,29 @@ def dashboard_records():
         artifacts.append(dict(at=changed, kind="dashboard", title="看板定义 JSON · "+value["title"], status="completed", public="same",
             open=dict(source="timeaudit.dashboard."+value["uid"], href=definition_href)))
     return records, artifacts
+
+
+def last_change(path):
+    return subprocess.check_output([GIT, "-C", str(ROOT), "log", "-1", "--format=%cI", "--", str(path)], text=True, timeout=4).strip() or None
+
+
+def retain_failed(snapshot, path):
+    try:
+        previous = read(path)
+    except (OSError, ValueError):
+        return
+    failure_reasons = {"本次读取超时": "本次读取超时", "取数失败；未填零": "取数失败"}
+    for key, scope in snapshot["scopes"].items():
+        if reason := failure_reasons.get(scope):
+            value = previous.get("metrics", {}).get(key)
+            observed_at = previous.get("times", {}).get(key)
+            if value is not None and observed_at:
+                snapshot["metrics"][key], snapshot["times"][key] = value, observed_at
+                snapshot["scopes"][key] = f"{reason}；沿用上次读数"
+                if changed := previous.get("event_times", {}).get(key):
+                    snapshot["event_times"][key] = changed
+    if "dashboard_records" not in snapshot and snapshot["times"].get("dashboards") and "dashboard_records" in previous:
+        snapshot.update(dashboard_records=previous["dashboard_records"], artifacts=previous.get("artifacts", []))
 
 
 def source_size():
@@ -130,17 +154,7 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             parts = [f"{label} {date}" for label, date in (("活动", activity), ("窗口", window)) if date]
             put(dict(earliest=dict(text="；".join(parts), activity=activity, window=window) if parts else None))
         attempt("earliest", earliest)
-        try:
-            previous_retained = read(config["retained_output"])
-        except (OSError, ValueError):
-            previous_retained = {}
-        failure_reasons = {"本次读取超时": "本次读取超时", "取数失败；未填零": "取数失败"}
-        for key, scope in snapshot["scopes"].items():
-            if reason := failure_reasons.get(scope):
-                value = previous_retained.get("metrics", {}).get(key)
-                observed_at = previous_retained.get("times", {}).get(key)
-                if value is not None and observed_at:
-                    put({key: value}, f"{reason}；沿用上次读数", observed_at)
+        retain_failed(snapshot, config["retained_output"])
         write(config["retained_output"], snapshot)
         snapshot.update(metrics={}, times={}, scopes={})
         snapshot["size"] = source_size()
@@ -149,34 +163,44 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
                 previous.get("size", {}).get(k) == snapshot["size"][k] for k in ("docs_chars", "code_lines")):
             snapshot = previous
     else:
+        snapshot["event_times"] = {}
+        deadline = time.monotonic()+26  # Keep time for publishing within the watchdog's 35-second cap.
+        def budget(maximum, minimum):
+            remaining = min(maximum, int(deadline-time.monotonic()))
+            if remaining < minimum:
+                raise TimeoutError
+            return remaining
+        def read_live(sql):
+            return query(sql, budget(17, 6)-5)
         window = f"{after.astimezone(ZONE).isoformat()} 至 {until.astimezone(ZONE).isoformat()}；采样空段可能含睡眠、关机或缺口"
-        missed = aggregate["collection_gap_seconds"]+aggregate["uncovered_seconds"]
-        memory_mib = aggregate.get("main_working_set_mib_max")
-        memory_mb = memory_mib * 1_048_576 / 1_000_000 if memory_mib is not None else None
-        put(dict(missed=dict(text=f"{missed/60:.1f} 分钟（明确缺口 {aggregate['collection_gap_seconds']} 秒＋完全没记录 {aggregate['uncovered_seconds']} 秒）",
-            seconds=missed, collection_gap_seconds=aggregate["collection_gap_seconds"],
-            uncovered_seconds=aggregate["uncovered_seconds"]),
-            memory=memory_mb, samples24=aggregate["hardware_sample_count"],
-            covered24=aggregate["distinct_sample_seconds"], empty24=aggregate["requested_window_seconds"]-aggregate["distinct_sample_seconds"],
-            max_gap=aggregate.get("max_gap_seconds")), window, until.isoformat())
+        def read_aggregate():
+            values = aggregate(budget(14, 6))
+            missed = values["collection_gap_seconds"]+values["uncovered_seconds"]
+            memory_mib = values.get("main_working_set_mib_max")
+            memory_mb = memory_mib * 1_048_576 / 1_000_000 if memory_mib is not None else None
+            put(dict(missed=dict(text=f"{missed/60:.1f} 分钟（明确缺口 {values['collection_gap_seconds']} 秒＋完全没记录 {values['uncovered_seconds']} 秒）",
+                seconds=missed, collection_gap_seconds=values["collection_gap_seconds"],
+                uncovered_seconds=values["uncovered_seconds"]),
+                memory=memory_mb, samples24=values["hardware_sample_count"],
+                covered24=values["distinct_sample_seconds"], empty24=values["requested_window_seconds"]-values["distinct_sample_seconds"],
+                max_gap=values.get("max_gap_seconds")), window, until.isoformat())
         def activity():
-            row = query("SELECT json_build_array((SELECT count(*) FROM public.fact_process_context),(SELECT count(*) FROM public.app_usage_logs),(SELECT max(start_time) FROM public.app_usage_logs));")[0]
+            row = read_live("SELECT json_build_array((SELECT count(*) FROM public.fact_process_context),(SELECT count(*) FROM public.app_usage_logs),(SELECT max(start_time) FROM public.app_usage_logs));")[0]
             put(dict(context=row[0], activity=row[1], latest=parse_utc(row[2]).astimezone(ZONE).isoformat() if row[2] else None))
-        attempt("context activity latest", activity)
-        attempt("db_bytes detail_bytes summary_bytes", lambda: put(dict(zip(("db_bytes", "detail_bytes", "summary_bytes"), query("SELECT json_build_array(pg_database_size(current_database()),(SELECT sum(pg_total_relation_size(relid)) FROM pg_partition_tree('public.fact_process_activity')),pg_total_relation_size('public.activity_app_hour')+pg_total_relation_size('public.activity_app_day')+pg_total_relation_size('public.activity_system_hour')+pg_total_relation_size('public.activity_system_day'));")[0]))))
         def retention_start():
-            rows = query("SELECT to_json(to_char(raw_since AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD')) FROM public.activity_retention_state WHERE singleton;")
+            rows = read_live("SELECT to_json(to_char(raw_since AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD')) FROM public.activity_retention_state WHERE singleton;")
             date = next(iter(rows), None)
             put(dict(raw_since=date), "此日起保留原始明细，更早仍有小时／日统计" if date else None)
-        attempt("raw_since", retention_start)
         def days():
             start = until.astimezone(ZONE).replace(hour=0, minute=0, second=0, microsecond=0)-dt.timedelta(days=6)
-            rows = query(f"SELECT json_build_array(start_time,start_time+duration_seconds*interval '1 second',process_name='System_CollectionGap') FROM public.app_usage_logs WHERE duration_seconds>0 AND start_time<'{until.isoformat()}'::timestamptz AND start_time+duration_seconds*interval '1 second'>'{start.isoformat()}'::timestamptz;")
+            rows = read_live(f"SELECT json_build_array(start_time,start_time+duration_seconds*interval '1 second',process_name='System_CollectionGap') FROM public.app_usage_logs WHERE duration_seconds>0 AND start_time<'{until.isoformat()}'::timestamptz AND start_time+duration_seconds*interval '1 second'>'{start.isoformat()}'::timestamptz;")
             put(dict(days=daily_records(rows, until)), "北京时间最近七日；跨日区间裁剪并求并集；段数为与当天相交的记录数，跨日会重复；今天截至取数时刻", until.isoformat())
-        attempt("days", days)
         clipboard_latest = clipboard_sampled_at = None
-        put(dict(viewer=dict(text="还没接上", web_open=False)),
-            "本机开始菜单 TimeAudit 剪贴板历史可打开；共享网页尚无本机启动入口")
+        def viewer():
+            put(dict(viewer=dict(text="还没接上", web_open=False)),
+                "本机开始菜单 TimeAudit 剪贴板历史可打开；共享网页尚无本机启动入口")
+            snapshot["event_times"]["viewer"] = last_change("clipboard_history/viewer.pyw")
+        attempt("viewer", viewer)
         def clipboard():
             nonlocal clipboard_latest, clipboard_sampled_at
             database = Path(config["clipboard_db"])
@@ -203,15 +227,29 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
         attempt("clipboard clipboard_events clipboard_bytes clipboard_temporary", clipboard)
         def dashboards():
             records, artifacts = dashboard_records()
-            snapshot["artifacts"] = artifacts
-            snapshot["dashboard_records"] = records
+            dates = [parse_utc(row["changed"]) for row in records if row["changed"]]
             panels = sum(row["panels"] for row in records)
-            put(dict(dashboards=dict(text=f"{len(records)} 份看板、{panels} 张图", count=len(records),
-                panels=panels), website_dashboards=len(list((ROOT/"grafana_provisioning/dashboards").glob("website-computer-status*.json")))))
-        attempt("dashboards website_dashboards", dashboards)
+            put(dict(dashboards=dict(text=f"{len(records)} 份看板、{panels} 张图", count=len(records), panels=panels)))
+            snapshot["event_times"]["dashboards"] = max(dates).isoformat() if dates else None
+            snapshot.update(artifacts=artifacts, dashboard_records=records)
+        def website_dashboards():
+            website_path = "grafana_provisioning/dashboards/website-computer-status*.json"
+            put(dict(website_dashboards=len(list(ROOT.glob(website_path)))))
+            snapshot["event_times"]["website_dashboards"] = last_change(website_path)
+        attempt("dashboards", dashboards)
+        attempt("website_dashboards", website_dashboards)
+        attempt("days", days)
+        attempt("context activity latest", activity)
+        attempt("missed memory samples24 covered24 empty24 max_gap", read_aggregate)
+        attempt("db_bytes detail_bytes summary_bytes", lambda: put(dict(zip(("db_bytes", "detail_bytes", "summary_bytes"), read_live("SELECT json_build_array(pg_database_size(current_database()),(SELECT sum(pg_total_relation_size(relid)) FROM pg_partition_tree('public.fact_process_activity')),pg_total_relation_size('public.activity_app_hour')+pg_total_relation_size('public.activity_app_day')+pg_total_relation_size('public.activity_system_hour')+pg_total_relation_size('public.activity_system_day'));")[0]))))
+        attempt("raw_since", retention_start)
         snapshot["at"] = now()
+        clipboard_scope = snapshot["scopes"]["clipboard"]
+        retain_failed(snapshot, config["live_output"])
         owner = dict(snapshot, metrics=dict(snapshot["metrics"], clipboard_latest=clipboard_latest),
-            times=dict(snapshot["times"], clipboard_latest=clipboard_sampled_at), scopes=dict(snapshot["scopes"]))
+            times=dict(snapshot["times"], clipboard_latest=clipboard_sampled_at),
+            scopes=dict(snapshot["scopes"], clipboard_latest=clipboard_scope))
+        retain_failed(owner, config["owner_output"])
         if "dashboard_records" in snapshot:
             grafana = config["grafana_url"].rstrip("/")
             owner["dashboard_records"] = [dict(row, local_open=dict(row["local_open"], value=f"{grafana}/d/{row['uid']}"))
