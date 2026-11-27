@@ -1334,7 +1334,7 @@
                       "editorMode": "code",
                       "format": "table",
                       "rawQuery": true,
-                      "rawSql": "WITH clipped AS (\n  SELECT id, start_time, lower(process_name) AS app, window_title,\n    greatest(start_time, $__timeFrom()::timestamptz) AS s,\n    least(start_time + duration_seconds * interval '1 second', $__timeTo()::timestamptz) AS e\n  FROM public.app_usage_logs\n  WHERE duration_seconds > 0 AND start_time < $__timeTo()::timestamptz\n    AND start_time + duration_seconds * interval '1 second' > $__timeFrom()::timestamptz\n), changes AS (\n  SELECT *, (app IS DISTINCT FROM lag(app) OVER (ORDER BY start_time,id))::int AS change\n  FROM clipped\n), numbered AS (\n  SELECT *, sum(change) OVER (ORDER BY start_time,id) AS run FROM changes\n), spans AS (\n  SELECT run, app, min(s) AS first, max(window_title) AS sample_title, range_agg(tstzrange(s,e,'[)')) AS covered\n  FROM numbered GROUP BY run,app\n), runs AS (\n  SELECT *, lead(first, 1, $__timeTo()::timestamptz) OVER (ORDER BY run) AS cutoff\n  FROM spans\n), sessions AS (\n  SELECT app, sample_title, lower(span) AS \"from\", least(upper(span),cutoff) AS \"to\"\n  FROM runs CROSS JOIN LATERAL unnest(covered) AS span\n  WHERE left(app,7)<>'system_' AND app NOT IN ('idle','lockapp.exe','logonui.exe','unknown')\n), focus_contract AS (\n  SELECT 15 * 60 AS min_seconds\n), focus_rows AS (\n  SELECT *, extract(epoch FROM \"to\"-\"from\") AS seconds\n  FROM sessions CROSS JOIN focus_contract\n  WHERE \"to\"-\"from\" >= make_interval(secs => min_seconds)\n)\n-- TimeAudit live focus result\nSELECT \"from\" AS \"进入时刻\", app AS \"核心应用\", sample_title AS \"主要任务上下文\",\n       seconds / 60 AS \"持续专注时间(分钟)\"\nFROM focus_rows ORDER BY \"from\" DESC;",
+                      "rawSql": "WITH focus_contract AS (\n  SELECT 15 * 60 AS min_seconds, 120 AS break_idle_seconds, false AS switching_breaks\n), clipped AS (\n  SELECT id, start_time, lower(process_name) AS app,\n    greatest(start_time, $__timeFrom()::timestamptz) AS s,\n    least(start_time + duration_seconds * interval '1 second', $__timeTo()::timestamptz) AS e\n  FROM public.app_usage_logs\n  WHERE duration_seconds > 0 AND start_time < $__timeTo()::timestamptz\n    AND start_time + duration_seconds * interval '1 second' > $__timeFrom()::timestamptz\n), changes AS (\n  SELECT *, (app IS DISTINCT FROM lag(app) OVER (ORDER BY start_time,id))::int AS change\n  FROM clipped\n), numbered AS (\n  SELECT *, sum(change) OVER (ORDER BY start_time,id) AS run FROM changes\n), spans AS (\n  SELECT run, app, min(s) AS first, range_agg(tstzrange(s,e,'[)')) AS covered\n  FROM numbered GROUP BY run,app\n), runs AS (\n  SELECT *, lead(first, 1, $__timeTo()::timestamptz) OVER (ORDER BY run) AS cutoff\n  FROM spans\n), timeline AS (\n  SELECT run, app, lower(span) AS started, least(upper(span),cutoff) AS ended,\n    app IN ('system_idle','system_lockscreen','system_displayoff','system_sleep','lockapp.exe','logonui.exe') AS hard_break\n  FROM runs CROSS JOIN LATERAL unnest(covered) AS span\n  WHERE lower(span) < least(upper(span),cutoff)\n), marked AS (\n  SELECT *, count(*) FILTER (WHERE hard_break) OVER (ORDER BY started,run) AS break_group\n  FROM timeline\n), active AS (\n  SELECT *, lag(ended) OVER (PARTITION BY break_group ORDER BY started,run) AS previous_end\n  FROM marked\n  WHERE left(app,7)<>'system_' AND app NOT IN ('idle','lockapp.exe','logonui.exe','unknown')\n), pieces AS (\n  SELECT *, count(*) FILTER (\n    WHERE previous_end IS NULL OR started-previous_end > make_interval(secs => break_idle_seconds)\n  ) OVER (ORDER BY started,run) AS session\n  FROM active CROSS JOIN focus_contract\n), program_times AS (\n  SELECT session, app, min(started) AS first, max(ended) AS last,\n    sum(extract(epoch FROM ended-started)) AS active_seconds\n  FROM pieces GROUP BY session,app\n), ranked AS (\n  SELECT *, row_number() OVER (PARTITION BY session ORDER BY active_seconds DESC,app) AS rank\n  FROM program_times\n), focus_rows AS (\n  SELECT min(first) AS \"from\", max(last) AS \"to\", extract(epoch FROM max(last)-min(first)) AS seconds,\n    jsonb_agg(jsonb_build_object('name',app,'seconds',active_seconds)\n      ORDER BY rank) FILTER (WHERE rank <= 3) AS programs\n  FROM ranked GROUP BY session\n  HAVING max(last)-min(first) >= make_interval(secs => (SELECT min_seconds FROM focus_contract))\n)\n-- TimeAudit live focus result\nSELECT \"from\" AS \"开始\", \"to\" AS \"结束\", seconds AS \"专注时长（秒）\",\n       (SELECT string_agg(regexp_replace(program->>'name', '[.]exe$', '') || '（' ||\n                          (program->>'seconds')::numeric::int || ' 秒）', '、' ORDER BY position)\n        FROM jsonb_array_elements(programs) WITH ORDINALITY AS p(program,position)) AS \"主要程序\"\nFROM focus_rows ORDER BY \"from\" DESC;",
                       "sql": {
                         "columns": [
                           {
@@ -1363,7 +1363,7 @@
             "transformations": []
           }
         },
-        "description": "",
+        "description": "持续使用电脑满 15 分钟计一段。切换程序和不超过两分钟的采集空当接续。采集到暂离、锁屏、熄屏或睡眠时结束一段。主要程序按该段前台时长取前三。",
         "id": 8,
         "links": [],
         "title": "专注时间",
@@ -1401,7 +1401,7 @@
                 {
                   "matcher": {
                     "id": "byName",
-                    "options": "核心应用"
+                    "options": "结束"
                   },
                   "properties": [
                     {
@@ -1413,7 +1413,7 @@
                 {
                   "matcher": {
                     "id": "byName",
-                    "options": "进入心流时刻"
+                    "options": "开始"
                   },
                   "properties": [
                     {
@@ -1425,7 +1425,7 @@
                 {
                   "matcher": {
                     "id": "byName",
-                    "options": "主要任务上下文"
+                    "options": "主要程序"
                   },
                   "properties": [
                     {

@@ -24,10 +24,10 @@ def read_focus(query, start, end, grafana_sql):
     core = core.replace("$__timeFrom()", ":'after_utc'").replace("$__timeTo()", ":'until_utc'")
     return query(core + """
 SELECT jsonb_build_object(
-  'min_seconds', (SELECT min_seconds FROM focus_contract),
+  'rule', (SELECT to_jsonb(focus_contract) FROM focus_contract),
   'recorded_to', (SELECT max(e) FROM clipped WHERE app NOT IN ('unknown','idle','system_collectiongap')),
   'rows', COALESCE((SELECT jsonb_agg(s ORDER BY s."from" DESC) FROM
-    (SELECT "from", "to", app, seconds FROM focus_rows) s), '[]'::jsonb));
+    (SELECT "from", "to", seconds, programs FROM focus_rows) s), '[]'::jsonb));
 """, start, end)[0]
 
 
