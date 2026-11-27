@@ -13,9 +13,11 @@ def test_public_artifact_names_the_json_definition(tmp_path, monkeypatch):
     live.write(folder / 'board.json', dict(uid='board', title='合成看板', panels=[]))
     monkeypatch.setattr(live, 'ROOT', tmp_path)
     monkeypatch.setattr(live.subprocess, 'check_output', lambda *a, **k: '2026-11-15T10:00:00+08:00')
-    _, artifacts = live.dashboard_records()
+    rows, artifacts = live.dashboard_records()
     assert artifacts[0]['title'] == '看板定义 JSON · 合成看板'
     assert artifacts[0]['open']['href'].endswith('/grafana_dashboards/board.json')
+    assert rows[0]['definition_href'] == artifacts[0]['open']['href']
+    assert rows[0]['local_open'] == dict(value=None, visibility='owner', guard='owner', hidden_what='本机看板地址')
 
 
 def test_daily_records_clip_and_union_overlap_across_beijing_midnight():
@@ -29,6 +31,7 @@ def test_daily_records_clip_and_union_overlap_across_beijing_midnight():
     result = daily_records(rows, until)
     assert len(result) == 7
     assert result[-1]["missed_seconds"] == 1800+1200
+    assert result[-1]["until"] == until.isoformat()
     assert result[-1]["intervals"] == 4
     assert result[-2]["missed_seconds"] == 86400-1800
     assert result[0]["missed_seconds"] == 86400
@@ -47,7 +50,8 @@ def test_static_keeps_bytes_and_mtime_while_retained_facts_refresh(tmp_path, mon
     live.export_snapshot(None, None, None, output, static=True, config_path=config)
     assert before == [(p.read_bytes(), p.stat().st_mtime_ns) for p in (output, mirror)]
     assert live.read(output)["metrics"] == live.read(output)["times"] == live.read(output)["scopes"] == {}
-    assert live.read(retained)["metrics"] == dict(hardware=456, lifecycle=456, registry=456, earliest="活动 2026-06-08；窗口 2026-06-17")
+    earliest = dict(text="活动 2026-06-08；窗口 2026-06-17", activity="2026-06-08", window="2026-06-17")
+    assert live.read(retained)["metrics"] == dict(hardware=456, lifecycle=456, registry=456, earliest=earliest)
     assert all(live.read(retained)["times"].values())
 
 
@@ -69,7 +73,8 @@ def test_static_retains_each_old_measurement_only_when_its_read_fails(tmp_path, 
     monkeypatch.setattr(live, "query", get_rows)
     live.export_snapshot(None, None, None, output, static=True, config_path=config)
     result = live.read(retained)
-    assert result["metrics"] == dict(hardware=123, lifecycle=None, registry=0, earliest="活动 2026-06-07；窗口 2026-06-16")
+    earliest = dict(text="活动 2026-06-07；窗口 2026-06-16", activity="2026-06-07", window="2026-06-16")
+    assert result["metrics"] == dict(hardware=123, lifecycle=None, registry=0, earliest=earliest)
     assert {key: result["times"][key] for key in prior["times"]} == prior["times"]
     assert result["times"]["lifecycle"] is None
     assert result["scopes"]["hardware"] == "本次读取超时；沿用上次读数"
