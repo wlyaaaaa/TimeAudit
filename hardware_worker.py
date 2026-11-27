@@ -147,7 +147,6 @@ class HardwareTelemetryWorker:
         self._presentmon_error = None
         self._presentmon_session_cleanup_done = False
         self._rtss_frame_seen_monotonic = 0.0
-        self._rtss_frame_seen_pid = None
         self._rtss_mapping_available = False
         self.nvml_initialized = False
         self.gpu_handle = None
@@ -393,13 +392,12 @@ class HardwareTelemetryWorker:
 
     def _presentmon_needed(self):
         with self._fps_state_lock:
-            frame_pid = self._rtss_frame_seen_pid
             rtss_recent = (
                 time.monotonic() - self._rtss_frame_seen_monotonic
                 < self.RTSS_PRESENTMON_SUPPRESS_SECONDS
             )
-        # Background frames or frames from the previous foreground window do not replace PresentMon.
-        return self._render_active() and not (rtss_recent and frame_pid and frame_pid == self._read_foreground_pid())
+        # The RTSS table can stay open all day without sampling the current app.
+        return self._render_active() and not rtss_recent
 
     @classmethod
     def _map_fps_capture_state(
@@ -634,23 +632,18 @@ class HardwareTelemetryWorker:
                 candidates.append(rtss_foreground_pid)
         return candidates
 
-    @staticmethod
-    def _rtss_entry_executable(entry_prefix):
+    @classmethod
+    def _rtss_entry_is_desktop_renderer(cls, entry_prefix):
         raw_name = bytes(entry_prefix[4:264]).split(b"\x00", 1)[0]
         try:
             name = raw_name.decode("mbcs", errors="ignore")
         except LookupError:
             name = raw_name.decode(errors="ignore")
-        return name.replace("\\", "/").rsplit("/", 1)[-1]
-
-    @classmethod
-    def _rtss_entry_is_desktop_renderer(cls, entry_prefix):
-        return cls._rtss_entry_executable(entry_prefix).casefold() in cls.RTSS_DESKTOP_RENDERERS
+        normalized = name.replace("/", "\\").rsplit("\\", 1)[-1].casefold()
+        return normalized in cls.RTSS_DESKTOP_RENDERERS
 
     def _read_rtss_fps_snapshot(self, process_id):
-        """Read fresh RTSS frames and retain the selected process identity."""
-
-        foreground_pid = self._parse_presentmon_process_id(process_id)
+        """Read exact OS focus, then a fresh RTSS foreground fallback."""
 
         def set_mapping_available(value):
             lock = getattr(self, "_fps_state_lock", None)
@@ -746,11 +739,10 @@ class HardwareTelemetryWorker:
                         return None, False
                     if self._rtss_u32(second, 0) != candidate_pid:
                         return None, False
-                    sample = self._parse_rtss_app_entry(second, kernel32.GetTickCount())
-                    if sample:
-                        sample['frame_source'] = dict(pid=candidate_pid, exe=self._rtss_entry_executable(second) or None,
-                            foreground_match=candidate_pid == foreground_pid if foreground_pid else None)
-                    return sample, True
+                    return self._parse_rtss_app_entry(
+                        second,
+                        kernel32.GetTickCount(),
+                    ), True
 
                 for candidate_pid in candidate_pids:
                     sample, consistent = read_sample(candidate_pid)
@@ -1830,19 +1822,22 @@ class HardwareTelemetryWorker:
 
         current_fps = average_fps = one_percent_low_fps = frametime_ms = frametime_jitter = None
         rtss_fps = self._read_rtss_fps_snapshot(self.active_foreground_pid)
-        frame_source = rtss_fps['frame_source'] if rtss_fps else None
         frametimes = []
-        if frame_source and frame_source['foreground_match']:
+        if rtss_fps:
+            current_fps = rtss_fps["current_fps"]
+            average_fps = rtss_fps["average_fps"]
+            one_percent_low_fps = rtss_fps["one_percent_low_fps"]
+            frametime_ms = rtss_fps["frametime_ms"]
+            frametime_jitter = rtss_fps["frametime_jitter"]
             with self._fps_state_lock:
                 self._rtss_frame_seen_monotonic = now_ts
-                self._rtss_frame_seen_pid = frame_source['pid']
                 self._presentmon_error = None
         else:
             frametimes = self._select_presentmon_window(
                 self.active_foreground_app,
                 self.active_foreground_pid,
             )
-        if frametimes:
+        if not rtss_fps and frametimes:
             sorted_ft = sorted(frametimes)
             low_99_idx = min(len(sorted_ft) - 1, int(len(sorted_ft) * 0.99))
             ft = frametimes[-1]
@@ -1852,15 +1847,6 @@ class HardwareTelemetryWorker:
             average_fps = 1000.0 / (sum(frametimes) / len(frametimes))
             frametime_ms = ft
             frametime_jitter = abs(frametimes[-1] - frametimes[-2]) if len(frametimes) > 1 else 0.0
-            frame_source = dict(pid=self.active_foreground_pid,
-                exe=self.active_foreground_app.replace('\\', '/').rsplit('/', 1)[-1], foreground_match=True)
-        elif rtss_fps:
-            current_fps = rtss_fps["current_fps"]
-            average_fps = rtss_fps["average_fps"]
-            one_percent_low_fps = rtss_fps["one_percent_low_fps"]
-            frametime_ms = rtss_fps["frametime_ms"]
-            frametime_jitter = rtss_fps["frametime_jitter"]
-        measurement_quality['frame_source'] = frame_source
 
         with self._fps_state_lock:
             gate_started = self._render_gate_started_monotonic
@@ -1869,7 +1855,7 @@ class HardwareTelemetryWorker:
             rtss_mapping_available = self._rtss_mapping_available
         fps_capture_status, fps_capture_detail = self._resolve_fps_capture_state(
             rtss_mapping_available=rtss_mapping_available,
-            rtss_has_frame=bool(rtss_fps and not frametimes),
+            rtss_has_frame=bool(rtss_fps),
             source_available=(
                 gpu_metrics_source in {"nvml", "lhm"} and gpu_usage is not None
             ),
@@ -1883,7 +1869,7 @@ class HardwareTelemetryWorker:
             now_monotonic=now_ts,
             error_detail=presentmon_error,
         )
-        if fps_capture_status == "active" and frametimes:
+        if fps_capture_status == "active" and not rtss_fps:
             fps_capture_detail = (
                 "presentmon_foreground_frame"
             )
