@@ -92,7 +92,10 @@ class ReliabilityTests(unittest.TestCase):
         obj._read_foreground_pid = lambda: 0
         obj._get_commit_charge_gb = lambda: 12
         obj.dpc_checker = types.SimpleNamespace(get_latency_us=lambda: 0)
-        obj._sample_frames = lambda pid: ({}, "gated_idle", "desktop_not_in_use", None)
+        obj._read_rtss_fps_snapshot = lambda pid: None
+        obj._select_presentmon_window = lambda *args: []
+        obj._render_active = lambda: False
+        obj._resolve_fps_capture_state = lambda **kwargs: ("source_unavailable", "gpu_source_unavailable")
         obj.network_metrics = {"ping_ms": None, "packet_loss": False, "jitter": 0}
         data = obj.collect_hardware_snapshot("")
         self.assertIsNone(data["cpu_package_temp"])

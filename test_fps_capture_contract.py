@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 import ast
 import asyncio
-from collections import deque
 import datetime
 import struct
 import threading
@@ -11,7 +10,6 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import hardware_worker
-from desktop_frames import DesktopFrames
 
 
 ROOT = Path(__file__).resolve().parent
@@ -260,45 +258,6 @@ class FpsCaptureContractTest(unittest.TestCase):
                 13001,
             )
         )
-
-    def test_rtss_handoff_consumes_overlapping_desktop_interval_and_keeps_still(self):
-        worker = hardware_worker.HardwareTelemetryWorker.__new__(hardware_worker.HardwareTelemetryWorker)
-        worker._rtss_frame_keys = deque(maxlen=4)
-        worker._desktop_frames = desktop = DesktopFrames()
-        desktop._target, desktop._thread = 1, object()
-        desktop._active_until = 102.0
-        desktop._opened = 99.0
-        win_tick = 100.0
-        reading = None
-        active = True
-        worker._read_rtss_fps_snapshot = lambda pid: reading
-        worker._desktop_in_use = lambda: active
-
-        def slot(frames):
-            nonlocal win_tick
-            end = win_tick
-            desktop._observed = end + 0.15
-            if frames:
-                desktop._events.append((end - 0.20, frames))
-            out = worker._sample_frames(42)
-            win_tick += 1
-            return out
-
-        with patch("desktop_frames.foreground_monitor", return_value=1), patch(
-            "desktop_frames.time.perf_counter", side_effect=lambda: desktop._observed
-        ):
-            self.assertEqual(slot(20)[0], {"current_fps": 20.0})
-            reading = {"frame_key": (42, 5, 60, 1), "current_fps": 60.0}
-            self.assertEqual(slot(40)[2], "rtss_shared_memory_frame")
-            self.assertEqual(slot(3), ({"current_fps": 3.0}, "active", "desktop_duplication_frame", "desktop_update_rate"))
-            reading = None
-            self.assertEqual(slot(0), ({"current_fps": 0.0}, "active", "desktop_duplication_still", "desktop_update_rate"))
-            active = False
-            self.assertEqual(slot(5)[2], "desktop_not_in_use")
-            self.assertIsNone(desktop._target)
-            self.assertFalse(desktop._events)
-            active = None
-            self.assertEqual(slot(0)[2], "desktop_activity_unknown")
 
     def test_recent_rtss_frame_suppresses_presentmon_only_temporarily(self):
         worker = hardware_worker.HardwareTelemetryWorker.__new__(
