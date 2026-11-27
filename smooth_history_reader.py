@@ -7,7 +7,7 @@ import json
 from pathlib import PureWindowsPath
 import time
 
-from game_live_reader import read_game_evidence, summarize_game_history
+from game_live_reader import fill_archive_game_sessions, read_game_evidence, summarize_game_history
 from personal_activity_reader import merge, query
 from timeaudit_diagnostic_summary import VALID_FRAME_SQL, format_utc, parse_utc
 
@@ -131,19 +131,20 @@ def read_smooth_history(until=None, *, timeout=20):
     events, active, measured = [], {}, []
     frame_rows = data["games"] or []
     samples_by_seq, events_by_seq = defaultdict(list), Counter()
-    for seq, at, ms, _, fps_sum, n in frame_rows:
+    for seq, at, ms, observed_at, fps_sum, n in frame_rows:
         s,e,title,_,exe = games[seq]
         start,end = max(s.timestamp(),at),min(e.timestamp(),at+GAME_WINDOW)
         measured.append((start,end))
         samples_by_seq[seq].append((start, end, fps_sum, n))
         if ms < MICRO:
             continue
+        last_observed = parse_utc(observed_at).timestamp()
         prior = active.get(seq)
         if prior and prior["end"] == start:
-            prior.update(end=end,max_frame_ms=max(prior["max_frame_ms"],ms))
+            prior.update(end=end,max_frame_ms=max(prior["max_frame_ms"],ms),last_observed=last_observed)
         else:
             prior = dict(id=f"game:{start}:{exe}",kind="game",start=start,end=end,game_name=title,
-                         process_name=exe,max_frame_ms=ms)
+                         process_name=exe,max_frame_ms=ms,last_observed=last_observed)
             events.append(prior)
             events_by_seq[seq] += 1
         active[seq] = prior
@@ -186,6 +187,7 @@ def read_smooth_history(until=None, *, timeout=20):
     history = summarize_game_history(evidence, until, sessions_from=lower)
     for key in ("latest_session", "previous_session"):
         history[key] = session_performance(history[key], games, samples_by_seq, events_by_seq)
+    fill_archive_game_sessions(history, lower, deadline)
     return dict(summary=counts(start,until),game_history=history,
                 daily_stutters=[dict(day=(week+i*DAY).date().isoformat(),
                     **counts(week+i*DAY,min(week+(i+1)*DAY,until))) for i in range(7)],

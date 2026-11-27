@@ -6,7 +6,7 @@ import json
 from pathlib import Path, PureWindowsPath
 import time
 
-from game_catalog import classify
+from game_catalog import catalogs, classify
 from personal_activity_reader import ActivityQueryError, intersect, merge, missing, query, seconds
 from timeaudit_diagnostic_summary import VALID_FRAME_SQL, format_utc, parse_utc
 
@@ -14,6 +14,9 @@ ROOT = Path(__file__).resolve().parent
 FRESH = dt.timedelta(seconds=15)
 DAY = dt.timedelta(days=1)
 AWAY = {"system_idle", "system_lockscreen", "system_displayoff", "system_sleep", "lockapp.exe"}
+ARCHIVE_BUDGET = 6
+ARCHIVE_BUCKET_SECONDS = 3600
+_archive_cache = (None, ())
 
 CURRENT_SQL = """
 WITH b AS NOT MATERIALIZED (SELECT :'after_utc'::timestamptz AS s, :'until_utc'::timestamptz AS e),
@@ -50,6 +53,33 @@ SELECT json_build_array(s,e,name,NULL,NULL) FROM usage WHERE e>s
 UNION ALL SELECT json_build_array(s,e,name,os_pid,executable_path) FROM focus WHERE e>s;
 """
 
+ARCHIVE_ANCHORS_SQL = """
+WITH RECURSIVE names(name) AS (
+  (SELECT process_name FROM public.app_usage_logs ORDER BY process_name LIMIT 1)
+  UNION ALL
+  SELECT (SELECT a.process_name FROM public.app_usage_logs a WHERE a.process_name>n.name
+          ORDER BY a.process_name LIMIT 1) FROM names n WHERE n.name IS NOT NULL
+), b AS NOT MATERIALIZED (
+  SELECT :'until_utc'::timestamptz AS e,(SELECT min(start_time) FROM public.app_usage_logs) AS first_at
+), anchors AS MATERIALIZED (
+  SELECT n.name,u.s,u.e FROM names n CROSS JOIN b CROSS JOIN LATERAL (
+    SELECT * FROM (
+      SELECT a.start_time AS s,least(b.e,a.start_time+a.duration_seconds*interval '1 second') AS e
+      FROM public.app_usage_logs a
+      WHERE a.process_name=n.name AND a.start_time<b.e AND a.duration_seconds>0 OFFSET 0
+    ) recorded ORDER BY s DESC LIMIT 12
+  ) u WHERE lower(n.name) = ANY(ARRAY(SELECT jsonb_array_elements_text('{hints}'::jsonb)))
+)
+SELECT json_build_array(a.s,matched.executable_path) FROM anchors a CROSS JOIN b CROSS JOIN LATERAL (
+  SELECT r.executable_path FROM public.fact_process_context c
+  JOIN public.dim_process_registry r USING(process_key)
+  WHERE c.timestamp>=b.first_at-interval '1 day' AND c.timestamp<b.e
+    AND c.timestamp>=a.s-interval '1 day' AND c.timestamp<a.e AND c.end_timestamp>a.s
+    AND c.is_foreground=1 AND lower(r.process_name)=lower(a.name)
+  ORDER BY c.timestamp DESC LIMIT 2
+) matched;
+"""
+
 
 def read_focus(until):
     try:
@@ -63,9 +93,15 @@ def read_focus(until):
     return {}, None, None
 
 
-def read_game_evidence(after, until, *, timeout):
+def read_game_evidence(after, until, *, timeout, windows=()):
     """Join recorded foreground and activity spans by executable name and time."""
-    rows = query(HISTORY_SQL, after, until, timeout=timeout)
+    sql = HISTORY_SQL
+    if windows:
+        read = HISTORY_SQL.strip().removesuffix(";")
+        reads = [read.replace(":'after_utc'", f"'{format_utc(s)}'").replace(
+            ":'until_utc'", f"'{format_utc(e)}'") for s, e in windows]
+        sql = "\nUNION ALL\n".join(f"({part})" for part in reads) + ";"
+    rows = query(sql, after, until, timeout=timeout)
     usage, focus = defaultdict(list), defaultdict(list)
     for s,e,name,pid,path in rows:
         spans = usage[name] if pid is None else focus[name,pid,path]
@@ -102,6 +138,68 @@ def summarize_game_history(evidence, until, *, sessions_from=None):
         seconds=seconds(span for spans in recent.values() for span in spans) if totals else 0 if complete else None,
         games=[dict(game_name=name,seconds=value) for name,value in totals.items()],sessions_from=format_utc(sessions_from),
         latest_session=sessions[-1] if sessions else None, previous_session=sessions[-2] if len(sessions) > 1 else None)
+
+
+def read_archive_game_sessions(bucket, *, timeout=ARCHIVE_BUDGET):
+    """Find older sessions from indexed usage anchors and the ordinary identity evidence."""
+    global _archive_cache
+    cached_bucket, cached = _archive_cache
+    if bucket == cached_bucket:
+        return cached
+    if timeout < 3:
+        return ()
+    until = dt.datetime.fromtimestamp(bucket * ARCHIVE_BUCKET_SECONDS, tz=dt.timezone.utc)
+    deadline = time.monotonic() + min(timeout, ARCHIVE_BUDGET)
+    _, steam, windows, nvidia = catalogs(time.monotonic() // 60)
+    hints = {exe.name.lower() for _, kind, _, direct in steam.values() if kind == "game" for exe in direct}
+    hints.update(name for name in windows if name.endswith(".exe"))
+    hints.update(nvidia)
+    values = json.dumps(sorted(hints), ensure_ascii=False).replace("'", "''")
+    anchors = query(ARCHIVE_ANCHORS_SQL.replace("{hints}", values), until - DAY, until,
+                    timeout=deadline-time.monotonic())
+    verdicts = {path: classify(path)[0] for path in {path for _, path in anchors}}
+    china = dt.timezone(dt.timedelta(hours=8))
+    days = sorted({parse_utc(at).astimezone(china).date() for at, path in anchors
+                   if verdicts[path] == "game"}, reverse=True)[:4]
+    starts = [dt.datetime.combine(day, dt.time(), china) - dt.timedelta(hours=3) for day in days]
+    sessions = {}
+    cacheable = True
+    for offset in range(0, len(starts), 2):
+        windows = merge((start, min(until, start+dt.timedelta(hours=30))) for start in starts[offset:offset+2])
+        try:
+            rows = read_game_evidence(windows[0][0], windows[-1][1], windows=windows,
+                                      timeout=deadline-time.monotonic())
+        except ActivityQueryError:
+            if sessions:
+                cacheable = False
+                break
+            raise
+        for start, end in windows:
+            history = summarize_game_history([row for row in rows if start <= row[0] and row[1] <= end],
+                                             end, sessions_from=start)
+            for session in (history["latest_session"], history["previous_session"]):
+                if session and parse_utc(session["end"]) < end:
+                    sessions.setdefault((session["game_name"], session["end"]), session)
+        if len(sessions) >= 2:
+            break
+    result = sorted(sessions.values(), key=lambda row: parse_utc(row["end"]), reverse=True)
+    if cacheable:
+        _archive_cache = (bucket, result)
+    return result
+
+
+def fill_archive_game_sessions(history, lower, deadline):
+    if history["previous_session"] is not None:
+        return
+    try:
+        bucket = int(lower.timestamp()) // ARCHIVE_BUCKET_SECONDS + 1
+        archive = read_archive_game_sessions(bucket, timeout=deadline-time.monotonic())
+    except ActivityQueryError:
+        return
+    older = (dict(row) for row in archive if parse_utc(row["end"]) <= lower)
+    for key in ("latest_session", "previous_session"):
+        if history[key] is None:
+            history[key] = next(older, None)
 
 
 @lru_cache(maxsize=2)
