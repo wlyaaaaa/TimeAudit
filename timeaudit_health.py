@@ -19,6 +19,26 @@ from runtime_health import LIFECYCLE_HEALTH_SCHEMA
 ROOT = Path(__file__).resolve().parent
 SCHEMA = "timeaudit.runtime-health.v1"
 PRIVACY = dict.fromkeys(("raw_samples_included", "process_names_included", "process_paths_included", "window_titles_included", "command_lines_included", "credentials_included", "machine_identifiers_included"), False)
+MIB = 1 << 20
+# The database settings here track docker-compose.yml. Sidecars have warning levels only.
+POSTGRES_BUFFER_MIB = 1024
+POSTGRES_LIMIT_MIB = 6144
+CONTAINER_WORKING_SET_MIB = {"audit-postgres": 3072, "audit-ingester": 192, "audit-grafana": 768}
+CGROUP_MEMORY_PROBE = r"""
+cd /sys/fs/cgroup
+awk '
+FILENAME == "memory.current" { current = $1 }
+FILENAME == "memory.peak" { peak = $1 }
+FILENAME == "memory.max" { limit = ($1 == "max" ? "null" : $1) }
+FILENAME == "memory.events" && $1 == "oom" { oom = $2 }
+FILENAME == "memory.events" && $1 == "oom_kill" { oom_kill = $2 }
+FILENAME == "memory.stat" && $1 == "inactive_file" { inactive = $2 }
+END {
+    if (current == "" || peak == "" || limit == "" || oom == "" || oom_kill == "" || inactive == "") exit 1
+    printf "{\"current_bytes\":%s,\"peak_bytes\":%s,\"limit_bytes\":%s,\"oom\":%s,\"oom_kill\":%s,\"inactive_file_bytes\":%s}\n",
+           current, peak, limit, oom, oom_kill, inactive
+}' memory.current memory.peak memory.max memory.events memory.stat
+"""
 
 
 def heartbeat(path: Path, max_age: float, schema: str | None = None) -> dict:
@@ -94,6 +114,49 @@ def database_health() -> dict:
     if value["fps_capture_degraded"] and value["status"] == "healthy":
         value["status"] = "degraded"
     return value
+
+
+def docker_memory_health() -> dict:
+    """Read cgroup v2 counters in the existing nightly run."""
+    docker = shutil.which("docker.exe") or shutil.which("docker")
+    if not docker:
+        return {"status": "unavailable", "reason": "docker_unavailable"}
+
+    def sample(service: str, warning_mib: int) -> dict:
+        row = _run([docker, "exec", service, "sh", "-ec", CGROUP_MEMORY_PROBE], timeout=8)
+        fields = ("current_bytes", "peak_bytes", "oom", "oom_kill", "inactive_file_bytes")
+        if not isinstance(row, dict) or any(type(row.get(key)) is not int or row[key] < 0 for key in fields):
+            return {"status": "unavailable", "reason": "cgroup_memory_unavailable"}
+        limit = row.get("limit_bytes")
+        if "limit_bytes" not in row or (limit is not None and (type(limit) is not int or limit < 1)):
+            return {"status": "unavailable", "reason": "cgroup_limit_unavailable"}
+        working_set = max(0, row["current_bytes"] - row["inactive_file_bytes"])
+        reasons = []
+        if working_set >= warning_mib * MIB:
+            reasons.append("working_set_above_budget")
+        if row["oom"] or row["oom_kill"]:
+            reasons.append("cgroup_oom_since_start")
+        if service == "audit-postgres":
+            settings = _run([docker, "exec", "-i", "audit-postgres", "psql", "-X", "-U", "leyang", "-d", "time_audit",
+                             "-At", "-v", "ON_ERROR_STOP=1"],
+                            sql="SELECT json_build_object('shared_buffers_bytes', pg_size_bytes(current_setting('shared_buffers')));")
+            shared = settings.get("shared_buffers_bytes") if isinstance(settings, dict) else None
+            row["shared_buffers_bytes"] = shared
+            if type(shared) is not int:
+                reasons.append("postgres_shared_buffers_unavailable")
+            elif shared != POSTGRES_BUFFER_MIB * MIB:
+                reasons.append("postgres_shared_buffers_drift")
+            if limit != POSTGRES_LIMIT_MIB * MIB:
+                reasons.append("postgres_memory_limit_drift")
+        return {**row, "working_set_bytes": working_set, "warning_mib": warning_mib,
+                "status": "degraded" if reasons else "healthy", "reasons": reasons}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(CONTAINER_WORKING_SET_MIB)) as executor:
+        jobs = {service: executor.submit(sample, service, warning) for service, warning in CONTAINER_WORKING_SET_MIB.items()}
+        containers = {service: job.result() for service, job in jobs.items()}
+    states = {row["status"] for row in containers.values()}
+    status = "degraded" if "degraded" in states else "unavailable" if "unavailable" in states else "healthy"
+    return {"status": status, "containers": containers}
 
 
 def lhm_health() -> dict:
@@ -304,6 +367,7 @@ def build_health(*, core_only: bool = False) -> dict:
         jobs["backup"] = lambda: backup_health(Path(r"G:\80_Backup\TimeAudit\postgresql"))
         jobs["memory_blackbox"] = blackbox_health
         jobs["watchdog_last_outcome"] = lambda: watchdog_health(ROOT/"log"/"watchdog_outcome.json")
+        jobs["docker_memory"] = docker_memory_health
     def safe_probe(job):
         try:
             return job()

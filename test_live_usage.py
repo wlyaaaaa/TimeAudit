@@ -35,16 +35,18 @@ class LiveUsageTest(TestCase):
                           (stamp(195), stamp(210), '关机离线'), (stamp(210), stamp(600), None)])
 
     def test_live_focus_uses_exact_grafana_contract_without_outputting_titles(self):
-        path = next((Path(__file__).parent / 'grafana_dashboards').glob('adfkm96*.json'))
+        path = next((Path(__file__).parent / 'grafana_dashboards').glob('adfkm96__*.json'))
         panel = json.loads(path.read_text('utf8'))['elements']['panel-8']['spec']
         grafana = panel['data']['spec']['queries'][0]['spec']['query']['spec']['rawSql']
+        rule = dict(min_seconds=900, break_idle_seconds=120, switching_breaks=False)
         def query(sql, start, stop):
             self.assertNotIn('$__time', sql)
             self.assertIn("SELECT 15 * 60 AS min_seconds", sql)
             self.assertIn('FROM focus_rows', sql)
-            self.assertNotIn('sample_title', sql.partition('SELECT jsonb_build_object')[2])
-            return [dict(min_seconds=900, rows=[], recorded_to=None)]
-        self.assertEqual(read_focus(query, None, None, grafana), dict(min_seconds=900, rows=[], recorded_to=None))
+            self.assertIn('seconds, programs FROM focus_rows', sql)
+            self.assertNotIn('window_title', sql)
+            return [dict(rule=rule, rows=[], recorded_to=None)]
+        self.assertEqual(read_focus(query, None, None, grafana), dict(rule=rule, rows=[], recorded_to=None))
 
 
 if __name__ == '__main__':

@@ -4,14 +4,13 @@ services:
     image: postgres:15-alpine
     container_name: audit-postgres
     restart: always
-    # 🚀 PostgreSQL 性能调优：默认 shared_buffers=128MB / work_mem=4MB 在 64GB+NVMe 机器上把性能锁死了。
-    # 面向“单用户工作站、读多、大量对 fact_process_activity(~1.8GB/周分区)的聚合扫描”优化，既显著提速、
-    # 又留足内存给游戏/应用(shared_buffers=2GB 仅占 64GB 的 3%)。random_page_cost/effective_io_concurrency
-    # 按 NVMe Gen5 调小/调高，让规划器更敢走索引并预取。并行度保持 2，配 512MB shm 仍有充足余量。
+    # 给查询、备份和自动清理留出弹性，同时限制与其它 WSL 应用共享的内存。
+    # 与 timeaudit_health.py 的夜检预算同步维护，见《快速部署》。
+    mem_limit: 6g
     command:
       - "postgres"
       - "-c"
-      - "shared_buffers=2GB"
+      - "shared_buffers=1GB"
       - "-c"
       - "effective_cache_size=8GB"
       - "-c"
