@@ -13,6 +13,7 @@ global isLocked := false
 global suspended := false
 global captureErrors := 0
 global captureFailing := false
+global focus := {hwnd: 0, pid: 0, active: "null", process: "", sample: "", since: ""}
 DirCreate(A_ScriptDir . "\log")
 global spool := TimeAuditSpool(logPath)
 global tracker := TimeAuditState(ObjBindMethod(spool, "Write"), A_NowUTC, DllCall("GetTickCount64", "UInt64"))
@@ -74,9 +75,10 @@ CaptureActiveWindow() {
 }
 
 CaptureActiveWindowCore() {
-    global tracker, isScreenOff, isLocked, suspended, maxIdleTime, lastGamepadInput
+    global tracker, isScreenOff, isLocked, suspended, maxIdleTime, lastGamepadInput, focus, captureFailing
     if suspended
         return
+    activeHWND := DllCall("GetForegroundWindow", "Ptr")
     ; 2. 【层级漏斗状态机】动态判定当前这一秒电脑到底属于什么工时状态
     currentProcess := ""
     currentTitle := ""
@@ -104,7 +106,6 @@ CaptureActiveWindowCore() {
         currentProcess := "Idle"
         currentTitle := "屏幕无聚焦响应"
         try {
-            activeHWND := WinExist("A")
             if activeHWND {
                 ; 🛡️【非阻塞内核预检】兼顾“数据采集”与“脚本防死锁”的双重诉求
                 if DllCall("IsHungAppWindow", "Ptr", activeHWND, "Int") {
@@ -136,8 +137,20 @@ CaptureActiveWindowCore() {
             currentTitle := "无法获取聚焦窗口"
         }
     }
-    
-    tracker.Step(A_NowUTC, DllCall("GetTickCount64", "UInt64"), currentProcess, currentTitle, maxIdleTime // 1000)
+
+    now := A_NowUTC
+    sampled := now . "." . A_MSec
+    tracker.Step(now, DllCall("GetTickCount64", "UInt64"), currentProcess, currentTitle, maxIdleTime // 1000)
+    pid := 0
+    if activeHWND
+        DllCall("GetWindowThreadProcessId", "Ptr", activeHWND, "UInt*", &pid)
+    active := (currentProcess = "Unknown" || currentProcess = "System_Hung") ? "null"
+        : (pid && RegExMatch(currentProcess, "i)\.exe$") ? "true" : "false")
+    if (captureFailing || focus.sample = "" || activeHWND != focus.hwnd || pid != focus.pid
+        || active != focus.active || DateDiff(now, SubStr(focus.sample, 1, 14), "Seconds") > 6 || sampled < focus.sample)
+        focus.since := sampled
+    focus.hwnd := activeHWND, focus.pid := pid, focus.active := active, focus.sample := sampled
+    focus.process := active = "true" ? currentProcess : ""
 }
 
 WriteAhkHeartbeat() {
@@ -152,13 +165,17 @@ WriteAhkHeartbeat() {
 }
 
 WriteAhkHealth() {
-    global tracker, healthPath, captureErrors, captureFailing, spool, isLocked, isScreenOff
+    global tracker, healthPath, captureErrors, captureFailing, spool, isLocked, isScreenOff, suspended, focus
     status := tracker.pending.Length || tracker.overflowStart != "" || captureFailing ? "degraded" : "healthy"
     ; 驾驶舱通知读这三项判断人在不在电脑前，见 PCConfig docs/runtime/cockpit-notify.md
     payload := '{"schema":"timeaudit.ahk-health.v1","state":"' . status
         . '","idle_physical_ms":' . A_TimeIdlePhysical
         . ',"locked":' . (isLocked ? "true" : "false")
         . ',"screen_off":' . (isScreenOff ? "true" : "false")
+        . ',"focus_sample_utc":"' . (captureFailing || suspended ? "" : focus.sample)
+        . '","focus_since_utc":"' . focus.since
+        . '","focus_pid":' . focus.pid . ',"focus_active":' . focus.active
+        . ',"focus_process":"' . focus.process . '"'
         . ',"pending_events":' . tracker.pending.Length
         . ',"pending_chars":' . tracker.pendingChars
         . ',"write_failures":' . tracker.writeFailures
@@ -208,10 +225,11 @@ SessionEventHook(wParam, *) {
 
 SafeExitHandler(ExitReason, *) {
     Critical(true)
-    global tracker, hPowerNotify, sessionNotify
+    global tracker, hPowerNotify, sessionNotify, focus
     SetTimer(SampleGamepadInput, 0)
     SetTimer(CaptureActiveWindow, 0)
     tracker.Finish(A_NowUTC, DllCall("GetTickCount64", "UInt64"))
+    focus.sample := ""
     WriteAhkHealth()
     if hPowerNotify
         DllCall("UnregisterPowerSettingNotification", "Ptr", hPowerNotify)
