@@ -1,12 +1,23 @@
 import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
 
-from live_usage import apply_power, read_focus, read_power
+from live_usage import apply_power, read_focus, read_idle_threshold_seconds, read_power
 
 
 class LiveUsageTest(TestCase):
+    def test_idle_threshold_follows_the_collector_setting(self):
+        with TemporaryDirectory() as directory, patch('live_usage.__file__', str(Path(directory)/'live_usage.py')):
+            source = Path(directory)/'TimeAudit.ahk'
+            self.assertIsNone(read_idle_threshold_seconds())
+            source.write_text('global maxIdleTime := 90000 ; changed', encoding='utf-8-sig')
+            self.assertEqual(read_idle_threshold_seconds(), 90)
+            source.write_text('global maxIdleTime := ReadSetting()', encoding='utf-8')
+            self.assertIsNone(read_idle_threshold_seconds())
+
     def test_clean_pair_can_fill_only_an_unknown_gap(self):
         start = datetime(2026, 11, 19, tzinfo=timezone.utc)
         end = start + timedelta(minutes=10)

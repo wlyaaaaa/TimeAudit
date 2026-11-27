@@ -1,7 +1,19 @@
 """Read the evidence the live usage page needs, without rewriting old activity rows."""
 from datetime import datetime, timezone
 import json
+from pathlib import Path
+import re
 import subprocess
+
+
+def read_idle_threshold_seconds():
+    """Read the configured keyboard/mouse idle threshold from the collector."""
+    try:
+        source = Path(__file__).with_name('TimeAudit.ahk').read_text('utf-8-sig')
+    except (OSError, UnicodeError):
+        return None
+    match = re.search(r'^[ \t]*global[ \t]+maxIdleTime[ \t]*:=[ \t]*([1-9][0-9]*)[ \t]*(?:;[^\n]*)?$', source, re.MULTILINE)
+    return int(match[1]) / 1000 if match else None
 
 def read_focus(query, start, end, grafana_sql):
     # Use the Grafana panel's CTEs as the single definition. Public and owner
