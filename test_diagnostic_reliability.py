@@ -115,6 +115,20 @@ class ReliabilityTests(unittest.TestCase):
         self.assertIsNone(data["cpu_package_temp"])
         self.assertIsNone(data["gpu_hotspot_temp"])
 
+        obj._parse_presentmon_process_id = int
+        obj._resolve_fps_capture_state = lambda **f: ("active", "rtss_shared_memory_frame" if f["rtss_has_frame"] else "presentmon_foreground_frame")
+        obj._read_rtss_fps_snapshot = lambda pid: dict(current_fps=120.0, average_fps=120.0,
+            one_percent_low_fps=100.0, frametime_ms=8.33, frametime_jitter=0.2,
+            frame_source=dict(pid=42, exe="wallpaper64.exe", foreground_match=False))
+        obj._select_presentmon_window = lambda *args: [16.0, 20.0]
+        active = obj.collect_hardware_snapshot("DemoGame.exe", 1234)
+        self.assertEqual(active["fps_capture_detail"], "presentmon_foreground_frame")
+        self.assertEqual(active["measurement_quality"]["frame_source"], dict(pid=1234, exe="DemoGame.exe", foreground_match=True))
+        obj._select_presentmon_window = lambda *args: []
+        fallback = obj.collect_hardware_snapshot("DemoGame.exe", 1234)
+        self.assertEqual(fallback["fps_capture_detail"], "rtss_shared_memory_frame")
+        self.assertEqual(fallback["measurement_quality"]["frame_source"], dict(pid=42, exe="wallpaper64.exe", foreground_match=False))
+
     def test_malformed_or_private_aggregate_fails_closed(self):
         variants = [{}, {**aggregate_fixture(), "window_title": "private"}, {**aggregate_fixture(), "hardware_sample_count": True}, {**aggregate_fixture(), "cpu_temp_max_c": float("nan")}, {**aggregate_fixture(), "fps_state_counts": {"active": 1}}]
         for value in variants:
