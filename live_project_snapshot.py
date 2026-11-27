@@ -65,7 +65,8 @@ def daily_records(rows, until):
                  if parse_utc(r[0]) < end and parse_utc(r[1]) > start]
         uncovered = (end-start).total_seconds()-seconds([(s, e) for s, e, _ in parts])
         missed = round(uncovered+seconds([(s, e) for s, e, gap in parts if gap]), 6)
-        result.append(dict(date=start.date().isoformat(), intervals=len(parts), missed_seconds=missed,
+        result.append(dict(date=start.date().isoformat(), until=end.astimezone(ZONE).isoformat(),
+            intervals=len(parts), missed_seconds=missed,
             text=f"{start:%m-%d}：{len(parts)} 段，没记上 {missed/60:.1f} 分钟",
             state_text="截至取数时刻" if offset == 0 else "已保存日记录"))
     return result
@@ -81,9 +82,13 @@ def dashboard_records():
             continue
         count = sum(p.get("kind") in {"Panel", "LibraryPanel"} for p in value["elements"].values()) if "elements" in value else panels(value.get("panels", []))
         changed = subprocess.check_output([GIT, "-C", str(ROOT), "log", "-1", "--format=%cI", "--", str(path)], text=True).strip()
-        records.append(dict(text=value["title"], uid=value["uid"], panels=count, changed=changed, state_text="已有看板定义"))
+        definition_href = "https://github.com/wlyaaaaa/TimeAudit/blob/main/"+quote(path.relative_to(ROOT).as_posix())
+        changed_date = parse_utc(changed).astimezone(ZONE).date().isoformat() if changed else None
+        records.append(dict(text=value["title"], title=value["title"], uid=value["uid"], panels=count,
+            changed=changed, date=changed_date, definition_href=definition_href, state_text="已有看板定义",
+            local_open=dict(value=None, visibility="owner", guard="owner", hidden_what="本机看板地址")))
         artifacts.append(dict(at=changed, kind="dashboard", title="看板定义 JSON · "+value["title"], status="completed", public="same",
-            open=dict(source="timeaudit.dashboard."+value["uid"], href="https://github.com/wlyaaaaa/TimeAudit/blob/main/"+quote(path.relative_to(ROOT).as_posix()))))
+            open=dict(source="timeaudit.dashboard."+value["uid"], href=definition_href)))
     return records, artifacts
 
 
@@ -121,7 +126,9 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             attempt(key, lambda key=key, table=table: put({key: retained_count(table)}))
         def earliest():
             row = query("SELECT json_build_array((SELECT to_char(min(start_time) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.app_usage_logs),(SELECT to_char(min(timestamp) AT TIME ZONE 'Asia/Shanghai','YYYY-MM-DD') FROM public.fact_process_context WHERE is_foreground=1));")[0]
-            put(dict(earliest=f"活动 {row[0]}；窗口 {row[1]}" if all(row) else None))
+            activity, window = row
+            parts = [f"{label} {date}" for label, date in (("活动", activity), ("窗口", window)) if date]
+            put(dict(earliest=dict(text="；".join(parts), activity=activity, window=window) if parts else None))
         attempt("earliest", earliest)
         try:
             previous_retained = read(config["retained_output"])
@@ -146,7 +153,9 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
         missed = aggregate["collection_gap_seconds"]+aggregate["uncovered_seconds"]
         memory_mib = aggregate.get("main_working_set_mib_max")
         memory_mb = memory_mib * 1_048_576 / 1_000_000 if memory_mib is not None else None
-        put(dict(missed=dict(text=f"{missed/60:.1f} 分钟（明确缺口 {aggregate['collection_gap_seconds']} 秒＋完全没记录 {aggregate['uncovered_seconds']} 秒）", seconds=missed),
+        put(dict(missed=dict(text=f"{missed/60:.1f} 分钟（明确缺口 {aggregate['collection_gap_seconds']} 秒＋完全没记录 {aggregate['uncovered_seconds']} 秒）",
+            seconds=missed, collection_gap_seconds=aggregate["collection_gap_seconds"],
+            uncovered_seconds=aggregate["uncovered_seconds"]),
             memory=memory_mb, samples24=aggregate["hardware_sample_count"],
             covered24=aggregate["distinct_sample_seconds"], empty24=aggregate["requested_window_seconds"]-aggregate["distinct_sample_seconds"],
             max_gap=aggregate.get("max_gap_seconds")), window, until.isoformat())
@@ -163,33 +172,54 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
         def days():
             start = until.astimezone(ZONE).replace(hour=0, minute=0, second=0, microsecond=0)-dt.timedelta(days=6)
             rows = query(f"SELECT json_build_array(start_time,start_time+duration_seconds*interval '1 second',process_name='System_CollectionGap') FROM public.app_usage_logs WHERE duration_seconds>0 AND start_time<'{until.isoformat()}'::timestamptz AND start_time+duration_seconds*interval '1 second'>'{start.isoformat()}'::timestamptz;")
-            put(dict(days=daily_records(rows, until)), "北京时间最近七日；跨日区间裁剪并求并集；段数为与当天相交的记录数，跨日会重复；今天截至取数时刻")
+            put(dict(days=daily_records(rows, until)), "北京时间最近七日；跨日区间裁剪并求并集；段数为与当天相交的记录数，跨日会重复；今天截至取数时刻", until.isoformat())
         attempt("days", days)
-        owner_values = dict(clipboard_latest=None, viewer=None)
+        clipboard_latest = clipboard_sampled_at = None
+        put(dict(viewer=dict(text="还没接上", web_open=False)),
+            "本机开始菜单 TimeAudit 剪贴板历史可打开；共享网页尚无本机启动入口")
         def clipboard():
+            nonlocal clipboard_latest, clipboard_sampled_at
             database = Path(config["clipboard_db"])
             with sqlite3.connect(database.as_uri()+"?mode=ro", uri=True, timeout=1) as conn:
                 conn.execute("PRAGMA query_only=ON")
                 row = conn.execute("SELECT count(*),sum(event_kind='observation' AND blob_id IS NOT NULL),sum(event_kind='observation' AND payload_type='text'),sum(event_kind='observation' AND payload_type='url'),sum(event_kind='observation' AND payload_type='file_paths'),min(observed_at_utc),max(observed_at_utc),sum(event_kind='skip'),sum(event_kind='gap'),sum(event_kind='boundary') FROM events").fetchone()
-            put(dict(clipboard=dict(text=f"{row[1] or 0} 条（文字 {row[2] or 0}、链接 {row[3] or 0}、文件列表 {row[4] or 0}），最早 {parse_utc(row[5]).astimezone(ZONE):%Y-%m-%d}" if row[5] else "0 条", count=row[1] or 0),
-                clipboard_events=dict(text=f"{row[0]} 条（含跳过 {row[7] or 0}、缺口 {row[8] or 0}、边界 {row[9] or 0}）", count=row[0]),
+            at = now()
+            earliest = parse_utc(row[5]).astimezone(ZONE).date().isoformat() if row[5] else None
+            put(dict(clipboard=dict(text=f"{row[1] or 0} 条（文字 {row[2] or 0}、链接 {row[3] or 0}、文件列表 {row[4] or 0}），最早 {earliest}" if earliest else "0 条",
+                    count=row[1] or 0, text_count=row[2] or 0, url_count=row[3] or 0,
+                    file_list_count=row[4] or 0, earliest_date=earliest),
+                clipboard_events=dict(text=f"{row[0]} 条（含跳过 {row[7] or 0}、缺口 {row[8] or 0}、边界 {row[9] or 0}）",
+                    count=row[0], skipped=row[7] or 0, gaps=row[8] or 0, boundaries=row[9] or 0)),
+                at=at)
+            put(dict(
                 clipboard_bytes=sum(p.stat().st_size for p in (database, Path(str(database)+"-wal"), Path(str(database)+"-shm")) if p.exists())))
             temporary = list(database.parent.glob("*.tmp"))
-            put(dict(clipboard_temporary=dict(text=f"{len(temporary)} 个，{sum(p.stat().st_size for p in temporary)} 字节")))
-            owner_values["clipboard_latest"] = parse_utc(row[6]).astimezone(ZONE).isoformat() if row[6] else None
+            temporary_bytes = sum(p.stat().st_size for p in temporary)
+            put(dict(clipboard_temporary=dict(text=f"{len(temporary)} 个，{temporary_bytes} 字节",
+                count=len(temporary), bytes=temporary_bytes)))
+            if row[6]:
+                clipboard_latest = parse_utc(row[6]).astimezone(ZONE).isoformat()
+                clipboard_sampled_at = at
         attempt("clipboard clipboard_events clipboard_bytes clipboard_temporary", clipboard)
         def dashboards():
             records, artifacts = dashboard_records()
             snapshot["artifacts"] = artifacts
             snapshot["dashboard_records"] = records
-            put(dict(dashboards=dict(text=f"{len(records)} 份看板、{sum(r['panels'] for r in records)} 张图"), website_dashboards=len(list((ROOT/"grafana_provisioning/dashboards").glob("website-computer-status*.json")))))
+            panels = sum(row["panels"] for row in records)
+            put(dict(dashboards=dict(text=f"{len(records)} 份看板、{panels} 张图", count=len(records),
+                panels=panels), website_dashboards=len(list((ROOT/"grafana_provisioning/dashboards").glob("website-computer-status*.json")))))
         attempt("dashboards website_dashboards", dashboards)
-        owner = dict(snapshot, metrics=dict(snapshot["metrics"], **owner_values), times=dict(snapshot["times"]), scopes=dict(snapshot["scopes"]))
-        owner["times"].update({key: now() if value is not None else None for key, value in owner_values.items()})
-        owner["scopes"]["viewer"] = "本机开始菜单 TimeAudit 剪贴板历史可打开；共享网页尚无受支持的本机启动入口，未提供假链接"
-        owner["dashboard_open"] = [dict(r, href=config["grafana_url"].rstrip("/")+"/d/"+r["uid"]) for r in snapshot.get("dashboard_records", [])]
-        owner["metrics"]["dashboard_open"] = owner["dashboard_open"]
-        owner["times"]["dashboard_open"] = now()
+        snapshot["at"] = now()
+        owner = dict(snapshot, metrics=dict(snapshot["metrics"], clipboard_latest=clipboard_latest),
+            times=dict(snapshot["times"], clipboard_latest=clipboard_sampled_at), scopes=dict(snapshot["scopes"]))
+        if "dashboard_records" in snapshot:
+            grafana = config["grafana_url"].rstrip("/")
+            owner["dashboard_records"] = [dict(row, local_open=dict(row["local_open"], value=f"{grafana}/d/{row['uid']}"))
+                for row in snapshot["dashboard_records"]]
+            owner["dashboard_open"] = [dict(row, href=row["local_open"]["value"]) for row in owner["dashboard_records"]]
+            owner["metrics"]["dashboard_open"] = owner["dashboard_open"]
+            owner["times"]["dashboard_open"] = snapshot["times"]["dashboards"]
+            owner["scopes"]["dashboard_open"] = snapshot["scopes"]["dashboards"]
         write(config["owner_output"], owner)
     write(config["static_output" if static else "live_output"], snapshot)
     write(output, snapshot)
