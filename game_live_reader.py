@@ -110,7 +110,7 @@ def read_history(bucket, timeout):
     return summarize_game_history(read_game_evidence(until - DAY, until, timeout=timeout), until)
 
 
-def read_game_status(until=None, *, timeout=5):
+def read_game_status(until=None, *, timeout=5, include_history=True):
     """Read source clocks with at most 15 seconds of live age; callers gate access."""
     until = until or dt.datetime.now(dt.timezone.utc)
     if until.utcoffset() is None:
@@ -140,10 +140,17 @@ def read_game_status(until=None, *, timeout=5):
                 and frame["process_name"].casefold() == foreground["process_name"].casefold()
                 and parse_utc(frame["at"]) >= max(since, parse_utc(focus["at"]))):
             game_fps = frame["fps"]
-    try:
-        history = read_history(int(until.timestamp()) // 15, min(3, max(0, int(deadline - time.monotonic()))))
-    except ActivityQueryError:
-        history = {"at": None, "played": None, "complete": False}
+    history = {"at": None, "played": None, "complete": False}
+    if include_history:
+        try:
+            history = read_history(int(until.timestamp()) // 15, min(3, max(0, int(deadline - time.monotonic()))))
+        except ActivityQueryError:
+            pass
     if foreground and foreground["active"] is True and foreground["classification"] == "game":
         history = dict(history, played=True)
     return dict(at=format_utc(until), foreground=foreground, frame=frame, game_fps=game_fps, history=history)
+
+
+def read_live_game_status(until=None, *, timeout=5):
+    """Read current foreground and frame evidence without the history query."""
+    return read_game_status(until, timeout=timeout, include_history=False)
