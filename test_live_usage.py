@@ -24,8 +24,9 @@ class LiveUsageTest(TestCase):
         stamp = lambda n: start.timestamp() + n
         event = lambda n, k: dict(at=(start + timedelta(seconds=n)).isoformat(), id=k)
         rows = [event(500, 41), event(410, 12), event(380, 13), event(210, 12), event(190, 13), event(50, 12)]
-        source = read_power(start, end, lambda *_: rows)
-        self.assertEqual(source, dict(spans=[(stamp(190), stamp(210))], markers=[stamp(50), stamp(410)]))
+        source = read_power(start, end, lambda *_: dict(events=rows, retained_from=start.isoformat()))
+        self.assertEqual(source["spans"], [(stamp(190), stamp(210))])
+        self.assertEqual(source["markers"], [stamp(50), stamp(410)])
         usage = [dict(start=stamp(0), end=stamp(175), state=None),
                  dict(start=stamp(175), end=stamp(195), state='睡眠'),
                  dict(start=stamp(195), end=stamp(600), state=None)]
@@ -47,6 +48,36 @@ class LiveUsageTest(TestCase):
             self.assertNotIn('window_title', sql)
             return [dict(rule=rule, rows=[], recorded_to=None)]
         self.assertEqual(read_focus(query, None, None, grafana), dict(rule=rule, rows=[], recorded_to=None))
+
+    def test_sleep_and_wake_are_matched_without_crossing_shutdown(self):
+        start = datetime(2026, 11, 19, tzinfo=timezone.utc)
+        at = lambda n: start + timedelta(seconds=n)
+        stamp = lambda n: at(n).timestamp()
+        event = lambda n, k, **data: dict(at=at(n).isoformat(), id=k, **data)
+        rows = [event(50, 1, sleep_at=at(-30).isoformat(), wake_at=at(20).isoformat()),
+                event(100, 42), event(200, 107), event(210, 1, sleep_at=at(110).isoformat(), wake_at=at(198).isoformat()),
+                event(250, 506), event(310, 507), event(320, 42), event(330, 13), event(345, 107), event(550, 42)]
+        result = read_power(start, at(600), lambda *_: dict(events=rows, retained_from=at(-10).isoformat()))
+        self.assertEqual(result["sleep_spans"], [(stamp(0), stamp(20)), (stamp(110), stamp(198)), (stamp(250), stamp(310))])
+        self.assertIn(stamp(550), result["sleep_points"])
+        self.assertIn(stamp(345), result["wake_points"])
+        self.assertEqual(result["coverage"], dict(status="complete", retained_from=stamp(-10),
+                                                 window_from=stamp(0), window_to=stamp(600)))
+
+    def test_empty_events_distinguish_coverage_and_read_failure(self):
+        start = datetime(2026, 11, 19, tzinfo=timezone.utc)
+        end = start + timedelta(minutes=10)
+        complete = read_power(start, end, lambda *_: dict(events=[], retained_from=start.isoformat()))
+        incomplete = read_power(start, end, lambda *_: dict(events=[], retained_from=end.isoformat()))
+        self.assertEqual(complete["coverage"]["status"], "complete")
+        self.assertEqual(complete["sleep_spans"] + complete["sleep_points"] + complete["wake_points"], [])
+        self.assertEqual(incomplete["coverage"]["status"], "retention_insufficient")
+        observed = dict(at=end.isoformat(), id=107)
+        partial = read_power(start, end, lambda *_: dict(events=[observed], retained_from=end.isoformat()))
+        self.assertEqual(partial["wake_points"], [end.timestamp()])
+        self.assertEqual(partial["coverage"]["status"], "retention_insufficient")
+        with patch('live_usage.subprocess.run', side_effect=PermissionError):
+            self.assertIsNone(read_power(start, end))
 
 
 if __name__ == '__main__':

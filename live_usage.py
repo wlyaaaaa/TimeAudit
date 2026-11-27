@@ -37,14 +37,24 @@ def _windows_power_events(start, end):
     script = r"""
 [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false)
 $ErrorActionPreference='Stop'
-$q="*[System[TimeCreated[@SystemTime >= 'START' and @SystemTime <= 'END'] and ((Provider[@Name='Microsoft-Windows-Kernel-General'] and (EventID=12 or EventID=13)) or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and EventID=41))]]"
+$q="*[System[TimeCreated[@SystemTime >= 'START' and @SystemTime <= 'END'] and ((Provider[@Name='Microsoft-Windows-Kernel-General'] and (EventID=12 or EventID=13)) or (Provider[@Name='Microsoft-Windows-Kernel-Power'] and (EventID=41 or EventID=42 or EventID=107 or EventID=506 or EventID=507)) or (Provider[@Name='Microsoft-Windows-Power-Troubleshooter'] and EventID=1))]]"
 try { $events=@(Get-WinEvent -LogName System -FilterXPath $q) }
 catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $events=@() } else { throw } }
-ConvertTo-Json -Compress -InputObject @(foreach ($e in $events) {
+try { $oldest=Get-WinEvent -LogName System -Oldest -MaxEvents 1 }
+catch { if ($_.FullyQualifiedErrorId -like 'NoMatchingEventsFound*') { $oldest=$null } else { throw } }
+$rows=@(foreach ($e in $events) {
+  $data = ([xml]$e.ToXml()).Event.EventData.Data
   $name = switch ($e.Id) { 12 {'StartTime'} 13 {'StopTime'} }
-  $at = (([xml]$e.ToXml()).Event.EventData.Data | Where-Object Name -eq $name).InnerText
-  @{id=$e.Id; at=($at ?? $e.TimeCreated.ToUniversalTime().ToString('o'))}
+  $at = ($data | Where-Object Name -eq $name).InnerText
+  $row = @{id=$e.Id; at=($at ?? $e.TimeCreated.ToUniversalTime().ToString('o'))}
+  if ($e.Id -eq 1) {
+    $row.sleep_at = ($data | Where-Object Name -eq 'SleepTime').InnerText
+    $row.wake_at = ($data | Where-Object Name -eq 'WakeTime').InnerText
+  }
+  $row
 })
+$retained = if ($oldest) { $oldest.TimeCreated.ToUniversalTime().ToString('o') }
+ConvertTo-Json -Compress -InputObject @{events=$rows; retained_from=$retained}
 """.replace('START', utc(start)).replace('END', utc(end))
     result = subprocess.run(["pwsh", "-NoProfile", "-NonInteractive", "-Command", script],
                             check=True, capture_output=True, encoding="utf-8", timeout=15,
@@ -52,12 +62,59 @@ ConvertTo-Json -Compress -InputObject @(foreach ($e in $events) {
     return json.loads(result.stdout)
 
 
+def _sleep_evidence(rows, events, start, end):
+    exact, matched, pending, sleeps, wakes = [], [], {}, set(), set()
+    left, right = start.timestamp(), end.timestamp()
+    for row in rows:
+        if row["id"] == 1:
+            try:
+                sleep, wake = (datetime.fromisoformat(row[k]) for k in ("sleep_at", "wake_at"))
+                if sleep.tzinfo is None or wake.tzinfo is None:
+                    raise ValueError("unqualified sleep timestamps")
+                a, b = sleep.timestamp(), wake.timestamp()
+                if not 0 < a < b:
+                    raise ValueError("invalid recorded sleep bounds")
+            except (KeyError, TypeError, ValueError):
+                wakes.add(datetime.fromisoformat(row["at"]).timestamp())
+            else:
+                if left < b and a < right:
+                    exact.append((a, b))
+                    sleeps.add(a)
+                    wakes.add(b)
+    for at, identity in events:
+        stamp = at.timestamp()
+        if identity in (42, 506):
+            pending[identity] = stamp
+            sleeps.add(stamp)
+        elif identity in (107, 507):
+            a = pending.pop({107: 42, 507: 506}[identity], None)
+            if a is not None and a < stamp:
+                matched.append((a, stamp))
+            wakes.add(stamp)
+        elif identity in (12, 13, 41):
+            pending.clear()
+    intervals = exact + [(a, b) for a, b in matched if not any(a < y and b > x for x, y in exact)]
+    spans = []
+    for a, b in sorted((max(a, left), min(b, right)) for a, b in intervals if a < right and b > left):
+        if spans and a <= spans[-1][1]:
+            spans[-1] = spans[-1][0], max(b, spans[-1][1])
+        else:
+            spans.append((a, b))
+    return dict(sleep_spans=spans, sleep_points=sorted(t for t in sleeps if left <= t <= right),
+                wake_points=sorted(t for t in wakes if left <= t <= right))
+
+
 def read_power(start, end, read=_windows_power_events):
-    """A matched kernel stop/start is a span; an unmatched startup is a point."""
+    """Return shutdown and sleep evidence, or None when the System log cannot be read."""
     try:
+        data = read(start, end)
+        rows = data["events"]
+        retained = datetime.fromisoformat(data["retained_from"]) if data["retained_from"] else None
         events = sorted({(datetime.fromisoformat(r["at"].replace("Z", "+00:00")), r["id"])
-                         for r in read(start, end)})
-    except (OSError, subprocess.SubprocessError, ValueError):
+                         for r in rows})
+        if (retained is not None and retained.tzinfo is None) or any(at.tzinfo is None for at, _ in events):
+            return None
+    except (OSError, subprocess.SubprocessError, KeyError, TypeError, ValueError):
         return None
     spans, markers, stop, boot = [], [], None, None
     for at, identity in events:
@@ -80,7 +137,10 @@ def read_power(start, end, read=_windows_power_events):
             else:
                 markers.append(at.timestamp())
             stop, boot = None, at
-    return dict(spans=spans, markers=markers)
+    coverage = dict(status="complete" if retained is not None and retained <= start else "retention_insufficient",
+                    retained_from=retained.timestamp() if retained is not None else None,
+                    window_from=start.timestamp(), window_to=end.timestamp())
+    return dict(spans=spans, markers=markers, coverage=coverage, **_sleep_evidence(rows, events, start, end))
 
 
 def apply_power(segments, power):
