@@ -265,14 +265,19 @@ class FpsCaptureContractTest(unittest.TestCase):
         )
         worker._fps_state_lock = threading.Lock()
         worker._rtss_frame_seen_monotonic = 100.0
+        worker._rtss_frame_seen_pid = 1234
         worker._rtss_mapping_available = False
         with (
             patch.object(worker, "_render_active", return_value=True),
+            patch.object(worker, "_read_foreground_pid", return_value=1234) as foreground,
             patch.object(hardware_worker.time, "monotonic", return_value=101.0),
         ):
             self.assertFalse(worker._presentmon_needed())
+            foreground.return_value = 4321
+            self.assertTrue(worker._presentmon_needed())
         with (
             patch.object(worker, "_render_active", return_value=True),
+            patch.object(worker, "_read_foreground_pid", return_value=1234),
             patch.object(hardware_worker.time, "monotonic", return_value=104.0),
         ):
             self.assertTrue(worker._presentmon_needed())
@@ -283,6 +288,7 @@ class FpsCaptureContractTest(unittest.TestCase):
         )
         worker._fps_state_lock = threading.Lock()
         worker._rtss_frame_seen_monotonic = 0.0
+        worker._rtss_frame_seen_pid = None
         worker._rtss_mapping_available = True
         with patch.object(hardware_worker.time, "monotonic", return_value=100.0):
             with patch.object(worker, "_render_active", return_value=True):
@@ -335,6 +341,7 @@ class FpsCaptureContractTest(unittest.TestCase):
         entry = bytearray(264)
         path = b"E:\\Steam\\wallpaper64.exe"
         entry[4:4 + len(path)] = path
+        self.assertEqual(hardware_worker.HardwareTelemetryWorker._rtss_entry_executable(entry), "wallpaper64.exe")
         self.assertTrue(
             hardware_worker.HardwareTelemetryWorker._rtss_entry_is_desktop_renderer(entry)
         )
