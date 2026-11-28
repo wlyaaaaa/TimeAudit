@@ -250,6 +250,11 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             times=dict(snapshot["times"], clipboard_latest=clipboard_sampled_at),
             scopes=dict(snapshot["scopes"], clipboard_latest=clipboard_scope))
         retain_failed(owner, config["owner_output"])
+        for metrics in (snapshot["metrics"], owner["metrics"]):
+            if missed := metrics.get("missed"):
+                missed["short_text"] = f"{missed['seconds']/60:.1f} 分钟"
+                missed["explanation_text"] = (
+                    f"明确缺口 {missed['collection_gap_seconds']} 秒＋完全没记录 {missed['uncovered_seconds']} 秒")
         if "dashboard_records" in snapshot:
             grafana = config["grafana_url"].rstrip("/")
             owner["dashboard_records"] = [dict(row, local_open=dict(row["local_open"], value=f"{grafana}/d/{row['uid']}"))
