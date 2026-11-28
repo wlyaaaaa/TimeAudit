@@ -234,12 +234,31 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
         )
         normalized_documents.append((uid, dash))
 
+    existing_paths = glob.glob(os.path.join(DASH_DIR, "*.json"))
+    filenames_by_uid = {}
+    for path in existing_paths:
+        filename = os.path.basename(path)
+        try:
+            with open(path, encoding="utf-8") as snapshot:
+                document = json.load(snapshot)
+        except (OSError, ValueError):
+            continue
+        uid = document.get("uid") if isinstance(document, dict) else None
+        if isinstance(uid, str) and filename.startswith(uid + "__"):
+            filenames_by_uid.setdefault(uid, []).append(filename)
+
     written = set()
     pending_writes = []
     for uid, dash in normalized_documents:
         panel_count = len(dash["elements"] if is_v2_dashboard(dash) else dash.get("panels", []))
         title = dash.get("title", uid)
         fname = f"{uid}__{safe_filename(title)}.json"
+        previous_names = filenames_by_uid.get(uid, ())
+        if previous_names and fname not in previous_names:
+            if len(previous_names) != 1:
+                raise DashboardSnapshotConflict(f"multiple repository snapshot paths for dashboard UID {uid}")
+            # Artifact links refer to this file even when the live title changes.
+            fname = previous_names[0]
         fpath = os.path.join(DASH_DIR, fname)
         # sort_keys + indent + ensure_ascii=False：稳定排序、缩进、保留中文 —— git diff 干净可读。
         content = json.dumps(dash, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
@@ -278,7 +297,7 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
         log(f"  ✓ {fname}  (面板 {panel_count} 个)")
 
     # 清理已在 Grafana 中删除的仪表盘对应的旧 JSON（保持备份目录与现状一致）。
-    for old in glob.glob(os.path.join(DASH_DIR, "*.json")):
+    for old in existing_paths:
         if os.path.basename(old) not in written:
             os.remove(old)
             _record_dashboard_change(changed_paths, old)

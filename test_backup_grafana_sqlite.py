@@ -251,6 +251,25 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         with open(path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), original)
 
+    def test_title_change_keeps_the_existing_uid_path_and_checks_its_version(self):
+        directory = Path(backup.DASH_DIR)
+        directory.mkdir()
+        uid = "dash__1"
+        old_path = directory / f"{uid}__Previous Title.json"
+        old_dashboard = {"uid": uid, "title": "Previous Title", "version": 8, "panels": []}
+        old_path.write_text(json.dumps(old_dashboard), encoding="utf-8")
+        renamed = dict(old_dashboard, title="Updated Title")
+
+        with self.assertRaisesRegex(backup.GitSyncError, "same-version divergence"):
+            backup.write_dashboard_documents([(uid, renamed)], before_write=lambda: None)
+        self.assertEqual(json.loads(old_path.read_text(encoding="utf-8")), old_dashboard)
+
+        updated = dict(renamed, version=9)
+        written = backup.write_dashboard_documents([(uid, updated)], before_write=lambda: None)
+        self.assertEqual(written, {old_path.name})
+        self.assertEqual(list(directory.glob("*.json")), [old_path])
+        self.assertEqual(json.loads(old_path.read_text(encoding="utf-8")), updated)
+
     def test_dashboard_conflict_preserves_the_json_batch_and_still_backs_up_sqlite(self):
         self.create_unified_database()
         with contextlib.closing(sqlite3.connect(backup.GRAFANA_DB)) as database:
