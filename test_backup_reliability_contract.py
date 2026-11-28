@@ -19,6 +19,8 @@ def fake_export(args, *, stdout=None, **kwargs):
     if "top" in args:
         return b"PID COMMAND\n12 postgres\n"
     assert "pg_dump" in args and args[-3:] == ["-Fc", "-Z", "1"]
+    assert args[3:8] == ["timeout", "-k", "15", "5400", "pg_dump"]
+    assert kwargs["timeout"] == 5520
     stdout.write(b"PGDMP" + b"fixture" * 200)
     return b""
 
@@ -218,6 +220,15 @@ def test_inspect_retries_only_bounded_transient_failures(failures, detail, recov
             with pytest.raises(backup.BackupCommandError): backup.image_for("fixture")
     assert run.call_count == failures + int(recovered)
     assert all(call.kwargs["timeout"] == 30 for call in run.call_args_list)
+
+
+@pytest.mark.parametrize(("seconds", "reason"), ((1, "backup_command_failed"), (5401, "backup_command_timed_out")))
+def test_container_dump_deadline_keeps_early_signal_distinct(seconds, reason):
+    result = subprocess.CompletedProcess([], 143, b"", b"")
+    with patch.object(backup.subprocess, "run", return_value=result), patch.object(backup.time, "monotonic", side_effect=(0, seconds)):
+        with pytest.raises(backup.BackupCommandError) as failed:
+            backup.command(["docker", "exec", "test", "timeout", "-k", "15", "5400", "pg_dump"])
+    assert (str(failed.value), failed.value.stage, failed.value.exit_code) == (reason, "pg_dump", 143)
 
 
 def test_timeout_keeps_command_stage_and_stderr():

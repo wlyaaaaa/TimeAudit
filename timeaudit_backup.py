@@ -16,6 +16,9 @@ import uuid
 from backup_file_warnings import disk_space_warning, file_warning
 
 DEFAULT_BACKUP_DIR = Path(r"G:\80_Backup\TimeAudit\postgresql")
+PG_DUMP_BUDGET_SECONDS = 90 * 60
+PG_DUMP_SHUTDOWN_SECONDS = 15
+PG_DUMP_HOST_BUDGET_SECONDS = PG_DUMP_BUDGET_SECONDS + 120
 NAME = re.compile(r"^time_audit_\d{8}_\d{6}(?:_[a-f0-9]{6})?\.dump$")
 IDENTIFIER = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,99}$")
 TRANSACTION = re.compile(r"^(time_audit_\d{8}_\d{6}_[a-f0-9]{6}\.dump)\.transaction-([a-f0-9]{32})$")
@@ -57,6 +60,7 @@ def failure_details(exc, mode):
 
 def command(args, *, timeout=30, stdout=subprocess.PIPE):
     stage = "pg_dump" if "pg_dump" in args else "archive_catalog" if "pg_restore" in args else "container_inspect" if "inspect" in args else "docker_command"
+    started = time.monotonic()
     try:
         result = subprocess.run(args, stdout=stdout, stderr=subprocess.PIPE, timeout=timeout, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     except subprocess.TimeoutExpired as exc:
@@ -64,7 +68,12 @@ def command(args, *, timeout=30, stdout=subprocess.PIPE):
     except OSError as exc:
         raise BackupCommandError("backup_command_unavailable", stage, detail=error_summary(exc)) from None
     if result.returncode:
-        raise BackupCommandError("backup_command_failed", stage, exit_code=result.returncode, detail=error_summary(result.stderr))
+        detail = error_summary(result.stderr)
+        if (stage == "pg_dump" and "timeout" in args and result.returncode in (124, 137, 143)
+                and time.monotonic() - started >= PG_DUMP_BUDGET_SECONDS):
+            raise BackupCommandError("backup_command_timed_out", stage, exit_code=result.returncode,
+                                     detail=detail or f"container timeout after {PG_DUMP_BUDGET_SECONDS} seconds")
+        raise BackupCommandError("backup_command_failed", stage, exit_code=result.returncode, detail=detail)
     return result.stdout or b""
 
 
@@ -300,8 +309,10 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, keep_archive
         with failure_stage("archive_export"), stream:
             os.link(marker, partial)
             # Faster zlib compression keeps the same pg_restore format and costs less CPU on busy hosts.
-            command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc", "-Z", "1"],
-                    timeout=3600, stdout=stream)
+            # Bound pg_dump inside Docker: terminating the Windows client alone can leave it running.
+            command([docker_path(), "exec", container, "timeout", "-k", str(PG_DUMP_SHUTDOWN_SECONDS),
+                     str(PG_DUMP_BUDGET_SECONDS), "pg_dump", "-U", db_user, "-d", db_name, "-Fc", "-Z", "1"],
+                    timeout=PG_DUMP_HOST_BUDGET_SECONDS, stdout=stream)
             stream.flush()
             os.fsync(stream.fileno())
         result = verify(partial, container=container)
