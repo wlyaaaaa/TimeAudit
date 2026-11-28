@@ -1,4 +1,5 @@
 """PowerShell loadability and bounded watchdog recovery."""
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -62,3 +63,32 @@ if($calls.Count -ne 1 -or $logs[-1] -notmatch '^Docker API probe timed out after
     result=subprocess.run([powershell(),'-NoProfile','-NonInteractive','-Command',script],capture_output=True,text=True,encoding='utf-8-sig',timeout=15,creationflags=getattr(subprocess,'CREATE_NO_WINDOW',0))
     assert result.returncode==0, result.stderr
     assert 'desktop_status=running' in json.loads(result.stdout)['timeout_log']
+
+
+def test_live_snapshot_runs_when_recovery_is_busy_or_fails():
+    name = 'TimeAuditFixture-' + os.urandom(8).hex()
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    kernel.CreateMutexW.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
+    kernel.CreateMutexW.restype = ctypes.c_void_p
+    kernel.ReleaseMutex.argtypes = kernel.CloseHandle.argtypes = (ctypes.c_void_p,)
+    handle = kernel.CreateMutexW(None, 1, name)
+    assert handle
+    script = r"""
+$ErrorActionPreference='Stop'
+$ast=[Management.Automation.Language.Parser]::ParseFile('__ROOT__/telemetry_watchdog.ps1',[ref]$null,[ref]$null)
+$cycle=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Invoke-TimeAuditWatchdogCycle'},$true)
+Invoke-Expression $cycle.Extent.Text
+$repairs=0; $exports=0; $failure=$null
+function Log($message) { }
+function Invoke-TimeAuditWatchdog { $script:repairs++; throw 'fixture recovery failed' }
+function Write-WatchdogOutcome($state,$components,$reason) { $script:failure=$reason }
+function Write-TimeAuditLiveSnapshot { $script:exports++ }
+@{busy=(Invoke-TimeAuditWatchdogCycle '__MUTEX__'); failure=(Invoke-TimeAuditWatchdogCycle '__MUTEX__-free'); repairs=$repairs; exports=$exports; reason=$failure}|ConvertTo-Json -Compress
+""".replace('__ROOT__', str(ROOT).replace("'", "''")).replace('__MUTEX__', name)
+    try:
+        result = subprocess.run([powershell(), '-NoProfile', '-NonInteractive', '-Command', script], capture_output=True, text=True, encoding='utf-8-sig', timeout=15)
+    finally:
+        kernel.ReleaseMutex(handle)
+        kernel.CloseHandle(handle)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == dict(busy=0, failure=2, repairs=1, exports=2, reason='recovery_invocation_failed')

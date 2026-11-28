@@ -714,41 +714,64 @@ function Write-PowerToday {
     } finally { if (Test-Path $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue } }
 }
 
-$watchdogMutexName = 'Global\TimeAuditTelemetryWatchdogMutex'
-$watchdogMutex = $null
-$watchdogLockAcquired = $false
-$watchdogExitCode=0
-try {
-    $watchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
+function Write-TimeAuditLiveSnapshot([string]$mutexName = 'Global\TimeAuditLiveSnapshotMutex') {
+    $liveOutput = Join-Path $PSScriptRoot 'log\live.snapshot.json'
+    if (Test-HeartbeatFresh $liveOutput 120) { return }
+    $mutex = $null
+    $locked = $false
+    $liveProcess = $null
     try {
-        $watchdogLockAcquired = $watchdogMutex.WaitOne(0)
-    } catch [System.Threading.AbandonedMutexException] {
-        $watchdogLockAcquired = $true
-    }
-    if ($watchdogLockAcquired) {
-        Invoke-TimeAuditWatchdog
-        if(-not (Confirm-WatchdogHealth)){$watchdogExitCode=2}
-        try { Write-PowerToday } catch { }  # display-only receipt; never affects recovery or exit code
-        # Reuse this bounded owner for the project's payload-free website result.
-        $liveOutput = Join-Path $PSScriptRoot 'log\live.snapshot.json'
-        if (-not (Test-HeartbeatFresh $liveOutput 120)) {
-            $liveProcess = $null
-            try {
-                $liveProcess = Start-Process -FilePath $pyConsole -ArgumentList @('-B', ('"'+(Join-Path $PSScriptRoot 'timeaudit_diagnostic_summary.py')+'"'), '--hours', '24', '--live-output', ('"'+$liveOutput+'"')) -WindowStyle Hidden -PassThru
-                if (-not $liveProcess.WaitForExit(35000)) { $liveProcess.Kill(); $liveProcess.WaitForExit() }
-            } catch { } finally { if ($liveProcess) { $liveProcess.Dispose() } }
+        $mutex = [System.Threading.Mutex]::new($false, $mutexName)
+        try { $locked = $mutex.WaitOne(0) }
+        catch [System.Threading.AbandonedMutexException] { $locked = $true }
+        if (-not $locked -or (Test-HeartbeatFresh $liveOutput 120)) { return }
+        Log 'live snapshot export started'
+        $liveProcess = Start-Process -FilePath $pyConsole -ArgumentList @('-B', ('"'+(Join-Path $PSScriptRoot 'timeaudit_diagnostic_summary.py')+'"'), '--hours', '24', '--live-output', ('"'+$liveOutput+'"')) -WindowStyle Hidden -PassThru -ErrorAction Stop
+        if (-not $liveProcess.WaitForExit(35000)) {
+            $liveProcess.Kill()
+            $liveProcess.WaitForExit()
+            Log 'live snapshot export timed out'
+        } elseif ($liveProcess.ExitCode -eq 0 -and (Test-HeartbeatFresh $liveOutput 120)) {
+            Log 'live snapshot file updated'
+        } else {
+            Log ('live snapshot file not updated; export exit={0}' -f $liveProcess.ExitCode)
         }
-    } else {
-        Log 'watchdog invocation skipped because a live owner holds the recovery mutex'
-        # The active owner alone publishes an outcome; do not overwrite it.
+    } catch {
+        Log ('live snapshot export failed: {0}' -f $_.Exception.GetType().Name)
+    } finally {
+        if ($liveProcess) { $liveProcess.Dispose() }
+        if ($locked) { try { $mutex.ReleaseMutex() } catch { } }
+        if ($mutex) { $mutex.Dispose() }
     }
-} catch {
-    $watchdogExitCode=2
-    if($watchdogLockAcquired){Write-WatchdogOutcome 'unavailable' @() 'recovery_invocation_failed'}
-} finally {
-    if ($watchdogLockAcquired -and $watchdogMutex) {
-        try { $watchdogMutex.ReleaseMutex() } catch { }
-    }
-    if ($watchdogMutex) { $watchdogMutex.Dispose() }
 }
-exit $watchdogExitCode
+
+function Invoke-TimeAuditWatchdogCycle([string]$watchdogMutexName) {
+    $watchdogMutex = $null
+    $watchdogLockAcquired = $false
+    $watchdogExitCode = 0
+    try {
+        $watchdogMutex = [System.Threading.Mutex]::new($false, $watchdogMutexName)
+        try { $watchdogLockAcquired = $watchdogMutex.WaitOne(0) }
+        catch [System.Threading.AbandonedMutexException] { $watchdogLockAcquired = $true }
+        if ($watchdogLockAcquired) {
+            $null = Invoke-TimeAuditWatchdog
+            if (-not (Confirm-WatchdogHealth)) { $watchdogExitCode = 2 }
+            try { $null = Write-PowerToday } catch { }
+        } else {
+            Log 'watchdog invocation skipped because a live owner holds the recovery mutex'
+        }
+    } catch {
+        $watchdogExitCode = 2
+        if ($watchdogLockAcquired) { Write-WatchdogOutcome 'unavailable' @() 'recovery_invocation_failed' }
+    } finally {
+        if ($watchdogLockAcquired -and $watchdogMutex) {
+            try { $watchdogMutex.ReleaseMutex() } catch { }
+        }
+        if ($watchdogMutex) { $watchdogMutex.Dispose() }
+    }
+    # A skipped or failed recovery must not prevent this bounded display-only writer.
+    $null = Write-TimeAuditLiveSnapshot
+    return $watchdogExitCode
+}
+
+exit (Invoke-TimeAuditWatchdogCycle 'Global\TimeAuditTelemetryWatchdogMutex')
