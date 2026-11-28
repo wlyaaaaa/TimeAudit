@@ -1,5 +1,7 @@
 import datetime as dt
 from subprocess import CalledProcessError, CompletedProcess
+from unittest.mock import Mock
+import pytest
 
 from live_project_snapshot import daily_records
 import live_project_snapshot as live
@@ -138,3 +140,31 @@ def test_live_snapshot_preserves_other_values_when_sources_are_missing(tmp_path,
         assert snapshot["metrics"]["activity"] == 34
         assert (snapshot["metrics"]["samples24"], snapshot["metrics"]["empty24"]) == (3, 86397)
         assert snapshot["metrics"]["memory"] == 104.8576
+
+
+@pytest.mark.parametrize("days_read", [True, False])
+def test_completed_day_read_survives_later_interruption(tmp_path, monkeypatch, days_read):
+    config, public, owner = (tmp_path / name for name in ("config.json", "public.json", "owner.json"))
+    live.write(config, dict(live_output=str(public), owner_output=str(owner)))
+    until = dt.datetime(2026, 11, 28, 10, tzinfo=dt.timezone.utc)
+    prior = "2026-11-27T10:00:00+00:00"
+    for path in (public, owner):
+        metrics = dict(missed=dict(seconds=60, collection_gap_seconds=30, uncovered_seconds=30), db_bytes=4)
+        if path == owner:
+            metrics["clipboard_latest"] = "owner-only"
+        live.write(path, dict(at=prior, metrics=metrics, times=dict.fromkeys(metrics, prior), scopes={}))
+
+    def query(sql, timeout):
+        if "fact_process_context" in sql:
+            raise KeyboardInterrupt
+        if not days_read:
+            raise TimeoutError
+        return []
+    monkeypatch.setattr(live, "query", query)
+    with pytest.raises(KeyboardInterrupt):
+        live.export_snapshot(Mock(side_effect=TimeoutError), until - dt.timedelta(days=1), until, public, config_path=config)
+    for path in (public, owner):
+        result = live.read(path)
+        assert result["times"].get("days") == (until.isoformat() if days_read else None)
+        assert result["times"]["missed"] == result["times"]["db_bytes"] == prior
+        assert ("clipboard_latest" in result["metrics"]) == (path == owner)

@@ -97,11 +97,12 @@ def last_change(path):
     return subprocess.check_output([GIT, "-C", str(ROOT), "log", "-1", "--format=%cI", "--", str(path)], text=True, timeout=4).strip() or None
 
 
-def retain_failed(snapshot, path):
-    try:
-        previous = read(path)
-    except (OSError, ValueError):
-        return
+def retain_failed(snapshot, path, *, previous=None):
+    if previous is None:
+        try:
+            previous = read(path)
+        except (OSError, ValueError):
+            return
     failure_reasons = {"本次读取超时": "本次读取超时", "取数失败；未填零": "取数失败"}
     for key, scope in snapshot["scopes"].items():
         if reason := failure_reasons.get(scope):
@@ -114,6 +115,37 @@ def retain_failed(snapshot, path):
                     snapshot["event_times"][key] = changed
     if "dashboard_records" not in snapshot and snapshot["times"].get("dashboards") and "dashboard_records" in previous:
         snapshot.update(dashboard_records=previous["dashboard_records"], artifacts=previous.get("artifacts", []))
+
+
+def format_headline(snapshot):
+    if missed := snapshot["metrics"].get("missed"):
+        missed["short_text"] = f"{missed['seconds']/60:.1f} 分钟"
+        missed["explanation_text"] = (
+            f"明确缺口 {missed['collection_gap_seconds']} 秒＋完全没记录 {missed['uncovered_seconds']} 秒")
+
+
+def publish_available_core(snapshot, config, output):
+    if not any(snapshot["times"].get(key) for key in ("missed", "days")):
+        return
+    # Each audience keeps its own prior optional values and observation times.
+    for key in ("owner_output", "live_output"):
+        path = config[key]
+        try:
+            previous = read(path)
+        except (OSError, ValueError):
+            previous = {}
+        if not isinstance(previous, dict):
+            previous = {}
+        current = dict(previous, v=snapshot["v"], scope=snapshot["scope"], at=dt.datetime.now(dt.timezone.utc).isoformat())
+        current.setdefault("artifacts", [])
+        for group in ("metrics", "times", "scopes", "event_times"):
+            saved = previous.get(group)
+            current[group] = dict(saved if isinstance(saved, dict) else {}, **snapshot[group])
+        retain_failed(current, path, previous=previous)
+        format_headline(current)
+        write(path, current)
+        if key == "live_output":
+            write(output, current)
 
 
 def source_size():
@@ -198,6 +230,10 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
         # Read the headline and day history before file metadata can consume their shared budget.
         attempt("missed memory samples24 covered24 empty24 max_gap", read_aggregate)
         attempt("days", days)
+        try:
+            publish_available_core(snapshot, config, output)
+        except (OSError, ValueError):
+            pass  # The usual final write still reports a persistent output failure.
         attempt("context activity latest", activity)
         clipboard_latest = clipboard_sampled_at = None
         def viewer():
@@ -251,11 +287,8 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             times=dict(snapshot["times"], clipboard_latest=clipboard_sampled_at),
             scopes=dict(snapshot["scopes"], clipboard_latest=clipboard_scope))
         retain_failed(owner, config["owner_output"])
-        for metrics in (snapshot["metrics"], owner["metrics"]):
-            if missed := metrics.get("missed"):
-                missed["short_text"] = f"{missed['seconds']/60:.1f} 分钟"
-                missed["explanation_text"] = (
-                    f"明确缺口 {missed['collection_gap_seconds']} 秒＋完全没记录 {missed['uncovered_seconds']} 秒")
+        for view in (snapshot, owner):
+            format_headline(view)
         if "dashboard_records" in snapshot:
             grafana = config["grafana_url"].rstrip("/")
             owner["dashboard_records"] = [dict(row, local_open=dict(row["local_open"], value=f"{grafana}/d/{row['uid']}"))
