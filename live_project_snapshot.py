@@ -58,12 +58,12 @@ def retained_count(table):
 
 def daily_records(rows, until):
     midnight = until.astimezone(ZONE).replace(hour=0, minute=0, second=0, microsecond=0)
+    intervals = [(parse_utc(start), parse_utc(end), gap) for start, end, gap in rows]
     result = []
     for offset in range(6, -1, -1):
         start = midnight-dt.timedelta(days=offset)
         end = min(start+dt.timedelta(days=1), until)
-        parts = [(max(parse_utc(r[0]), start), min(parse_utc(r[1]), end), r[2]) for r in rows
-                 if parse_utc(r[0]) < end and parse_utc(r[1]) > start]
+        parts = [(max(s, start), min(e, end), gap) for s, e, gap in intervals if s < end and e > start]
         uncovered = (end-start).total_seconds()-seconds([(s, e) for s, e, _ in parts])
         missed = round(uncovered+seconds([(s, e) for s, e, gap in parts if gap]), 6)
         result.append(dict(date=start.date().isoformat(), until=end.astimezone(ZONE).isoformat(),
@@ -195,6 +195,10 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             start = until.astimezone(ZONE).replace(hour=0, minute=0, second=0, microsecond=0)-dt.timedelta(days=6)
             rows = read_live(f"SELECT json_build_array(start_time,start_time+duration_seconds*interval '1 second',process_name='System_CollectionGap') FROM public.app_usage_logs WHERE duration_seconds>0 AND start_time<'{until.isoformat()}'::timestamptz AND start_time+duration_seconds*interval '1 second'>'{start.isoformat()}'::timestamptz;")
             put(dict(days=daily_records(rows, until)), "北京时间最近七日；跨日区间裁剪并求并集；段数为与当天相交的记录数，跨日会重复；今天截至取数时刻", until.isoformat())
+        # Read the headline and day history before file metadata can consume their shared budget.
+        attempt("missed memory samples24 covered24 empty24 max_gap", read_aggregate)
+        attempt("days", days)
+        attempt("context activity latest", activity)
         clipboard_latest = clipboard_sampled_at = None
         def viewer():
             put(dict(viewer=dict(text="还没接上", web_open=False)),
@@ -238,9 +242,6 @@ def export_snapshot(aggregate, after, until, output, *, static=False, config_pat
             snapshot["event_times"]["website_dashboards"] = last_change(website_path)
         attempt("dashboards", dashboards)
         attempt("website_dashboards", website_dashboards)
-        attempt("days", days)
-        attempt("context activity latest", activity)
-        attempt("missed memory samples24 covered24 empty24 max_gap", read_aggregate)
         attempt("db_bytes detail_bytes summary_bytes", lambda: put(dict(zip(("db_bytes", "detail_bytes", "summary_bytes"), read_live("SELECT json_build_array(pg_database_size(current_database()),(SELECT sum(pg_total_relation_size(relid)) FROM pg_partition_tree('public.fact_process_activity')),pg_total_relation_size('public.activity_app_hour')+pg_total_relation_size('public.activity_app_day')+pg_total_relation_size('public.activity_system_hour')+pg_total_relation_size('public.activity_system_day'));")[0]))))
         attempt("raw_since", retention_start)
         snapshot["at"] = now()

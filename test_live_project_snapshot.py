@@ -105,13 +105,21 @@ def test_live_snapshot_preserves_other_values_when_sources_are_missing(tmp_path,
     raw = aggregate_fixture()
     raw.update(main_working_set_mib_max=100.0, hardware_sample_count=3,
                distinct_sample_seconds=3, requested_window_seconds=86400)
-    monkeypatch.setattr(summary, "query_aggregate", lambda *args, **kwargs: raw)
+    order = []
+
+    def headline(*args, **kwargs):
+        order.append("headline")
+        return raw
+
+    monkeypatch.setattr(summary, "query_aggregate", headline)
     monkeypatch.setattr(live, "dashboard_records", lambda: ([], []))
     monkeypatch.setattr(live.subprocess, "run", lambda *args, **kwargs: CompletedProcess(
         args=[], returncode=3, stdout="", stderr="psql:<stdin>:1: ERROR:  57014\n"))
     query_database = live.query
 
     def query(sql, timeout):
+        if "System_CollectionGap" in sql:
+            order.append("daily")
         if "pg_database_size" in sql:
             return query_database(sql, timeout)
         if "fact_process_context" in sql:
@@ -121,6 +129,7 @@ def test_live_snapshot_preserves_other_values_when_sources_are_missing(tmp_path,
     monkeypatch.setattr(live, "query", query)
     assert summary.main(["--hours", "24", "--live-output", str(output), "--live-config", str(config)]) == 0
     assert live.read(output) == live.read(mirror)
+    assert order[:2] == ["headline", "daily"]
     for path in (mirror, owner):
         snapshot = live.read(path)
         assert snapshot["metrics"]["raw_since"] is snapshot["times"]["raw_since"] is None
