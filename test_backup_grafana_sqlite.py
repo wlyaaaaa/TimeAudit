@@ -1,3 +1,4 @@
+import contextlib
 import hashlib
 import json
 import os
@@ -249,6 +250,56 @@ class GrafanaSqliteBackupTests(unittest.TestCase):
         self.assertEqual(changed, set())
         with open(path, encoding="utf-8") as handle:
             self.assertEqual(handle.read(), original)
+
+    def test_dashboard_conflict_preserves_the_json_batch_and_still_backs_up_sqlite(self):
+        self.create_unified_database()
+        with contextlib.closing(sqlite3.connect(backup.GRAFANA_DB)) as database:
+            resource = {
+                "metadata": {"generation": 9},
+                "spec": {"title": "Earlier Dashboard", "panels": []},
+            }
+            database.execute(
+                'INSERT INTO resource ("group", resource, name, value) VALUES (?, ?, ?, ?)',
+                ("dashboard.grafana.app", "dashboards", "dash-0", json.dumps(resource)),
+            )
+            database.commit()
+
+        directory = Path(backup.DASH_DIR)
+        directory.mkdir()
+        snapshots = {
+            "dash-0__Earlier Dashboard.json": {
+                "uid": "dash-0", "title": "Earlier Dashboard", "version": 8, "panels": [],
+            },
+            "dash-1__Main _ Dashboard.json": {
+                "uid": "dash-1", "title": "Different repo title", "version": 7, "panels": [],
+            },
+        }
+        for filename, snapshot in snapshots.items():
+            (directory / filename).write_text(json.dumps(snapshot), encoding="utf-8")
+
+        with (
+            mock.patch("sys.argv", ["backup_grafana.py"]),
+            mock.patch.object(backup, "initialize_windows_user_proxy", return_value=False),
+            mock.patch.object(backup, "grafana_backup_lock", return_value=contextlib.nullcontext()),
+            mock.patch.object(backup, "git_remote_state"),
+            mock.patch.object(backup, "git_commit_and_push") as sync,
+            mock.patch("builtins.print") as output,
+        ):
+            self.assertEqual(backup.main(), 1)
+
+        sync.assert_not_called()
+        self.assertEqual(
+            {path.name: json.loads(path.read_text(encoding="utf-8")) for path in directory.iterdir()},
+            snapshots,
+        )
+        receipt = json.loads(output.call_args.args[0])
+        self.assertEqual(receipt["reason"], "dashboard_snapshot_conflict")
+        self.assertEqual(receipt["local_snapshot_status"], "complete")
+        self.assertIsNone(receipt["cloud_sync_status"])
+        snapshot, = Path(backup.DB_BACKUP_DIR).glob("*.db")
+        with contextlib.closing(sqlite3.connect(snapshot)) as database:
+            self.assertEqual(database.execute("PRAGMA quick_check").fetchone()[0], "ok")
+            self.assertEqual(database.execute("SELECT COUNT(*) FROM resource").fetchone()[0], 2)
 
     def test_consistent_database_backup_passes_quick_check(self):
         self.create_unified_database()

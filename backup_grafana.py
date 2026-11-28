@@ -190,25 +190,25 @@ def _assert_dashboard_export_is_not_stale(path, previous, incoming, content):
     try:
         repository = json.loads(previous)
     except (TypeError, ValueError) as exc:
-        raise GitSyncError(
+        raise DashboardSnapshotConflict(
             f"repository dashboard snapshot is invalid JSON: {os.path.basename(path)}"
         ) from exc
 
     repository_version = _dashboard_version(repository)
     incoming_version = _dashboard_version(incoming)
     if repository_version is None or incoming_version is None:
-        raise GitSyncError(
+        raise DashboardSnapshotConflict(
             "dashboard version is missing or invalid; refusing ambiguous overwrite: "
             f"{os.path.basename(path)}"
         )
     if incoming_version < repository_version:
-        raise GitSyncError(
+        raise DashboardSnapshotConflict(
             "live dashboard is older than repository snapshot; refusing rollback: "
             f"{os.path.basename(path)} "
             f"(live={incoming_version}, repository={repository_version})"
         )
     if incoming_version == repository_version:
-        raise GitSyncError(
+        raise DashboardSnapshotConflict(
             "dashboard same-version divergence detected; refusing ambiguous overwrite: "
             f"{os.path.basename(path)} (version={incoming_version})"
         )
@@ -219,7 +219,6 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
     provisioned_uids = provisioned_dashboard_uids()
     if before_write is None:
         before_write = assert_dashboard_worktree_clean
-    before_write()
     normalized_documents = []
     for uid, dash in documents:
         if uid in provisioned_uids:
@@ -235,8 +234,8 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
         )
         normalized_documents.append((uid, dash))
 
-    os.makedirs(DASH_DIR, exist_ok=True)
     written = set()
+    pending_writes = []
     for uid, dash in normalized_documents:
         panel_count = len(dash["elements"] if is_v2_dashboard(dash) else dash.get("panels", []))
         title = dash.get("title", uid)
@@ -265,9 +264,17 @@ def write_dashboard_documents(documents, changed_paths=None, before_write=None):
                 dash,
                 content,
             )
-            _write_dashboard_json_atomically(fpath, content)
-            _record_dashboard_change(changed_paths, fpath)
+            pending_writes.append((fname, fpath, content, panel_count))
+        else:
+            log(f"  ✓ {fname}  (面板 {panel_count} 个，内容已一致)")
         written.add(fname)
+
+    # A later conflict must leave earlier snapshots untouched as well.
+    before_write()
+    os.makedirs(DASH_DIR, exist_ok=True)
+    for fname, fpath, content, panel_count in pending_writes:
+        _write_dashboard_json_atomically(fpath, content)
+        _record_dashboard_change(changed_paths, fpath)
         log(f"  ✓ {fname}  (面板 {panel_count} 个)")
 
     # 清理已在 Grafana 中删除的仪表盘对应的旧 JSON（保持备份目录与现状一致）。
@@ -426,6 +433,10 @@ def _backup_grafana_db(keep, candidates):
 
 class GitSyncError(RuntimeError):
     """Git backup state is unsafe or could not be verified."""
+
+
+class DashboardSnapshotConflict(GitSyncError):
+    """An export cannot overwrite a divergent repository snapshot safely."""
 
 
 def _separate_git_curl_trace(result):
@@ -923,6 +934,7 @@ def main():
     try:
         with grafana_backup_lock():
             changed_paths = set()
+            dashboard_conflict = None
             try:
                 # Check before source extraction, then once more immediately before writes.
                 # A scheduled job must never overwrite or delete a human's dashboard work.
@@ -946,6 +958,9 @@ def main():
                         before_write=assert_dashboard_worktree_clean,
                     )
                 dashboard_paths = assert_dashboard_change_allowlist(changed_paths)
+            except DashboardSnapshotConflict as e:
+                dashboard_conflict = str(e)
+                log(f"❌ 仪表盘导出失败: {dashboard_conflict}")
             except Exception as e:
                 warning = file_warning(e, "grafana.db", "dashboard_source")
                 if warning is None:
@@ -970,6 +985,18 @@ def main():
                     return 1
                 file_warnings.append(warning)
                 log(f"⚠️ grafana.db 已跳过（{warning['reason']}），保留此前备份，下轮重试。")
+
+            if dashboard_conflict is not None:
+                print(json.dumps({
+                    "mode": "grafana",
+                    "status": "failed",
+                    "reason": "dashboard_snapshot_conflict",
+                    "error_summary": dashboard_conflict,
+                    "file_warnings": file_warnings,
+                    "local_snapshot_status": "retained_previous" if file_warnings else "complete",
+                    "cloud_sync_status": None,
+                }))
+                return 1
 
             if not args.no_git:
                 try:
