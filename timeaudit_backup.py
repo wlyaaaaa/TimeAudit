@@ -299,7 +299,9 @@ def _backup_locked(directory: Path, *, container, db_user, db_name, keep_archive
     try:
         with failure_stage("archive_export"), stream:
             os.link(marker, partial)
-            command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc"], timeout=3600, stdout=stream)
+            # Faster zlib compression keeps the same pg_restore format and costs less CPU on busy hosts.
+            command([docker_path(), "exec", container, "pg_dump", "-U", db_user, "-d", db_name, "-Fc", "-Z", "1"],
+                    timeout=3600, stdout=stream)
             stream.flush()
             os.fsync(stream.fileno())
         result = verify(partial, container=container)

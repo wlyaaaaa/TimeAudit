@@ -18,7 +18,7 @@ def make_archive(path):
 def fake_export(args, *, stdout=None, **kwargs):
     if "top" in args:
         return b"PID COMMAND\n12 postgres\n"
-    assert "pg_dump" in args and "-Fc" in args
+    assert "pg_dump" in args and args[-3:] == ["-Fc", "-Z", "1"]
     stdout.write(b"PGDMP" + b"fixture" * 200)
     return b""
 

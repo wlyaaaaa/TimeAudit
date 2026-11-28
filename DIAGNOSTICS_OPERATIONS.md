@@ -234,6 +234,8 @@ exists. Legacy cursor profiles migrate; no anomaly directly changes hardware.
 project's qualified Python runtime. A binary export goes to a unique `.partial`
 file, is flushed, checked as a PostgreSQL custom archive, listed and SHA-256
 hashed before becoming a completed `.dump` with an atomic `.dump.json` manifest.
+The export uses zlib level 1 to reduce CPU time while keeping the same `pg_restore`
+format and the one-hour export deadline.
 Failed exports never replace a completed archive. Retention keeps the latest two
 completed archives and removes only eligible old, verified pairs. Unverified
 historical originals are preserved rather than silently classified as disposable.
