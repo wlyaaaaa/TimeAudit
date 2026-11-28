@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import sys
 import pytest
 
 ROOT=Path(__file__).resolve().parent
@@ -92,3 +93,34 @@ function Write-TimeAuditLiveSnapshot { $script:exports++ }
         kernel.CloseHandle(handle)
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout) == dict(busy=0, failure=2, repairs=1, exports=2, reason='recovery_invocation_failed')
+
+
+def test_snapshot_child_inherits_normal_and_launcher_restores_its_priority(tmp_path):
+    child = tmp_path / 'child.py'
+    child.write_text(
+        "import ctypes as c, pathlib, sys\n"
+        "k=c.WinDLL('kernel32');k.GetCurrentProcess.restype=c.c_void_p;k.GetPriorityClass.argtypes=(c.c_void_p,)\n"
+        "pathlib.Path(sys.argv[1]).write_text(str(k.GetPriorityClass(k.GetCurrentProcess())))\n",
+        encoding='utf-8',
+    )
+    output = tmp_path / 'priority.txt'
+    script = r"""
+$ErrorActionPreference='Stop'
+$ast=[Management.Automation.Language.Parser]::ParseFile('__ROOT__/telemetry_watchdog.ps1',[ref]$null,[ref]$null)
+$start=$ast.Find({param($n) $n -is [Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq 'Start-TimeAuditSnapshotProcess'},$true)
+Invoke-Expression $start.Extent.Text
+$self=[Diagnostics.Process]::GetCurrentProcess(); $self.PriorityClass='BelowNormal'
+$pyConsole='__PYTHON__'
+$child=Start-TimeAuditSnapshotProcess @('-B','"__CHILD__"','"__OUTPUT__"')
+$self.Refresh(); $after=$self.PriorityClass.ToString()
+if(-not $child.WaitForExit(20000) -or $child.ExitCode -ne 0) { throw 'probe process failed' }
+$pyConsole='__CHILD__.missing.exe'; $launchFailed=$false
+try { Start-TimeAuditSnapshotProcess @('ignored') } catch { $launchFailed=$true }
+$self.Refresh()
+@{after=$after; after_error=$self.PriorityClass.ToString(); launch_failed=$launchFailed; child=[int](Get-Content '__OUTPUT__')}|ConvertTo-Json -Compress
+"""
+    for key, value in dict(ROOT=ROOT, PYTHON=sys.executable, CHILD=child, OUTPUT=output).items():
+        script = script.replace(f'__{key}__', str(value).replace("'", "''"))
+    result = subprocess.run([powershell(), '-NoProfile', '-NonInteractive', '-Command', script], capture_output=True, text=True, encoding='utf-8-sig', timeout=45)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == dict(after='BelowNormal', after_error='BelowNormal', launch_failed=True, child=32)

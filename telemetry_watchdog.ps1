@@ -714,6 +714,22 @@ function Write-PowerToday {
     } finally { if (Test-Path $temporary) { Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue } }
 }
 
+function Start-TimeAuditSnapshotProcess([string[]]$arguments) {
+    $launcher = [System.Diagnostics.Process]::GetCurrentProcess()
+    $restorePriority = $false
+    try {
+        $previousPriority = $launcher.PriorityClass
+        $restorePriority = $previousPriority -in @('Idle', 'BelowNormal')
+        # The venv launcher may spawn the real interpreter before Start-Process returns.
+        if ($restorePriority) { $launcher.PriorityClass = 'Normal' }
+        Start-Process -FilePath $pyConsole -ArgumentList $arguments -WindowStyle Hidden -PassThru -ErrorAction Stop
+    } finally {
+        try {
+            if ($restorePriority) { $launcher.PriorityClass = $previousPriority }
+        } finally { $launcher.Dispose() }
+    }
+}
+
 function Write-TimeAuditLiveSnapshot([string]$mutexName = 'Global\TimeAuditLiveSnapshotMutex') {
     $liveOutput = Join-Path $PSScriptRoot 'log\live.snapshot.json'
     if (Test-HeartbeatFresh $liveOutput 120) { return }
@@ -726,7 +742,7 @@ function Write-TimeAuditLiveSnapshot([string]$mutexName = 'Global\TimeAuditLiveS
         catch [System.Threading.AbandonedMutexException] { $locked = $true }
         if (-not $locked -or (Test-HeartbeatFresh $liveOutput 120)) { return }
         Log 'live snapshot export started'
-        $liveProcess = Start-Process -FilePath $pyConsole -ArgumentList @('-B', ('"'+(Join-Path $PSScriptRoot 'timeaudit_diagnostic_summary.py')+'"'), '--hours', '24', '--live-output', ('"'+$liveOutput+'"')) -WindowStyle Hidden -PassThru -ErrorAction Stop
+        $liveProcess = Start-TimeAuditSnapshotProcess @('-B', ('"'+(Join-Path $PSScriptRoot 'timeaudit_diagnostic_summary.py')+'"'), '--hours', '24', '--live-output', ('"'+$liveOutput+'"'))
         if (-not $liveProcess.WaitForExit(35000)) {
             $liveProcess.Kill()
             $liveProcess.WaitForExit()
